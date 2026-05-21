@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Supabase Admin - User Management</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "primary-container": "#131b2e",
+                        "on-secondary": "#ffffff",
+                        "surface-container-high": "#eae7e9",
+                        "tertiary": "#000000",
+                        "error": "#ba1a1a",
+                        "tertiary-container": "#271901",
+                        "inverse-primary": "#bec6e0",
+                        "surface-main": "#FFFFFF",
+                        "surface-variant": "#e4e2e4",
+                        "status-active": "#10B981",
+                        "secondary-fixed-dim": "#66df6e",
+                        "on-secondary-fixed-variant": "#005315",
+                        "primary": "#000000",
+                        "on-primary": "#ffffff",
+                        "on-primary-fixed": "#131b2e",
+                        "text-primary": "#0F172A",
+                        "primary-fixed-dim": "#bec6e0",
+                        "outline-variant": "#c6c6cd",
+                        "border-subtle": "#E2E8F0",
+                        "on-tertiary": "#ffffff",
+                        "inverse-surface": "#303032",
+                        "outline": "#76777d",
+                        "on-secondary-fixed": "#002205",
+                        "surface-tint": "#565e74",
+                        "surface-container-lowest": "#ffffff",
+                        "on-tertiary-container": "#98805d",
+                        "surface-dim": "#dcd9db",
+                        "on-tertiary-fixed": "#271901",
+                        "on-primary-container": "#7c839b",
+                        "surface-alt": "#F8FAFC",
+                        "secondary-container": "#80f984",
+                        "on-background": "#1b1b1d",
+                        "inverse-on-surface": "#f3f0f2",
+                        "tertiary-fixed-dim": "#dec29a",
+                        "secondary": "#006e1f",
+                        "on-error-container": "#93000a",
+                        "on-surface-variant": "#45464d",
+                        "on-primary-fixed-variant": "#3f465c",
+                        "on-surface": "#1b1b1d",
+                        "on-secondary-container": "#007321",
+                        "status-pending": "#F59E0B",
+                        "text-secondary": "#64748B",
+                        "on-error": "#ffffff",
+                        "on-tertiary-fixed-variant": "#574425",
+                        "tertiary-fixed": "#fcdeb5",
+                        "surface-bright": "#fcf8fa",
+                        "status-error": "#EF4444",
+                        "surface-container-low": "#f6f3f5",
+                        "surface": "#fcf8fa",
+                        "background": "#fcf8fa",
+                        "secondary-fixed": "#83fc87",
+                        "error-container": "#ffdad6",
+                        "primary-fixed": "#dae2fd",
+                        "surface-container": "#f0edef",
+                        "surface-container-highest": "#e4e2e4"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.125rem",
+                        "lg": "0.25rem",
+                        "xl": "0.5rem",
+                        "full": "0.75rem"
+                    },
+                    "spacing": {
+                        "auth-card-width": "400px",
+                        "stack-md": "1.5rem",
+                        "gutter": "1.5rem",
+                        "stack-sm": "0.5rem",
+                        "stack-lg": "3rem",
+                        "container-max": "1200px"
+                    },
+                    "fontFamily": {
+                        "h1": ["Inter"],
+                        "body-base": ["Inter"],
+                        "table-data": ["Inter"],
+                        "label-caps": ["Inter"],
+                        "body-sm": ["Inter"],
+                        "h2": ["Inter"]
+                    },
+                    "fontSize": {
+                        "h1": ["30px", { "lineHeight": "36px", "letterSpacing": "-0.02em", "fontWeight": "700" }],
+                        "body-base": ["16px", { "lineHeight": "24px", "fontWeight": "400" }],
+                        "table-data": ["14px", { "lineHeight": "20px", "fontWeight": "500" }],
+                        "label-caps": ["12px", { "lineHeight": "16px", "letterSpacing": "0.05em", "fontWeight": "600" }],
+                        "body-sm": ["14px", { "lineHeight": "20px", "fontWeight": "400" }],
+                        "h2": ["24px", { "lineHeight": "32px", "letterSpacing": "-0.01em", "fontWeight": "600" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        /* Custom scrollbar for tables/drawers */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #E2E8F0; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #c6c6cd; }
+    </style>
+</head>
+<body class="bg-surface-alt font-body-base text-text-primary h-screen flex overflow-hidden antialiased">
+<!-- SideNavBar -->
+<nav class="bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans text-[13px] font-medium docked h-full w-64 border-r border-slate-200 dark:border-slate-800 flat no shadows flex flex-col gap-1 p-4 h-full shrink-0">
+<!-- Header -->
+<div class="flex items-center gap-3 px-3 py-4 mb-2">
+<div class="w-8 h-8 rounded-md bg-primary flex items-center justify-center shrink-0">
+<span class="material-symbols-outlined text-on-primary text-sm" data-weight="fill">token</span>
+</div>
+<div class="flex flex-col">
+<span class="text-slate-900 dark:text-slate-100 font-bold leading-tight">Project Alpha</span>
+<span class="text-text-secondary text-[11px] leading-tight">Authentication</span>
+</div>
+</div>
+<!-- Navigation Links -->
+<div class="flex flex-col gap-1">
+<a class="bg-slate-200 dark:bg-slate-800 text-slate-900 dark:text-white rounded-md px-3 py-2 flex items-center gap-3 Active: scale-[0.99] transition-transform" href="#">
+<span class="material-symbols-outlined text-[18px]">group</span>
+<span>Users</span>
+</a>
+<a class="text-slate-600 dark:text-slate-400 px-3 py-2 flex items-center gap-3 hover:bg-slate-100 dark:hover:bg-slate-800/50 transition-colors" href="#">
+<span class="material-symbols-outlined text-[18px]">history</span>
+<span>Auth Logs</span>
+</a>
+<a class="text-slate-600 dark:text-slate-400 px-3 py-2 flex items-center gap-3 hover:bg-slate-100 dark:hover:bg-slate-800/50 transition-colors" href="#">
+<span class="material-symbols-outlined text-[18px]">security</span>
+<span>Policies</span>
+</a>
+<a class="text-slate-600 dark:text-slate-400 px-3 py-2 flex items-center gap-3 hover:bg-slate-100 dark:hover:bg-slate-800/50 transition-colors" href="#">
+<span class="material-symbols-outlined text-[18px]">settings</span>
+<span>Settings</span>
+</a>
+</div>
+</nav>
+<!-- Main Content Wrapper -->
+<div class="flex-1 flex flex-col min-w-0">
+<!-- TopAppBar -->
+<header class="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-sans text-sm tracking-tight docked full-width top border-b border-slate-200 dark:border-slate-800 flat no shadows flex justify-between items-center w-full px-6 h-16 shrink-0">
+<!-- Left: Brand & Search -->
+<div class="flex items-center gap-6 flex-1">
+<div class="text-xl font-bold tracking-tighter text-slate-900 dark:text-slate-50">Supabase Admin</div>
+<!-- Search on Left -->
+<div class="relative max-w-md w-full hidden md:block">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-text-secondary text-[18px]">search</span>
+<input class="w-full h-9 pl-9 pr-3 bg-surface-alt border border-border-subtle rounded-md text-sm text-text-primary focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-shadow" placeholder="Search resources..." type="text"/>
+<div class="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1 text-[10px] text-text-secondary font-medium">
+<kbd class="px-1.5 py-0.5 border border-border-subtle rounded bg-surface-main">⌘</kbd>
+<kbd class="px-1.5 py-0.5 border border-border-subtle rounded bg-surface-main">K</kbd>
+</div>
+</div>
+</div>
+<!-- Right: Actions -->
+<div class="flex items-center gap-4 shrink-0">
+<div class="flex items-center gap-2 border-r border-border-subtle pr-4">
+<button aria-label="help" class="w-8 h-8 flex items-center justify-center text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800 rounded transition-colors">
+<span class="material-symbols-outlined text-[20px]">help</span>
+</button>
+<button aria-label="notifications" class="w-8 h-8 flex items-center justify-center text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800 rounded transition-colors relative">
+<span class="material-symbols-outlined text-[20px]">notifications</span>
+<span class="absolute top-1.5 right-1.5 w-2 h-2 bg-status-active rounded-full border-2 border-white"></span>
+</button>
+</div>
+<button class="font-medium text-sm hover:text-text-secondary transition-colors Active: opacity-80 transition-all">Sign Out</button>
+</div>
+</header>
+<!-- Main Canvas -->
+<main class="flex-1 overflow-auto p-8 relative">
+<div class="max-w-[1200px] mx-auto flex flex-col gap-6">
+<!-- Page Header -->
+<div class="flex flex-col md:flex-row md:items-end justify-between gap-4">
+<div>
+<h1 class="font-h2 text-h2 text-text-primary mb-1">User Management</h1>
+<p class="font-body-sm text-body-sm text-text-secondary">Manage access, roles, and user lifecycle events.</p>
+</div>
+<div class="flex items-center gap-3">
+<div class="relative w-64">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-text-secondary text-[18px]">filter_list</span>
+<input class="w-full h-9 pl-9 pr-3 bg-surface-main border border-border-subtle rounded-md text-sm text-text-primary focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-shadow" placeholder="Filter by email or ID..." type="text"/>
+</div>
+<button class="h-9 px-3 flex items-center gap-2 bg-surface-main border border-border-subtle rounded-md text-sm font-medium hover:bg-slate-50 transition-colors shadow-sm">
+<span class="material-symbols-outlined text-[18px]">refresh</span>
+                            Refresh
+                        </button>
+<button class="h-9 px-4 flex items-center gap-2 bg-primary text-on-primary rounded-md text-sm font-medium hover:bg-opacity-90 transition-colors shadow-sm">
+<span class="material-symbols-outlined text-[18px]">add</span>
+                            Invite User
+                        </button>
+</div>
+</div>
+<!-- Data Table Card -->
+<div class="bg-surface-main border border-border-subtle rounded-lg shadow-sm overflow-hidden flex flex-col">
+<div class="overflow-x-auto">
+<div class="absolute left-0 top-0 bottom-0 w-[3px] bg-primary"></div><table class="w-full text-left border-collapse min-w-[800px]">
+<thead>
+<tr class="bg-slate-50/50 border-b border-border-subtle">
+<th class="py-3 px-4 font-label-caps text-label-caps text-text-secondary">Username / ID</th>
+<th class="py-3 px-4 font-label-caps text-label-caps text-text-secondary">Role</th>
+<th class="py-3 px-4 font-label-caps text-label-caps text-text-secondary">Email Address</th>
+<th class="py-3 px-4 font-label-caps text-label-caps text-text-secondary">Status</th>
+<th class="py-3 px-4 font-label-caps text-label-caps text-text-secondary">Created At</th>
+<th class="py-3 px-4 font-label-caps text-label-caps text-text-secondary text-right">Actions</th>
+</tr>
+</thead>
+<tbody class="font-table-data text-table-data text-text-primary">
+<!-- Row 1 -->
+<tr class="border-b border-border-subtle hover:bg-slate-50/50 transition-colors group">
+<td class="py-3 px-4">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded-full bg-primary-fixed flex items-center justify-center text-on-primary-fixed-variant font-medium text-xs">JD</div>
+<div class="flex flex-col">
+<span class="font-medium">johndoe</span>
+<span class="text-xs text-text-secondary font-mono">usr_8f92a1</span>
+</div>
+</div>
+</td>
+<td class="py-3 px-4">
+<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-secondary-fixed-dim/20 text-on-secondary-fixed-variant border border-secondary-fixed-dim/30">
+                                            Administrator
+                                        </span>
+</td>
+<td class="py-3 px-4 text-text-secondary">john.doe@company.com</td>
+<td class="py-3 px-4">
+<div class="flex items-center gap-1.5">
+<div class="w-1.5 h-1.5 rounded-full bg-status-active"></div>
+<span class="text-sm">Active</span>
+</div>
+</td>
+<td class="py-3 px-4 text-text-secondary text-sm">Oct 24, 2023</td>
+<td class="py-3 px-4 text-right">
+<button class="p-1.5 text-text-secondary hover:text-primary hover:bg-slate-100 rounded transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100">
+<span class="material-symbols-outlined text-[18px]">more_vert</span>
+</button>
+<button class="ml-1 text-sm font-medium text-text-secondary hover:text-primary transition-colors border border-transparent hover:border-border-subtle px-2 py-1 rounded bg-transparent hover:bg-white shadow-sm hover:shadow-none opacity-0 group-hover:opacity-100">
+                                            Edit
+                                        </button>
+</td>
+</tr>
+<!-- Row 2 (Active/Editing state example) -->
+<tr class="border-b border-border-subtle bg-slate-50/50 relative">
+<!-- Active indicator line -->
+<td class="py-3 px-4">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded-full bg-tertiary-fixed flex items-center justify-center text-on-tertiary-fixed-variant font-medium text-xs">AS</div>
+<div class="flex flex-col">
+<span class="font-medium">asmith</span>
+<span class="text-xs text-text-secondary font-mono">usr_4b71c9</span>
+</div>
+</div>
+</td>
+<td class="py-3 px-4">
+<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-surface-variant text-on-surface-variant border border-border-subtle">
+                                            Member
+                                        </span>
+</td>
+<td class="py-3 px-4 text-text-secondary">alice.smith@agency.io</td>
+<td class="py-3 px-4">
+<div class="flex items-center gap-1.5">
+<div class="w-1.5 h-1.5 rounded-full bg-status-pending"></div>
+<span class="text-sm">Invited</span>
+</div>
+</td>
+<td class="py-3 px-4 text-text-secondary text-sm">Nov 02, 2023</td>
+<td class="py-3 px-4 text-right">
+<button class="p-1.5 text-primary bg-slate-100 rounded transition-colors">
+<span class="material-symbols-outlined text-[18px]">more_vert</span>
+</button>
+<button class="ml-1 text-sm font-medium text-primary transition-colors px-2 py-1 rounded bg-white border border-border-subtle shadow-sm">
+                                            Edit
+                                        </button>
+</td>
+</tr>
+<!-- Row 3 -->
+<tr class="border-b border-border-subtle hover:bg-slate-50/50 transition-colors group">
+<td class="py-3 px-4">
+<div class="flex items-center gap-3">
+<img alt="Avatar" class="w-8 h-8 rounded-full object-cover border border-border-subtle" data-alt="Portrait of a young woman with dark hair against a neutral background, soft natural lighting" src="https://lh3.googleusercontent.com/aida-public/AB6AXuATW3KezdopwEvsn-sjjGqBKXZyNr-Ac_1KWYYtK5HbgNKxEwnJrNtsEYjZlDwkKECHM54PW-WeToi826ziXr5ZpdCc77wZuPUvSJ9BLfLfLwPDeV1O39G2y2gxQibuEVOBusk2KaHn6WS2P88zVi4_KOD1Ha8I-l4Y-t6bsqkNkjv870qSolgeFknFbFpolHnFyNVxC8h06Ej0gb4vksp5LQfoMq8E8UrPDD7foxhAQnzIr-0wdgMrnyGtE1FQPGaMfsewYBE7HHXG"/>
+<div class="flex flex-col">
+<span class="font-medium">mchen</span>
+<span class="text-xs text-text-secondary font-mono">usr_9x22m4</span>
+</div>
+</div>
+</td>
+<td class="py-3 px-4">
+<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-surface-variant text-on-surface-variant border border-border-subtle">
+                                            Member
+                                        </span>
+</td>
+<td class="py-3 px-4 text-text-secondary">m.chen@startup.co</td>
+<td class="py-3 px-4">
+<div class="flex items-center gap-1.5">
+<div class="w-1.5 h-1.5 rounded-full bg-status-active"></div>
+<span class="text-sm">Active</span>
+</div>
+</td>
+<td class="py-3 px-4 text-text-secondary text-sm">Nov 15, 2023</td>
+<td class="py-3 px-4 text-right">
+<button class="p-1.5 text-text-secondary hover:text-primary hover:bg-slate-100 rounded transition-colors opacity-0 group-hover:opacity-100">
+<span class="material-symbols-outlined text-[18px]">more_vert</span>
+</button>
+<button class="ml-1 text-sm font-medium text-text-secondary hover:text-primary transition-colors px-2 py-1 rounded opacity-0 group-hover:opacity-100">
+                                            Edit
+                                        </button>
+</td>
+</tr>
+<!-- Row 4 -->
+<tr class="hover:bg-slate-50/50 transition-colors group">
+<td class="py-3 px-4">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded-full bg-surface-variant flex items-center justify-center text-on-surface-variant font-medium text-xs">RK</div>
+<div class="flex flex-col">
+<span class="font-medium text-text-secondary line-through">rkumar</span>
+<span class="text-xs text-text-secondary font-mono">usr_1k88p0</span>
+</div>
+</div>
+</td>
+<td class="py-3 px-4 opacity-50">
+<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-surface-variant text-on-surface-variant border border-border-subtle">
+                                            Member
+                                        </span>
+</td>
+<td class="py-3 px-4 text-text-secondary opacity-50">raj.kumar@legacy.net</td>
+<td class="py-3 px-4">
+<div class="flex items-center gap-1.5 opacity-50">
+<div class="w-1.5 h-1.5 rounded-full bg-text-secondary"></div>
+<span class="text-sm text-text-secondary">Suspended</span>
+</div>
+</td>
+<td class="py-3 px-4 text-text-secondary text-sm opacity-50">Dec 01, 2023</td>
+<td class="py-3 px-4 text-right">
+<button class="p-1.5 text-text-secondary hover:text-primary hover:bg-slate-100 rounded transition-colors opacity-0 group-hover:opacity-100">
+<span class="material-symbols-outlined text-[18px]">more_vert</span>
+</button>
+<button class="ml-1 text-sm font-medium text-text-secondary hover:text-primary transition-colors px-2 py-1 rounded opacity-0 group-hover:opacity-100">
+                                            Edit
+                                        </button>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+<!-- Pagination Footer -->
+<div class="border-t border-border-subtle p-3 flex items-center justify-between bg-surface-main">
+<span class="font-body-sm text-body-sm text-text-secondary pl-2">Showing 1 to 4 of 42 results</span>
+<div class="flex items-center gap-1">
+<button class="p-1.5 text-text-secondary hover:text-primary disabled:opacity-50 transition-colors rounded" disabled="">
+<span class="material-symbols-outlined text-[20px]">chevron_left</span>
+</button>
+<button class="p-1.5 text-text-secondary hover:text-primary transition-colors rounded">
+<span class="material-symbols-outlined text-[20px]">chevron_right</span>
+</button>
+</div>
+</div>
+</div>
+</div>
+<!-- Footer (from JSON) -->
+<footer class="mt-8 bg-transparent text-slate-500 font-sans text-xs border-t border-border-subtle pt-6 pb-2 flex justify-between items-center w-full max-w-[1200px] mx-auto">
+<div>© 2024 Supabase Prototype. Built for administrative efficiency.</div>
+<div class="flex gap-4">
+<a class="hover:text-slate-900 dark:hover:text-slate-200 transition-colors duration-200" href="#">Documentation</a>
+<a class="hover:text-slate-900 dark:hover:text-slate-200 transition-colors duration-200" href="#">Support</a>
+<a class="hover:text-slate-900 dark:hover:text-slate-200 transition-colors duration-200" href="#">API Status</a>
+</div>
+</footer>
+</main>
+</div>
+<!-- Edit User Drawer (Overlay) -->
+<!-- Simulating open state for demonstration -->
+<div class="fixed inset-0 z-50 flex pointer-events-none">
+<!-- Backdrop (invisible but captures clicks if interactive) -->
+<div class="absolute inset-0 bg-transparent"></div>
+<!-- Drawer Panel -->
+<aside class="pointer-events-auto ml-auto w-[400px] h-full bg-surface-main border-l border-border-subtle shadow-[0_0_40px_rgba(0,0,0,0.12)] flex flex-col transform transition-transform duration-300 translate-x-0">
+<!-- Sticky Header -->
+<div class="h-16 px-6 border-b border-border-subtle flex items-center justify-between bg-surface-main shrink-0 sticky top-0 z-10">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded-full bg-tertiary-fixed flex items-center justify-center text-on-tertiary-fixed-variant font-medium text-xs">AS</div>
+<div class="flex flex-col">
+<h2 class="font-table-data text-table-data text-text-primary leading-tight">Edit User</h2>
+<span class="text-xs text-text-secondary font-mono leading-tight">usr_4b71c9</span>
+</div>
+</div>
+<button class="p-1.5 text-text-secondary hover:text-primary hover:bg-slate-50 rounded transition-colors">
+<span class="material-symbols-outlined text-[20px]">close</span>
+</button>
+</div>
+<!-- Scrollable Body -->
+<div class="flex-1 overflow-y-auto p-6 flex flex-col gap-8">
+<!-- Section: Core Identity -->
+<section class="flex flex-col gap-4">
+<h3 class="font-label-caps text-label-caps text-text-secondary border-b border-border-subtle pb-2">Identity &amp; Access</h3>
+<div class="flex flex-col gap-1.5">
+<label class="font-table-data text-[13px] text-text-primary">Email Address</label>
+<input class="w-full h-9 px-3 bg-surface-main border border-border-subtle rounded text-sm text-text-primary focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-shadow" type="email" value="alice.smith@agency.io"/>
+</div>
+<div class="flex flex-col gap-1.5">
+<label class="font-table-data text-[13px] text-text-primary">Role</label>
+<select class="w-full h-9 px-3 bg-surface-main border border-border-subtle rounded text-sm text-text-primary focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-shadow appearance-none">
+<option selected="" value="member">Member</option>
+<option value="admin">Administrator</option>
+<option value="viewer">Viewer Only</option>
+</select>
+</div>
+</section>
+<!-- Section: Lifecycle Status -->
+<section class="flex flex-col gap-4">
+<h3 class="font-label-caps text-label-caps text-text-secondary border-b border-border-subtle pb-2">Lifecycle State</h3>
+<div class="flex flex-col gap-1.5">
+<label class="font-table-data text-[13px] text-text-primary">Account Status</label>
+<div class="flex gap-3 mt-1">
+<label class="flex items-center gap-2 cursor-pointer">
+<input class="w-4 h-4 text-primary border-outline-variant focus:ring-primary" name="status" type="radio"/>
+<span class="font-body-sm text-body-sm">Active</span>
+</label>
+<label class="flex items-center gap-2 cursor-pointer">
+<input checked="" class="w-4 h-4 text-primary border-outline-variant focus:ring-primary" name="status" type="radio"/>
+<span class="font-body-sm text-body-sm">Invited</span>
+</label>
+<label class="flex items-center gap-2 cursor-pointer">
+<input class="w-4 h-4 text-primary border-outline-variant focus:ring-primary" name="status" type="radio"/>
+<span class="font-body-sm text-body-sm text-status-error">Suspended</span>
+</label>
+</div>
+</div>
+</section>
+<!-- Section: Read Only Metadata -->
+<section class="flex flex-col gap-3 mt-4 bg-surface-alt p-4 rounded-lg border border-border-subtle">
+<h3 class="font-label-caps text-label-caps text-text-secondary mb-1">System Metadata</h3>
+<div class="flex justify-between items-center py-1 border-b border-border-subtle/50">
+<span class="text-[13px] text-text-secondary">Created At</span>
+<span class="font-mono text-[13px] text-text-primary">2023-11-02 14:32 UTC</span>
+</div>
+<div class="flex justify-between items-center py-1 border-b border-border-subtle/50">
+<span class="text-[13px] text-text-secondary">Last Sign In</span>
+<span class="font-mono text-[13px] text-text-primary">Never</span>
+</div>
+<div class="flex justify-between items-center py-1">
+<span class="text-[13px] text-text-secondary">Provider</span>
+<span class="text-[13px] font-medium text-text-primary flex items-center gap-1">
+<span class="material-symbols-outlined text-[14px]">mail</span> Email
+                        </span>
+</div>
+</section>
+<!-- Danger Zone -->
+<div class="mt-auto pt-8">
+<button class="w-full h-9 flex items-center justify-center gap-2 border border-status-error/30 text-status-error hover:bg-status-error/5 rounded text-sm font-medium transition-colors">
+<span class="material-symbols-outlined text-[18px]">delete</span>
+                        Delete User Data
+                    </button>
+</div>
+</div>
+<!-- Sticky Footer -->
+<div class="p-6 border-t border-border-subtle bg-surface-main shrink-0 sticky bottom-0 z-10 flex gap-3">
+<button class="flex-1 h-9 flex items-center justify-center border border-border-subtle rounded text-sm font-medium text-text-primary hover:bg-slate-50 transition-colors">
+                    Cancel
+                </button>
+<button class="flex-1 h-9 flex items-center justify-center bg-primary text-on-primary rounded text-sm font-medium hover:bg-opacity-90 transition-colors shadow-sm">
+                    Save Changes
+                </button>
+</div>
+</aside>
+</div>
+</body></html>

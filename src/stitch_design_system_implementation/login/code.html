@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Login - Supabase Admin</title>
+<!-- Google Fonts -->
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<!-- Material Symbols -->
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<!-- Tailwind CSS -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<!-- Tailwind Config -->
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            "colors": {
+                    "primary-container": "#131b2e",
+                    "on-secondary": "#ffffff",
+                    "surface-container-high": "#eae7e9",
+                    "tertiary": "#000000",
+                    "error": "#ba1a1a",
+                    "tertiary-container": "#271901",
+                    "inverse-primary": "#bec6e0",
+                    "surface-main": "#FFFFFF",
+                    "surface-variant": "#e4e2e4",
+                    "status-active": "#10B981",
+                    "secondary-fixed-dim": "#66df6e",
+                    "on-secondary-fixed-variant": "#005315",
+                    "primary": "#000000",
+                    "on-primary": "#ffffff",
+                    "on-primary-fixed": "#131b2e",
+                    "text-primary": "#0F172A",
+                    "primary-fixed-dim": "#bec6e0",
+                    "outline-variant": "#c6c6cd",
+                    "border-subtle": "#E2E8F0",
+                    "on-tertiary": "#ffffff",
+                    "inverse-surface": "#303032",
+                    "outline": "#76777d",
+                    "on-secondary-fixed": "#002205",
+                    "surface-tint": "#565e74",
+                    "surface-container-lowest": "#ffffff",
+                    "on-tertiary-container": "#98805d",
+                    "surface-dim": "#dcd9db",
+                    "on-tertiary-fixed": "#271901",
+                    "on-primary-container": "#7c839b",
+                    "surface-alt": "#F8FAFC",
+                    "secondary-container": "#80f984",
+                    "on-background": "#1b1b1d",
+                    "inverse-on-surface": "#f3f0f2",
+                    "tertiary-fixed-dim": "#dec29a",
+                    "secondary": "#006e1f",
+                    "on-error-container": "#93000a",
+                    "on-surface-variant": "#45464d",
+                    "on-primary-fixed-variant": "#3f465c",
+                    "on-surface": "#1b1b1d",
+                    "on-secondary-container": "#007321",
+                    "status-pending": "#F59E0B",
+                    "text-secondary": "#64748B",
+                    "on-error": "#ffffff",
+                    "on-tertiary-fixed-variant": "#574425",
+                    "tertiary-fixed": "#fcdeb5",
+                    "surface-bright": "#fcf8fa",
+                    "status-error": "#EF4444",
+                    "surface-container-low": "#f6f3f5",
+                    "surface": "#fcf8fa",
+                    "background": "#fcf8fa",
+                    "secondary-fixed": "#83fc87",
+                    "error-container": "#ffdad6",
+                    "primary-fixed": "#dae2fd",
+                    "surface-container": "#f0edef",
+                    "surface-container-highest": "#e4e2e4"
+            },
+            "borderRadius": {
+                    "DEFAULT": "0.125rem",
+                    "lg": "0.25rem",
+                    "xl": "0.5rem",
+                    "full": "0.75rem"
+            },
+            "spacing": {
+                    "auth-card-width": "400px",
+                    "stack-md": "1.5rem",
+                    "gutter": "1.5rem",
+                    "stack-sm": "0.5rem",
+                    "stack-lg": "3rem",
+                    "container-max": "1200px"
+            },
+            "fontFamily": {
+                    "h1": ["Inter"],
+                    "body-base": ["Inter"],
+                    "table-data": ["Inter"],
+                    "label-caps": ["Inter"],
+                    "body-sm": ["Inter"],
+                    "h2": ["Inter"]
+            },
+            "fontSize": {
+                    "h1": ["30px", {"lineHeight": "36px", "letterSpacing": "-0.02em", "fontWeight": "700"}],
+                    "body-base": ["16px", {"lineHeight": "24px", "fontWeight": "400"}],
+                    "table-data": ["14px", {"lineHeight": "20px", "fontWeight": "500"}],
+                    "label-caps": ["12px", {"lineHeight": "16px", "letterSpacing": "0.05em", "fontWeight": "600"}],
+                    "body-sm": ["14px", {"lineHeight": "20px", "fontWeight": "400"}],
+                    "h2": ["24px", {"lineHeight": "32px", "letterSpacing": "-0.01em", "fontWeight": "600"}]
+            }
+          }
+        }
+      }
+    </script>
+<style>
+        .material-symbols-outlined {
+          font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+    </style>
+</head>
+<body class="bg-surface-alt min-h-screen flex items-center justify-center p-4 antialiased">
+<!-- Auth Container: Centered, Fixed Width -->
+<main class="w-full max-w-[400px] bg-surface-main border border-border-subtle rounded-xl p-8 shadow-sm flex flex-col gap-6">
+<!-- Header -->
+<header class="flex flex-col gap-2 text-center items-center mb-2">
+<div class="w-10 h-10 bg-primary rounded-lg flex items-center justify-center mb-2">
+<span class="material-symbols-outlined text-on-primary" style="font-variation-settings: 'FILL' 1;">admin_panel_settings</span>
+</div>
+<h1 class="font-h2 text-h2 text-text-primary tracking-tight">Welcome back</h1>
+<p class="font-body-sm text-body-sm text-text-secondary">Sign in to continue to Supabase Admin.</p>
+</header>
+<!-- System Error Banner -->
+<div class="bg-error-container border border-status-error/30 rounded-md p-3 flex items-start gap-3">
+<span class="material-symbols-outlined text-status-error text-[20px] mt-0.5">error</span>
+<div class="flex-1">
+<p class="font-table-data text-table-data text-on-error-container">Authentication failed</p>
+<p class="font-body-sm text-body-sm text-on-error-container/80 mt-0.5">Please check your email and password and try again.</p>
+</div>
+</div>
+<!-- Login Form -->
+<form action="#" class="flex flex-col gap-5" method="POST">
+<!-- Email Field (Valid State) -->
+<div class="flex flex-col gap-1.5">
+<label class="font-label-caps text-label-caps text-text-secondary uppercase tracking-wider" for="email">Email address</label>
+<input class="w-full px-3 py-2 bg-surface-main border border-border-subtle rounded-md font-body-base text-body-base text-text-primary placeholder:text-outline-variant focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-shadow" id="email" name="email" placeholder="name@company.com" required="" type="email" value="admin@example.com"/>
+</div>
+<!-- Password Field (Inline Error State) -->
+<div class="flex flex-col gap-1.5">
+<div class="flex justify-between items-center">
+<label class="font-label-caps text-label-caps text-text-secondary uppercase tracking-wider" for="password">Password</label>
+<a class="font-body-sm text-body-sm text-text-secondary hover:text-text-primary transition-colors" href="#">Forgot password?</a>
+</div>
+<input class="w-full px-3 py-2 bg-surface-main border border-status-error rounded-md font-body-base text-body-base text-text-primary focus:outline-none focus:ring-1 focus:ring-status-error focus:border-status-error transition-shadow" id="password" name="password" placeholder="••••••••" required="" type="password" value="wrongpassword"/>
+<p class="font-body-sm text-body-sm text-status-error mt-0.5 flex items-center gap-1">
+<span class="material-symbols-outlined text-[14px]">warning</span>
+                    Incorrect password provided.
+                </p>
+</div>
+<!-- Submit Action -->
+<button class="w-full bg-primary text-on-primary font-table-data text-table-data rounded-md py-2.5 mt-2 hover:bg-primary/90 transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-offset-surface-main" type="submit">
+                Log in
+            </button>
+</form>
+<!-- Footer Links -->
+<div class="text-center mt-2 border-t border-border-subtle pt-6">
+<p class="font-body-sm text-body-sm text-text-secondary">
+                Don't have an account? 
+                <a class="font-table-data text-table-data text-text-primary hover:underline underline-offset-2" href="#">Register here</a>
+</p>
+</div>
+</main>
+</body></html>

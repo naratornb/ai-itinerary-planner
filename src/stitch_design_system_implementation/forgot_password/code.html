@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Forgot Password - Supabase Admin</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "primary-container": "#131b2e",
+                        "on-secondary": "#ffffff",
+                        "surface-container-high": "#eae7e9",
+                        "tertiary": "#000000",
+                        "error": "#ba1a1a",
+                        "tertiary-container": "#271901",
+                        "inverse-primary": "#bec6e0",
+                        "surface-main": "#FFFFFF",
+                        "surface-variant": "#e4e2e4",
+                        "status-active": "#10B981",
+                        "secondary-fixed-dim": "#66df6e",
+                        "on-secondary-fixed-variant": "#005315",
+                        "primary": "#000000",
+                        "on-primary": "#ffffff",
+                        "on-primary-fixed": "#131b2e",
+                        "text-primary": "#0F172A",
+                        "primary-fixed-dim": "#bec6e0",
+                        "outline-variant": "#c6c6cd",
+                        "border-subtle": "#E2E8F0",
+                        "on-tertiary": "#ffffff",
+                        "inverse-surface": "#303032",
+                        "outline": "#76777d",
+                        "on-secondary-fixed": "#002205",
+                        "surface-tint": "#565e74",
+                        "surface-container-lowest": "#ffffff",
+                        "on-tertiary-container": "#98805d",
+                        "surface-dim": "#dcd9db",
+                        "on-tertiary-fixed": "#271901",
+                        "on-primary-container": "#7c839b",
+                        "surface-alt": "#F8FAFC",
+                        "secondary-container": "#80f984",
+                        "on-background": "#1b1b1d",
+                        "inverse-on-surface": "#f3f0f2",
+                        "tertiary-fixed-dim": "#dec29a",
+                        "secondary": "#006e1f",
+                        "on-error-container": "#93000a",
+                        "on-surface-variant": "#45464d",
+                        "on-primary-fixed-variant": "#3f465c",
+                        "on-surface": "#1b1b1d",
+                        "on-secondary-container": "#007321",
+                        "status-pending": "#F59E0B",
+                        "text-secondary": "#64748B",
+                        "on-error": "#ffffff",
+                        "on-tertiary-fixed-variant": "#574425",
+                        "tertiary-fixed": "#fcdeb5",
+                        "surface-bright": "#fcf8fa",
+                        "status-error": "#EF4444",
+                        "surface-container-low": "#f6f3f5",
+                        "surface": "#fcf8fa",
+                        "background": "#fcf8fa",
+                        "secondary-fixed": "#83fc87",
+                        "error-container": "#ffdad6",
+                        "primary-fixed": "#dae2fd",
+                        "surface-container": "#f0edef",
+                        "surface-container-highest": "#e4e2e4"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.125rem",
+                        "lg": "0.25rem",
+                        "xl": "0.5rem",
+                        "full": "0.75rem"
+                    },
+                    "spacing": {
+                        "auth-card-width": "400px",
+                        "stack-md": "1.5rem",
+                        "gutter": "1.5rem",
+                        "stack-sm": "0.5rem",
+                        "stack-lg": "3rem",
+                        "container-max": "1200px"
+                    },
+                    "fontFamily": {
+                        "h1": ["Inter"],
+                        "body-base": ["Inter"],
+                        "table-data": ["Inter"],
+                        "label-caps": ["Inter"],
+                        "body-sm": ["Inter"],
+                        "h2": ["Inter"]
+                    },
+                    "fontSize": {
+                        "h1": ["30px", {"lineHeight": "36px", "letterSpacing": "-0.02em", "fontWeight": "700"}],
+                        "body-base": ["16px", {"lineHeight": "24px", "fontWeight": "400"}],
+                        "table-data": ["14px", {"lineHeight": "20px", "fontWeight": "500"}],
+                        "label-caps": ["12px", {"lineHeight": "16px", "letterSpacing": "0.05em", "fontWeight": "600"}],
+                        "body-sm": ["14px", {"lineHeight": "20px", "fontWeight": "400"}],
+                        "h2": ["24px", {"lineHeight": "32px", "letterSpacing": "-0.01em", "fontWeight": "600"}]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        body { font-family: 'Inter', sans-serif; }
+    </style>
+</head>
+<body class="bg-surface-alt min-h-screen flex flex-col items-center justify-center p-4">
+<!-- Presentation Container showing both states -->
+<div class="flex flex-col md:flex-row gap-8 items-start justify-center max-w-container-max w-full">
+<!-- State 1: Forgot Password Form -->
+<div class="w-full max-w-auth-card-width bg-surface-main border border-border-subtle rounded-lg shadow-sm flex flex-col">
+<div class="p-stack-md flex flex-col gap-stack-md">
+<!-- Brand / Header -->
+<div class="flex flex-col gap-stack-sm items-center text-center">
+<!-- Placeholder Logo -->
+<div class="w-10 h-10 rounded-full bg-primary flex items-center justify-center mb-2">
+<span class="material-symbols-outlined text-on-primary" style="font-variation-settings: 'FILL' 1;">lock_reset</span>
+</div>
+<h1 class="font-h2 text-h2 text-text-primary">Reset your password</h1>
+<p class="font-body-sm text-body-sm text-text-secondary">
+                        Enter your email address and we will send you a link to reset your password.
+                    </p>
+</div>
+<!-- Form -->
+<form class="flex flex-col gap-stack-md" onsubmit="event.preventDefault();">
+<div class="flex flex-col gap-2">
+<label class="font-label-caps text-label-caps text-text-primary uppercase tracking-wider" for="email-reset">Email address</label>
+<input class="w-full h-10 px-3 bg-surface-main border border-border-subtle rounded-DEFAULT font-body-sm text-body-sm text-text-primary focus:outline-none focus:border-text-primary focus:ring-1 focus:ring-text-primary transition-colors placeholder:text-text-secondary/50" id="email-reset" placeholder="admin@example.com" type="email"/>
+</div>
+<button class="w-full h-10 bg-primary text-on-primary font-body-sm text-body-sm font-medium rounded-DEFAULT hover:bg-text-primary transition-colors flex items-center justify-center gap-2" type="submit">
+                        Send reset link
+                    </button>
+</form>
+<!-- Footer Links -->
+<div class="flex justify-center pt-2 border-t border-border-subtle mt-2">
+<a class="font-body-sm text-body-sm text-text-secondary hover:text-text-primary transition-colors flex items-center gap-1" href="#">
+<span class="material-symbols-outlined text-[16px]">arrow_back</span>
+                        Back to Login
+                    </a>
+</div>
+</div>
+</div>
+<!-- State 2: Success State (Presented side-by-side for review) -->
+<div class="w-full max-w-auth-card-width bg-surface-main border border-border-subtle rounded-lg shadow-sm flex flex-col relative overflow-hidden">
+<!-- Subtle success top border accent -->
+<div class="absolute top-0 left-0 w-full h-1 bg-status-active"></div>
+<div class="p-stack-md flex flex-col gap-stack-md items-center text-center">
+<!-- Success Icon -->
+<div class="w-16 h-16 rounded-full bg-status-active/10 flex items-center justify-center mb-2">
+<span class="material-symbols-outlined text-status-active text-3xl" style="font-variation-settings: 'FILL' 1;">mark_email_read</span>
+</div>
+<div class="flex flex-col gap-stack-sm">
+<h2 class="font-h2 text-h2 text-text-primary">Check your email</h2>
+<p class="font-body-sm text-body-sm text-text-secondary">
+                        We've sent a password reset link to <span class="font-medium text-text-primary">admin@example.com</span>. Please check your inbox and spam folder.
+                    </p>
+</div>
+<div class="flex flex-col gap-4 w-full mt-4">
+<button class="w-full h-10 bg-surface-main border border-border-subtle text-text-primary font-body-sm text-body-sm font-medium rounded-DEFAULT hover:bg-surface-variant transition-colors flex items-center justify-center gap-2" type="button">
+                        Back to Login
+                    </button>
+<p class="font-body-sm text-body-sm text-text-secondary">
+                        Didn't receive the email? 
+                        <a class="text-text-primary font-medium hover:underline" href="#">Click to resend</a>
+</p>
+</div>
+</div>
+</div>
+</div>
+</body></html>
