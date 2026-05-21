@@ -1,0 +1,2025 @@
+openapi: 3.0.3
+
+info:
+  title: Flight Centre Influencer Marketplace — AI-Powered Itinerary Planning API
+  description: |
+    ## Overview
+
+    REST API for the **Flight Centre Influencer Marketplace** platform (QUT Group 51).
+    This API enables three user roles to interact with the marketplace:
+
+    | Role | Capabilities |
+    |------|-------------|
+    | `influencer` | Create and manage travel packages, upload media, use AI itinerary suggestions |
+    | `admin` | Review, approve, and reject packages submitted for marketplace listing |
+    | `customer` | Browse the marketplace, search for packages, view package details |
+
+    ## Architecture
+
+    - **Backend:** FastAPI (Python), deployed on Railway
+    - **Database:** Supabase PostgreSQL (13 tables)
+    - **AI:** LangChain RAG pipeline with GPT-4o (NFR-P-101: responses < 10 seconds)
+    - **Frontend:** Next.js + Tailwind CSS, deployed on Vercel
+    - **Authentication:** JWT Bearer tokens issued on login
+
+    ## Package Lifecycle
+
+    ```
+    draft → pending_review → approved → live → archived
+                          ↘ rejected → draft (via revise)
+    ```
+
+    ## Non-Functional Requirements
+
+    - **NFR-P-100:** All user-facing text is localised to English (Australia); prices in AUD (cents).
+    - **NFR-P-101:** AI suggestion endpoint must respond within 10 seconds end-to-end.
+
+    ## Assessor Notes
+
+    This specification covers all six API groups: `auth`, `packages`, `approvals`, `media`, `ai`, `marketplace`.
+    Error responses use a consistent `ErrorResponse` schema throughout.
+    All monetary values are stored and returned as **integer cents (AUD)** to avoid floating-point precision issues.
+
+  version: "1.0.0"
+  contact:
+    name: QUT Group 51
+    email: group51@qut.edu.au
+  license:
+    name: Academic Use Only
+
+servers:
+  - url: https://api.fc-marketplace.com/v1
+    description: Production (Railway)
+  - url: http://localhost:8000/v1
+    description: Local development
+
+tags:
+  - name: auth
+    description: |
+      Authentication endpoints. Issues JWT Bearer tokens for all three roles.
+      Tokens encode `user_id`, `role`, `email`, and `exp` claims.
+  - name: packages
+    description: |
+      Travel package CRUD for **influencers**. Covers the full package lifecycle from
+      draft creation through submission for admin review.
+      Functional requirements: FR-I-100, FR-I-101, FR-I-102, FR-I-103.
+  - name: approvals
+    description: |
+      Package review workflow for **admins**. Admins approve or reject packages,
+      optionally providing rejection reasons that influencers can read and act on.
+      Functional requirements: FR-A-100, FR-A-101, FR-A-102.
+  - name: media
+    description: |
+      Package media management for **influencers**. Supports uploading images and videos
+      attached to a travel package. Files are stored in Supabase Storage.
+      Functional requirements: FR-I-104.
+  - name: ai
+    description: |
+      AI-powered itinerary suggestion engine. Uses a LangChain RAG pipeline backed by
+      GPT-4o to generate structured itinerary suggestions from a natural-language prompt.
+      Functional requirements: FR-I-105, FR-I-106.
+      Performance: NFR-P-101 (< 10 seconds).
+  - name: marketplace
+    description: |
+      Public marketplace browsing for **customers** (and unauthenticated visitors).
+      Returns only packages with status `live`.
+      Functional requirements: FR-C-100, FR-C-101, FR-C-102.
+
+# ─────────────────────────────────────────────
+#  SECURITY
+# ─────────────────────────────────────────────
+security:
+  - BearerAuth: []
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        JWT issued by `POST /auth/login`. Include in every protected request:
+        ```
+        Authorization: Bearer <token>
+        ```
+        The token payload contains:
+        ```json
+        {
+          "sub": "uuid",
+          "role": "influencer | admin | customer",
+          "email": "user@example.com",
+          "exp": 1748822400
+        }
+        ```
+
+  # ─────────────────────────────────────────────
+  #  REUSABLE SCHEMAS
+  # ─────────────────────────────────────────────
+  schemas:
+
+    # ── Auth ──────────────────────────────────
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+          example: "jessica.travels@example.com.au"
+        password:
+          type: string
+          format: password
+          minLength: 8
+          example: "Str0ng!Pass"
+
+    LoginResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+          description: Signed JWT Bearer token.
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+        token_type:
+          type: string
+          enum: [bearer]
+          example: "bearer"
+        expires_in:
+          type: integer
+          description: Token lifetime in seconds.
+          example: 3600
+        user:
+          $ref: '#/components/schemas/UserProfile'
+
+    UserProfile:
+      type: object
+      properties:
+        user_id:
+          type: string
+          format: uuid
+          example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        email:
+          type: string
+          format: email
+          example: "jessica.travels@example.com.au"
+        display_name:
+          type: string
+          example: "Jessica Travels"
+        role:
+          type: string
+          enum: [influencer, admin, customer]
+          example: "influencer"
+        created_at:
+          type: string
+          format: date-time
+          example: "2025-01-15T08:30:00+10:00"
+        influencer_profile:
+          $ref: '#/components/schemas/InfluencerProfile'
+          nullable: true
+          description: Present only when role is `influencer`.
+
+    InfluencerProfile:
+      type: object
+      properties:
+        bio:
+          type: string
+          nullable: true
+          example: "Sydney-based travel content creator specialising in Southeast Asia."
+        instagram_handle:
+          type: string
+          nullable: true
+          example: "@jessicatravelsau"
+        tiktok_handle:
+          type: string
+          nullable: true
+          example: "@jessicatravels"
+        follower_count:
+          type: integer
+          nullable: true
+          example: 85000
+        verified:
+          type: boolean
+          example: false
+
+    # ── Packages ──────────────────────────────
+    TravelPackageBase:
+      type: object
+      required: [title, description, base_price_aud, destination_country, destination_city, duration_nights]
+      properties:
+        title:
+          type: string
+          maxLength: 200
+          example: "10-Day Bali Escape: Culture, Surf & Cuisine"
+        description:
+          type: string
+          example: "Explore Ubud's rice terraces, catch waves at Canggu, and dine at Seminyak's finest restaurants."
+        destination_country:
+          type: string
+          example: "Indonesia"
+        destination_city:
+          type: string
+          example: "Bali"
+        duration_nights:
+          type: integer
+          minimum: 1
+          example: 10
+        base_price_aud:
+          type: integer
+          description: Package price in **AUD cents** (e.g. 350000 = $3,500.00 AUD).
+          minimum: 0
+          example: 350000
+        max_group_size:
+          type: integer
+          nullable: true
+          example: 12
+        tags:
+          type: array
+          items:
+            type: string
+          example: ["beach", "culture", "food", "surf"]
+
+    TravelPackageCreate:
+      allOf:
+        - $ref: '#/components/schemas/TravelPackageBase'
+        - type: object
+          properties:
+            flights:
+              type: array
+              items:
+                $ref: '#/components/schemas/FlightInput'
+            hotels:
+              type: array
+              items:
+                $ref: '#/components/schemas/HotelInput'
+            activities:
+              type: array
+              items:
+                $ref: '#/components/schemas/ActivityInput'
+
+    TravelPackageSummary:
+      type: object
+      properties:
+        package_id:
+          type: string
+          format: uuid
+          example: "pkg-00001-uuid-example-here"
+        title:
+          type: string
+          example: "10-Day Bali Escape: Culture, Surf & Cuisine"
+        destination_country:
+          type: string
+          example: "Indonesia"
+        destination_city:
+          type: string
+          example: "Bali"
+        duration_nights:
+          type: integer
+          example: 10
+        base_price_aud:
+          type: integer
+          example: 350000
+        status:
+          $ref: '#/components/schemas/PackageStatus'
+        creator_id:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        submitted_at:
+          type: string
+          format: date-time
+          nullable: true
+        published_at:
+          type: string
+          format: date-time
+          nullable: true
+        cover_image_url:
+          type: string
+          format: uri
+          nullable: true
+          example: "https://storage.supabase.co/object/public/media/pkg-00001/cover.jpg"
+
+    TravelPackageDetail:
+      allOf:
+        - $ref: '#/components/schemas/TravelPackageSummary'
+        - type: object
+          properties:
+            description:
+              type: string
+            max_group_size:
+              type: integer
+              nullable: true
+            tags:
+              type: array
+              items:
+                type: string
+            flights:
+              type: array
+              items:
+                $ref: '#/components/schemas/FlightDetail'
+            hotels:
+              type: array
+              items:
+                $ref: '#/components/schemas/HotelDetail'
+            activities:
+              type: array
+              items:
+                $ref: '#/components/schemas/ActivityDetail'
+            media:
+              type: array
+              items:
+                $ref: '#/components/schemas/MediaItem'
+            latest_approval:
+              $ref: '#/components/schemas/ApprovalRecord'
+              nullable: true
+
+    PackageStatus:
+      type: string
+      enum: [draft, pending_review, approved, rejected, live, archived]
+      description: |
+        Package lifecycle states:
+        - `draft` — being edited by influencer
+        - `pending_review` — submitted, awaiting admin decision
+        - `approved` — admin approved, ready to publish
+        - `rejected` — admin rejected; influencer can revise and resubmit
+        - `live` — published and visible in marketplace
+        - `archived` — removed from marketplace
+
+    TravelPackageUpdate:
+      type: object
+      description: All fields are optional; only provided fields are updated.
+      properties:
+        title:
+          type: string
+          maxLength: 200
+        description:
+          type: string
+        destination_country:
+          type: string
+        destination_city:
+          type: string
+        duration_nights:
+          type: integer
+          minimum: 1
+        base_price_aud:
+          type: integer
+          minimum: 0
+        max_group_size:
+          type: integer
+          nullable: true
+        tags:
+          type: array
+          items:
+            type: string
+
+    # ── Package Components ─────────────────────
+    FlightInput:
+      type: object
+      required: [origin_iata, destination_iata, airline, departure_datetime, arrival_datetime]
+      properties:
+        origin_iata:
+          type: string
+          minLength: 3
+          maxLength: 3
+          example: "SYD"
+        destination_iata:
+          type: string
+          minLength: 3
+          maxLength: 3
+          example: "DPS"
+        airline:
+          type: string
+          example: "Garuda Indonesia"
+        flight_number:
+          type: string
+          nullable: true
+          example: "GA715"
+        departure_datetime:
+          type: string
+          format: date-time
+          example: "2025-07-14T06:30:00+10:00"
+        arrival_datetime:
+          type: string
+          format: date-time
+          example: "2025-07-14T11:45:00+08:00"
+        cabin_class:
+          type: string
+          enum: [economy, premium_economy, business, first]
+          example: "economy"
+        price_aud:
+          type: integer
+          description: Per-person flight price in AUD cents.
+          example: 85000
+
+    FlightDetail:
+      allOf:
+        - type: object
+          properties:
+            flight_id:
+              type: string
+              format: uuid
+            sequence_order:
+              type: integer
+              example: 1
+        - $ref: '#/components/schemas/FlightInput'
+
+    HotelInput:
+      type: object
+      required: [hotel_name, check_in_date, check_out_date, city]
+      properties:
+        hotel_name:
+          type: string
+          example: "The Layar Private Villas"
+        star_rating:
+          type: integer
+          minimum: 1
+          maximum: 5
+          nullable: true
+          example: 5
+        city:
+          type: string
+          example: "Seminyak, Bali"
+        address:
+          type: string
+          nullable: true
+          example: "Jl. Drupadi No. 100, Seminyak, Bali 80361"
+        check_in_date:
+          type: string
+          format: date
+          example: "2025-07-14"
+        check_out_date:
+          type: string
+          format: date
+          example: "2025-07-21"
+        price_per_night_aud:
+          type: integer
+          description: Per-night price in AUD cents.
+          nullable: true
+          example: 42000
+        room_type:
+          type: string
+          nullable: true
+          example: "Pool Villa, King Bed"
+
+    HotelDetail:
+      allOf:
+        - type: object
+          properties:
+            hotel_id:
+              type: string
+              format: uuid
+            sequence_order:
+              type: integer
+              example: 1
+        - $ref: '#/components/schemas/HotelInput'
+
+    ActivityInput:
+      type: object
+      required: [activity_name, activity_date, city]
+      properties:
+        activity_name:
+          type: string
+          example: "Cooking Class at Paon Bali"
+        activity_date:
+          type: string
+          format: date
+          example: "2025-07-16"
+        city:
+          type: string
+          example: "Ubud, Bali"
+        duration_hours:
+          type: number
+          format: float
+          nullable: true
+          example: 3.5
+        price_aud:
+          type: integer
+          nullable: true
+          description: Per-person activity price in AUD cents.
+          example: 12000
+        description:
+          type: string
+          nullable: true
+          example: "Learn to cook six traditional Balinese dishes from a local family."
+        booking_required:
+          type: boolean
+          example: true
+
+    ActivityDetail:
+      allOf:
+        - type: object
+          properties:
+            activity_id:
+              type: string
+              format: uuid
+            sequence_order:
+              type: integer
+              example: 1
+        - $ref: '#/components/schemas/ActivityInput'
+
+    # ── Approvals ─────────────────────────────
+    ApprovalRecord:
+      type: object
+      properties:
+        approval_id:
+          type: string
+          format: uuid
+        package_id:
+          type: string
+          format: uuid
+        reviewer_id:
+          type: string
+          format: uuid
+        decision:
+          type: string
+          enum: [approved, rejected]
+          example: "rejected"
+        rejection_reason:
+          type: string
+          nullable: true
+          example: "Price does not reflect the stated inclusions. Please itemise all costs clearly."
+        reviewed_at:
+          type: string
+          format: date-time
+          example: "2025-03-10T14:22:00+10:00"
+
+    ApproveRequest:
+      type: object
+      description: Body for approving a package. No required fields.
+      properties:
+        notes:
+          type: string
+          nullable: true
+          description: Optional internal notes visible only to admins.
+          example: "Verified flight prices against current market rates."
+
+    RejectRequest:
+      type: object
+      required: [rejection_reason]
+      properties:
+        rejection_reason:
+          type: string
+          minLength: 10
+          description: |
+            Required explanation shown to the influencer so they can revise the package.
+            Minimum 10 characters.
+          example: "Price does not reflect the stated inclusions. Please itemise all costs clearly."
+        notes:
+          type: string
+          nullable: true
+          description: Optional internal admin notes (not shown to influencer).
+
+    # ── Media ─────────────────────────────────
+    MediaItem:
+      type: object
+      properties:
+        media_id:
+          type: string
+          format: uuid
+        package_id:
+          type: string
+          format: uuid
+        media_type:
+          type: string
+          enum: [image, video]
+          example: "image"
+        url:
+          type: string
+          format: uri
+          example: "https://storage.supabase.co/object/public/media/pkg-00001/bali-rice-terrace.jpg"
+        filename:
+          type: string
+          example: "bali-rice-terrace.jpg"
+        file_size_bytes:
+          type: integer
+          example: 2457600
+        is_cover:
+          type: boolean
+          description: Whether this item is the cover/thumbnail for the package.
+          example: true
+        sort_order:
+          type: integer
+          example: 1
+        uploaded_at:
+          type: string
+          format: date-time
+
+    MediaUploadResponse:
+      type: object
+      properties:
+        media_id:
+          type: string
+          format: uuid
+        package_id:
+          type: string
+          format: uuid
+        url:
+          type: string
+          format: uri
+        media_type:
+          type: string
+          enum: [image, video]
+        filename:
+          type: string
+        file_size_bytes:
+          type: integer
+        uploaded_at:
+          type: string
+          format: date-time
+
+    # ── AI ────────────────────────────────────
+    AISuggestRequest:
+      type: object
+      required: [package_id, prompt]
+      properties:
+        package_id:
+          type: string
+          format: uuid
+          description: The draft package to generate suggestions for.
+          example: "pkg-00001-uuid-example-here"
+        prompt:
+          type: string
+          minLength: 10
+          maxLength: 1000
+          description: |
+            Free-text prompt describing what the influencer wants suggestions for.
+            The RAG pipeline uses existing package data as context.
+          example: "Suggest a 3-day extension to explore the Gili Islands from Bali, including snorkelling and sunset dinner activities."
+
+    AISuggestion:
+      type: object
+      properties:
+        suggestion_id:
+          type: string
+          format: uuid
+        package_id:
+          type: string
+          format: uuid
+        prompt:
+          type: string
+          example: "Suggest a 3-day extension to explore the Gili Islands..."
+        suggestion_text:
+          type: string
+          description: Full structured itinerary suggestion from GPT-4o.
+          example: |
+            **Day 11 – Transfer to Gili Trawangan**
+            - Morning: Fast boat from Padang Bai (2 hrs, ~AUD $35)
+            - Afternoon: Check in at Ombak Sunset Resort; afternoon snorkel at Turtle Point
+            - Evening: Sunset dinner at Scallywags Beach Club
+
+            **Day 12 – Gili Air**
+            - Morning: Bike ride around Gili Trawangan (circumference ~7 km)
+            - Afternoon: Island hop to Gili Air by local cidomo horse cart boat
+            - Sunset: Cocktails at Mowies Bar with Lombok volcano views
+
+            **Day 13 – Return to Bali**
+            - Morning: Stand-up paddleboarding or freediving lesson (~AUD $60)
+            - Afternoon: Fast boat back to Bali; transfer to Ngurah Rai Airport
+        status:
+          type: string
+          enum: [pending, accepted, dismissed]
+          description: |
+            - `pending` — generated, awaiting influencer decision
+            - `accepted` — influencer accepted; components added to package
+            - `dismissed` — influencer dismissed the suggestion
+          example: "pending"
+        generated_at:
+          type: string
+          format: date-time
+        accepted_at:
+          type: string
+          format: date-time
+          nullable: true
+        response_time_ms:
+          type: integer
+          description: |
+            Actual AI pipeline response time in milliseconds.
+            NFR-P-101 requires this to be < 10,000.
+          example: 4823
+
+    AISuggestionAcceptRequest:
+      type: object
+      description: Accepting a suggestion can optionally auto-add itinerary components.
+      properties:
+        auto_apply:
+          type: boolean
+          default: true
+          description: |
+            If `true`, the backend parses `suggestion_text` and creates corresponding
+            flight/hotel/activity records on the package. Set to `false` to mark the
+            suggestion accepted without modifying the package.
+          example: true
+
+    # ── Marketplace ───────────────────────────
+    MarketplacePackageSummary:
+      type: object
+      description: Condensed package view for marketplace listing cards.
+      properties:
+        package_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+          example: "10-Day Bali Escape: Culture, Surf & Cuisine"
+        destination_country:
+          type: string
+          example: "Indonesia"
+        destination_city:
+          type: string
+          example: "Bali"
+        duration_nights:
+          type: integer
+          example: 10
+        base_price_aud:
+          type: integer
+          example: 350000
+        cover_image_url:
+          type: string
+          format: uri
+          nullable: true
+        tags:
+          type: array
+          items:
+            type: string
+        influencer:
+          type: object
+          properties:
+            display_name:
+              type: string
+              example: "Jessica Travels"
+            instagram_handle:
+              type: string
+              nullable: true
+              example: "@jessicatravelsau"
+            follower_count:
+              type: integer
+              nullable: true
+              example: 85000
+        published_at:
+          type: string
+          format: date-time
+
+    # ── Pagination ────────────────────────────
+    PaginationMeta:
+      type: object
+      properties:
+        total:
+          type: integer
+          description: Total number of items matching the query.
+          example: 142
+        page:
+          type: integer
+          example: 1
+        per_page:
+          type: integer
+          example: 20
+        total_pages:
+          type: integer
+          example: 8
+
+    # ── Errors ────────────────────────────────
+    ErrorResponse:
+      type: object
+      required: [error_code, message]
+      properties:
+        error_code:
+          type: string
+          description: Machine-readable error identifier.
+          example: "PACKAGE_NOT_FOUND"
+        message:
+          type: string
+          description: Human-readable error description (English, Australia).
+          example: "The requested travel package could not be found."
+        details:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: Additional context (e.g. validation field errors).
+          example:
+            field: "base_price_aud"
+            issue: "Must be a positive integer (AUD cents)."
+
+  # ─────────────────────────────────────────────
+  #  REUSABLE PARAMETERS
+  # ─────────────────────────────────────────────
+  parameters:
+    PackageIdPath:
+      name: package_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Unique identifier of the travel package.
+      example: "pkg-00001-uuid-example-here"
+
+    PageQuery:
+      name: page
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+      description: Page number for paginated results.
+
+    PerPageQuery:
+      name: per_page
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+      description: Number of items per page.
+
+  # ─────────────────────────────────────────────
+  #  REUSABLE RESPONSES
+  # ─────────────────────────────────────────────
+  responses:
+    Unauthorized:
+      description: Missing or invalid JWT token.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error_code: "UNAUTHORIZED"
+            message: "A valid Bearer token is required to access this resource."
+
+    Forbidden:
+      description: Authenticated user does not have the required role for this action.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error_code: "FORBIDDEN"
+            message: "Your account role does not permit this action."
+
+    NotFound:
+      description: The requested resource was not found.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error_code: "NOT_FOUND"
+            message: "Resource not found."
+
+    UnprocessableEntity:
+      description: Request body failed validation.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error_code: "VALIDATION_ERROR"
+            message: "One or more fields are invalid."
+            details:
+              field: "base_price_aud"
+              issue: "Must be a positive integer (AUD cents)."
+
+
+# ─────────────────────────────────────────────
+#  PATHS
+# ─────────────────────────────────────────────
+paths:
+
+  # ══════════════════════════════════════════
+  #  AUTH
+  # ══════════════════════════════════════════
+
+  /auth/login:
+    post:
+      tags: [auth]
+      summary: Authenticate and obtain a JWT token
+      description: |
+        Validates email/password credentials and returns a signed JWT Bearer token.
+        The token must be included in the `Authorization` header for all protected endpoints.
+
+        **Roles:** No authentication required — this is the entry point for all users.
+      operationId: authLogin
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+            example:
+              email: "jessica.travels@example.com.au"
+              password: "Str0ng!Pass"
+      responses:
+        "200":
+          description: Login successful.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+              example:
+                access_token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhMWIyYzNkNCIsInJvbGUiOiJpbmZsdWVuY2VyIiwiZW1haWwiOiJqZXNzaWNhQGV4YW1wbGUuY29tLmF1IiwiZXhwIjoxNzQ4ODIyNDAwfQ.signature"
+                token_type: "bearer"
+                expires_in: 3600
+                user:
+                  user_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                  email: "jessica.travels@example.com.au"
+                  display_name: "Jessica Travels"
+                  role: "influencer"
+                  created_at: "2025-01-15T08:30:00+10:00"
+        "401":
+          description: Invalid email or password.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error_code: "INVALID_CREDENTIALS"
+                message: "The email address or password is incorrect."
+        "422":
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /auth/me:
+    get:
+      tags: [auth]
+      summary: Get the currently authenticated user's profile
+      description: |
+        Returns the full profile of the currently authenticated user, including
+        the `influencer_profile` sub-object when the role is `influencer`.
+
+        **Roles:** `influencer`, `admin`, `customer`
+      operationId: authGetMe
+      responses:
+        "200":
+          description: Current user profile.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+
+  /auth/logout:
+    post:
+      tags: [auth]
+      summary: Invalidate the current session token
+      description: |
+        Adds the current JWT to a server-side deny-list, preventing further use
+        before expiry. Clients should discard the token regardless of the response.
+
+        **Roles:** `influencer`, `admin`, `customer`
+      operationId: authLogout
+      responses:
+        "204":
+          description: Successfully logged out. No response body.
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+
+  # ══════════════════════════════════════════
+  #  PACKAGES
+  # ══════════════════════════════════════════
+
+  /packages:
+    get:
+      tags: [packages]
+      summary: List packages owned by the authenticated influencer
+      description: |
+        Returns a paginated list of all travel packages created by the currently
+        authenticated influencer, across all statuses (draft, pending_review, etc.).
+
+        Admins calling this endpoint see **all** packages across all creators for
+        review pipeline management.
+
+        **Roles:** `influencer` (own packages only), `admin` (all packages)
+        **FR:** FR-I-100
+      operationId: listPackages
+      parameters:
+        - $ref: '#/components/parameters/PageQuery'
+        - $ref: '#/components/parameters/PerPageQuery'
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/PackageStatus'
+          description: Filter by package status.
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [created_at_desc, created_at_asc, price_asc, price_desc]
+            default: created_at_desc
+      responses:
+        "200":
+          description: Paginated list of packages.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TravelPackageSummary'
+                  meta:
+                    $ref: '#/components/schemas/PaginationMeta'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+    post:
+      tags: [packages]
+      summary: Create a new travel package
+      description: |
+        Creates a new travel package in `draft` status. The package may include
+        initial flights, hotels, and activities, or these can be added later.
+
+        The package is not visible in the marketplace until it has been submitted,
+        approved, and published.
+
+        **Roles:** `influencer`
+        **FR:** FR-I-100, FR-I-101
+      operationId: createPackage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TravelPackageCreate'
+            example:
+              title: "10-Day Bali Escape: Culture, Surf & Cuisine"
+              description: "Explore Ubud's rice terraces, catch waves at Canggu, and dine at Seminyak's finest restaurants."
+              destination_country: "Indonesia"
+              destination_city: "Bali"
+              duration_nights: 10
+              base_price_aud: 350000
+              max_group_size: 12
+              tags: ["beach", "culture", "food", "surf"]
+              flights:
+                - origin_iata: "SYD"
+                  destination_iata: "DPS"
+                  airline: "Garuda Indonesia"
+                  flight_number: "GA715"
+                  departure_datetime: "2025-07-14T06:30:00+10:00"
+                  arrival_datetime: "2025-07-14T11:45:00+08:00"
+                  cabin_class: "economy"
+                  price_aud: 85000
+              hotels:
+                - hotel_name: "The Layar Private Villas"
+                  star_rating: 5
+                  city: "Seminyak, Bali"
+                  check_in_date: "2025-07-14"
+                  check_out_date: "2025-07-21"
+                  price_per_night_aud: 42000
+                  room_type: "Pool Villa, King Bed"
+      responses:
+        "201":
+          description: Package created successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TravelPackageDetail'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "422":
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /packages/{package_id}:
+    parameters:
+      - $ref: '#/components/parameters/PackageIdPath'
+
+    get:
+      tags: [packages]
+      summary: Get full details of a single package
+      description: |
+        Returns the full detail view of a package including all flights, hotels,
+        activities, media, and the latest approval record.
+
+        Influencers may only retrieve their own packages. Admins may retrieve any package.
+
+        **Roles:** `influencer` (own only), `admin`
+        **FR:** FR-I-100
+      operationId: getPackage
+      responses:
+        "200":
+          description: Package detail.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TravelPackageDetail'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+    put:
+      tags: [packages]
+      summary: Update a package (partial or full update)
+      description: |
+        Updates the metadata fields of a travel package. Only packages in `draft`
+        or `rejected` status may be updated; attempting to update a package in
+        any other status returns `409 Conflict`.
+
+        To update flights/hotels/activities, delete and re-add the components.
+
+        **Roles:** `influencer` (own packages only)
+        **FR:** FR-I-101, FR-I-103 (revise after rejection)
+      operationId: updatePackage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TravelPackageUpdate'
+      responses:
+        "200":
+          description: Package updated successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TravelPackageDetail'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          description: Package is not in an editable state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error_code: "PACKAGE_NOT_EDITABLE"
+                message: "This package cannot be edited because its status is 'pending_review'. Only packages in 'draft' or 'rejected' status may be updated."
+        "422":
+          $ref: '#/components/responses/UnprocessableEntity'
+
+    delete:
+      tags: [packages]
+      summary: Delete a draft package
+      description: |
+        Permanently deletes a package and all associated records (flights, hotels,
+        activities, media, AI suggestions). Only packages in `draft` status may be deleted.
+
+        **Roles:** `influencer` (own packages only)
+        **FR:** FR-I-102
+      operationId: deletePackage
+      responses:
+        "204":
+          description: Package deleted successfully. No response body.
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          description: Package is not in a deletable state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error_code: "PACKAGE_NOT_DELETABLE"
+                message: "Only packages in 'draft' status may be deleted."
+
+  /packages/{package_id}/submit:
+    parameters:
+      - $ref: '#/components/parameters/PackageIdPath'
+    post:
+      tags: [packages]
+      summary: Submit a package for admin review
+      description: |
+        Transitions a package from `draft` (or `rejected`) to `pending_review`,
+        making it visible in the admin review queue.
+
+        **Pre-conditions (all must be met or 422 is returned):**
+        - Package status is `draft` or `rejected`
+        - Package has at least one flight
+        - Package has at least one hotel
+        - Package has at least one activity
+        - `base_price_aud` > 0
+
+        **Roles:** `influencer` (own packages only)
+        **FR:** FR-I-102
+      operationId: submitPackage
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                submission_note:
+                  type: string
+                  nullable: true
+                  maxLength: 500
+                  description: Optional note from the influencer to the reviewing admin.
+                  example: "Prices verified against Qantas.com.au as of today. Cover photo is original content."
+      responses:
+        "200":
+          description: Package submitted. Status is now `pending_review`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TravelPackageSummary'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "422":
+          description: Package does not meet submission pre-conditions.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error_code: "SUBMISSION_PRECONDITION_FAILED"
+                message: "Package cannot be submitted: at least one hotel must be included."
+                details:
+                  missing: ["hotel"]
+
+  # ══════════════════════════════════════════
+  #  APPROVALS
+  # ══════════════════════════════════════════
+
+  /approvals:
+    get:
+      tags: [approvals]
+      summary: List packages pending admin review
+      description: |
+        Returns a paginated list of packages in `pending_review` status, ordered by
+        `submitted_at` ascending (oldest submissions first, to prevent starvation).
+
+        **Roles:** `admin`
+        **FR:** FR-A-100
+      operationId: listPendingApprovals
+      parameters:
+        - $ref: '#/components/parameters/PageQuery'
+        - $ref: '#/components/parameters/PerPageQuery'
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [submitted_at_asc, submitted_at_desc]
+            default: submitted_at_asc
+      responses:
+        "200":
+          description: Packages awaiting review.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TravelPackageSummary'
+                  meta:
+                    $ref: '#/components/schemas/PaginationMeta'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /approvals/{package_id}/approve:
+    parameters:
+      - $ref: '#/components/parameters/PackageIdPath'
+    post:
+      tags: [approvals]
+      summary: Approve a package for marketplace listing
+      description: |
+        Approves a package in `pending_review` status, transitioning it to `approved`.
+
+        After approval the influencer may publish the package (transition to `live`)
+        via a separate action. The approval record is stored in `package_approvals`
+        and linked to the reviewing admin.
+
+        **Roles:** `admin`
+        **FR:** FR-A-101
+      operationId: approvePackage
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApproveRequest'
+            example:
+              notes: "Verified flight prices against current market rates. Content is high quality."
+      responses:
+        "200":
+          description: Package approved. Status is now `approved`.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  package:
+                    $ref: '#/components/schemas/TravelPackageSummary'
+                  approval:
+                    $ref: '#/components/schemas/ApprovalRecord'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          description: Package is not in `pending_review` status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error_code: "INVALID_STATUS_TRANSITION"
+                message: "Only packages in 'pending_review' status can be approved. Current status: 'approved'."
+
+  /approvals/{package_id}/reject:
+    parameters:
+      - $ref: '#/components/parameters/PackageIdPath'
+    post:
+      tags: [approvals]
+      summary: Reject a package and return it to the influencer
+      description: |
+        Rejects a package in `pending_review` status, transitioning it to `rejected`.
+
+        The `rejection_reason` is stored in `package_approvals` and surfaced to the
+        influencer when they view the package. The influencer may then revise and
+        resubmit (FR-I-103).
+
+        **Roles:** `admin`
+        **FR:** FR-A-102
+      operationId: rejectPackage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RejectRequest'
+            example:
+              rejection_reason: "Price does not reflect the stated inclusions. Please itemise all costs clearly and ensure the total matches `base_price_aud`."
+              notes: "Comparison: equivalent Qantas holidays package for same dates is AUD $2,800."
+      responses:
+        "200":
+          description: Package rejected. Status is now `rejected`.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  package:
+                    $ref: '#/components/schemas/TravelPackageSummary'
+                  approval:
+                    $ref: '#/components/schemas/ApprovalRecord'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          description: Package is not in `pending_review` status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error_code: "INVALID_STATUS_TRANSITION"
+                message: "Only packages in 'pending_review' status can be rejected."
+        "422":
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /approvals/{package_id}/publish:
+    parameters:
+      - $ref: '#/components/parameters/PackageIdPath'
+    post:
+      tags: [approvals]
+      summary: Publish an approved package to the live marketplace
+      description: |
+        Transitions an `approved` package to `live`, making it visible in the
+        public marketplace. Sets `published_at` timestamp.
+
+        This action is available to both the owning influencer (self-publish)
+        and admins.
+
+        **Roles:** `influencer` (own packages), `admin`
+        **FR:** FR-I-102
+      operationId: publishPackage
+      responses:
+        "200":
+          description: Package is now live in the marketplace.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TravelPackageSummary'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          description: Package is not in `approved` status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error_code: "INVALID_STATUS_TRANSITION"
+                message: "Only packages in 'approved' status can be published. Current status: 'draft'."
+
+  # ══════════════════════════════════════════
+  #  MEDIA
+  # ══════════════════════════════════════════
+
+  /media/{package_id}:
+    parameters:
+      - $ref: '#/components/parameters/PackageIdPath'
+    get:
+      tags: [media]
+      summary: List all media attached to a package
+      description: |
+        Returns all media items (images and videos) for a given package,
+        ordered by `sort_order` ascending.
+
+        **Roles:** `influencer` (own packages), `admin`
+        **FR:** FR-I-104
+      operationId: listPackageMedia
+      responses:
+        "200":
+          description: Ordered list of media items.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/MediaItem'
+                  total:
+                    type: integer
+                    example: 7
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+  /media/upload:
+    post:
+      tags: [media]
+      summary: Upload a media file to a package
+      description: |
+        Uploads an image or video file to Supabase Storage and associates it
+        with the specified package. The package must be in `draft` or `rejected`
+        status.
+
+        **Supported formats:**
+        - Images: `image/jpeg`, `image/png`, `image/webp` (max 10 MB)
+        - Videos: `video/mp4`, `video/quicktime` (max 200 MB)
+
+        Set `is_cover=true` to designate this as the cover image/thumbnail.
+        Any previous cover is automatically demoted.
+
+        **Roles:** `influencer` (own packages only)
+        **FR:** FR-I-104
+      operationId: uploadMedia
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [package_id, file]
+              properties:
+                package_id:
+                  type: string
+                  format: uuid
+                  description: ID of the package to attach this media to.
+                file:
+                  type: string
+                  format: binary
+                  description: The media file to upload.
+                is_cover:
+                  type: boolean
+                  default: false
+                  description: Set to true to use this as the package cover image.
+                sort_order:
+                  type: integer
+                  default: 0
+                  description: Display order position (lower = earlier).
+      responses:
+        "201":
+          description: Media uploaded successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaUploadResponse'
+              example:
+                media_id: "med-uuid-example-here"
+                package_id: "pkg-00001-uuid-example-here"
+                url: "https://storage.supabase.co/object/public/media/pkg-00001/bali-rice-terrace.jpg"
+                media_type: "image"
+                filename: "bali-rice-terrace.jpg"
+                file_size_bytes: 2457600
+                uploaded_at: "2025-03-01T10:15:00+10:00"
+        "400":
+          description: Unsupported file type or file exceeds size limit.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error_code: "UNSUPPORTED_FILE_TYPE"
+                message: "Only JPEG, PNG, WebP images and MP4/MOV videos are accepted."
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          description: Package is not in an editable state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error_code: "PACKAGE_NOT_EDITABLE"
+                message: "Media can only be uploaded to packages in 'draft' or 'rejected' status."
+
+  /media/{media_id}:
+    parameters:
+      - name: media_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+        description: Unique identifier of the media item.
+    delete:
+      tags: [media]
+      summary: Delete a media item
+      description: |
+        Removes a media item from Supabase Storage and the database.
+        The associated package must be in `draft` or `rejected` status.
+
+        **Roles:** `influencer` (own packages only)
+        **FR:** FR-I-104
+      operationId: deleteMedia
+      responses:
+        "204":
+          description: Media deleted successfully. No response body.
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          description: Package is not in an editable state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error_code: "PACKAGE_NOT_EDITABLE"
+                message: "Media can only be deleted from packages in 'draft' or 'rejected' status."
+
+  # ══════════════════════════════════════════
+  #  AI
+  # ══════════════════════════════════════════
+
+  /ai/suggest:
+    post:
+      tags: [ai]
+      summary: Generate an AI itinerary suggestion for a package
+      description: |
+        Submits a natural-language prompt to the LangChain RAG pipeline (GPT-4o backend)
+        to generate a structured itinerary suggestion. The existing package data
+        (destination, duration, existing flights/hotels/activities) is used as
+        retrieval context.
+
+        The suggestion is stored in the `ai_suggestions` table with status `pending`.
+        Use `PATCH /ai/suggestions/{suggestion_id}/accept` to apply it to the package.
+
+        **Performance:** NFR-P-101 — This endpoint must respond within **10 seconds**.
+        The `response_time_ms` field in the response records actual latency.
+
+        **Roles:** `influencer` (own packages only)
+        **FR:** FR-I-105
+      operationId: generateAISuggestion
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AISuggestRequest'
+            example:
+              package_id: "pkg-00001-uuid-example-here"
+              prompt: "Suggest a 3-day extension to explore the Gili Islands from Bali, including snorkelling and sunset dinner activities suitable for couples."
+      responses:
+        "201":
+          description: Suggestion generated successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AISuggestion'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "422":
+          $ref: '#/components/responses/UnprocessableEntity'
+        "504":
+          description: AI pipeline timed out (exceeded NFR-P-101 10-second SLA).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error_code: "AI_TIMEOUT"
+                message: "The AI suggestion pipeline did not respond within the 10-second time limit. Please try again."
+
+  /ai/suggestions/{package_id}:
+    parameters:
+      - $ref: '#/components/parameters/PackageIdPath'
+    get:
+      tags: [ai]
+      summary: List AI suggestions for a package
+      description: |
+        Returns all AI-generated suggestions for a given package, ordered by
+        `generated_at` descending (most recent first).
+
+        **Roles:** `influencer` (own packages only)
+        **FR:** FR-I-105
+      operationId: listAISuggestions
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, accepted, dismissed]
+          description: Filter suggestions by status.
+        - $ref: '#/components/parameters/PageQuery'
+        - $ref: '#/components/parameters/PerPageQuery'
+      responses:
+        "200":
+          description: List of AI suggestions.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AISuggestion'
+                  meta:
+                    $ref: '#/components/schemas/PaginationMeta'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+  /ai/suggestions/{suggestion_id}/accept:
+    parameters:
+      - name: suggestion_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+        description: Unique identifier of the AI suggestion.
+    patch:
+      tags: [ai]
+      summary: Accept an AI suggestion and optionally apply it to the package
+      description: |
+        Marks a suggestion as `accepted` and, when `auto_apply` is true (default),
+        parses the structured suggestion text and creates corresponding
+        flight/hotel/activity records on the package.
+
+        The package must be in `draft` or `rejected` status for `auto_apply` to work.
+        Setting `auto_apply: false` marks the suggestion accepted without modifying
+        the package — useful when the influencer copies content manually.
+
+        **Roles:** `influencer` (own packages only)
+        **FR:** FR-I-106
+      operationId: acceptAISuggestion
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AISuggestionAcceptRequest'
+            example:
+              auto_apply: true
+      responses:
+        "200":
+          description: Suggestion accepted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  suggestion:
+                    $ref: '#/components/schemas/AISuggestion'
+                  package:
+                    $ref: '#/components/schemas/TravelPackageDetail'
+                    description: Present when `auto_apply` is true; reflects newly added components.
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          description: Suggestion is not in `pending` status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error_code: "SUGGESTION_ALREADY_RESOLVED"
+                message: "This suggestion has already been accepted or dismissed."
+
+  /ai/suggestions/{suggestion_id}/dismiss:
+    parameters:
+      - name: suggestion_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    patch:
+      tags: [ai]
+      summary: Dismiss an AI suggestion
+      description: |
+        Marks a suggestion as `dismissed`. The suggestion is retained in the database
+        for audit purposes but will not appear in the default `pending` filter.
+
+        **Roles:** `influencer` (own packages only)
+        **FR:** FR-I-105
+      operationId: dismissAISuggestion
+      responses:
+        "200":
+          description: Suggestion dismissed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AISuggestion'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+  # ══════════════════════════════════════════
+  #  MARKETPLACE
+  # ══════════════════════════════════════════
+
+  /marketplace/packages:
+    get:
+      tags: [marketplace]
+      summary: Browse live packages in the marketplace
+      description: |
+        Returns a paginated list of all packages with status `live`, visible to
+        any visitor — authentication is not required.
+
+        Supports filtering by destination, price range, duration, and tags.
+        Default sort is `published_at` descending (newest listings first).
+
+        **Roles:** Public (no authentication required), `customer`
+        **FR:** FR-C-100, FR-C-101
+      operationId: listMarketplacePackages
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/PageQuery'
+        - $ref: '#/components/parameters/PerPageQuery'
+        - name: destination_country
+          in: query
+          schema:
+            type: string
+          description: Filter by destination country name (case-insensitive, partial match).
+          example: "Indonesia"
+        - name: destination_city
+          in: query
+          schema:
+            type: string
+          description: Filter by destination city (case-insensitive, partial match).
+          example: "Bali"
+        - name: min_price_aud
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+          description: Minimum price filter in AUD cents (inclusive).
+          example: 100000
+        - name: max_price_aud
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+          description: Maximum price filter in AUD cents (inclusive).
+          example: 500000
+        - name: min_nights
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+          description: Minimum trip duration in nights.
+          example: 7
+        - name: max_nights
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+          description: Maximum trip duration in nights.
+          example: 14
+        - name: tags
+          in: query
+          schema:
+            type: array
+            items:
+              type: string
+          style: form
+          explode: false
+          description: Filter by one or more tags (comma-separated). Returns packages matching ANY tag.
+          example: "beach,surf"
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [published_at_desc, price_asc, price_desc, duration_asc]
+            default: published_at_desc
+      responses:
+        "200":
+          description: Paginated list of live marketplace packages.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/MarketplacePackageSummary'
+                  meta:
+                    $ref: '#/components/schemas/PaginationMeta'
+              example:
+                data:
+                  - package_id: "pkg-00001-uuid-example-here"
+                    title: "10-Day Bali Escape: Culture, Surf & Cuisine"
+                    destination_country: "Indonesia"
+                    destination_city: "Bali"
+                    duration_nights: 10
+                    base_price_aud: 350000
+                    cover_image_url: "https://storage.supabase.co/object/public/media/pkg-00001/cover.jpg"
+                    tags: ["beach", "culture", "food", "surf"]
+                    influencer:
+                      display_name: "Jessica Travels"
+                      instagram_handle: "@jessicatravelsau"
+                      follower_count: 85000
+                    published_at: "2025-03-12T09:00:00+10:00"
+                meta:
+                  total: 42
+                  page: 1
+                  per_page: 20
+                  total_pages: 3
+
+  /marketplace/packages/{package_id}:
+    parameters:
+      - $ref: '#/components/parameters/PackageIdPath'
+    get:
+      tags: [marketplace]
+      summary: Get full details of a live marketplace package
+      description: |
+        Returns the complete public view of a package, including all itinerary
+        components (flights, hotels, activities) and media. Only packages with
+        status `live` are accessible via this endpoint.
+
+        **Roles:** Public (no authentication required), `customer`
+        **FR:** FR-C-100
+      operationId: getMarketplacePackage
+      security: []
+      responses:
+        "200":
+          description: Full package detail for marketplace display.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TravelPackageDetail'
+        "404":
+          description: Package not found or not in `live` status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error_code: "PACKAGE_NOT_FOUND"
+                message: "The requested travel package could not be found or is not currently listed."
+
+  /marketplace/search:
+    get:
+      tags: [marketplace]
+      summary: Full-text search across live packages
+      description: |
+        Performs a full-text search against package `title`, `description`,
+        `destination_city`, and `tags` fields. Returns only `live` packages.
+
+        Results are ranked by text relevance score, with secondary sort by
+        `published_at` descending.
+
+        This endpoint supports the same filter parameters as `GET /marketplace/packages`
+        and may be combined with the `q` query parameter.
+
+        **Roles:** Public (no authentication required), `customer`
+        **FR:** FR-C-101, FR-C-102
+      operationId: searchMarketplace
+      security: []
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 2
+            maxLength: 200
+          description: Full-text search query.
+          example: "Bali surfing beginners"
+        - $ref: '#/components/parameters/PageQuery'
+        - $ref: '#/components/parameters/PerPageQuery'
+        - name: destination_country
+          in: query
+          schema:
+            type: string
+          example: "Indonesia"
+        - name: min_price_aud
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+          example: 100000
+        - name: max_price_aud
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+          example: 500000
+        - name: tags
+          in: query
+          schema:
+            type: array
+            items:
+              type: string
+          style: form
+          explode: false
+          example: "surf,beach"
+      responses:
+        "200":
+          description: Search results, ranked by relevance.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  query:
+                    type: string
+                    description: The search query as received.
+                    example: "Bali surfing beginners"
+                  data:
+                    type: array
+                    items:
+                      allOf:
+                        - $ref: '#/components/schemas/MarketplacePackageSummary'
+                        - type: object
+                          properties:
+                            relevance_score:
+                              type: number
+                              format: float
+                              description: Text search relevance score (higher = more relevant).
+                              example: 0.847
+                  meta:
+                    $ref: '#/components/schemas/PaginationMeta'
+        "400":
+          description: Query string too short or malformed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error_code: "SEARCH_QUERY_TOO_SHORT"
+                message: "The search query must be at least 2 characters long."
