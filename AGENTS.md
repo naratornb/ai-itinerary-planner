@@ -2,6 +2,26 @@
 
 Guidance for AI agents working in this repo. This file is read by Claude Code, Cursor, Codex, and other agent CLIs that follow the [agents.md](https://agents.md) convention.
 
+## Forbidden terminology
+
+**Never** write any of the following to files in this repo (code, docs, commit messages, PR descriptions, issue bodies):
+
+| Forbidden | Use instead |
+| --- | --- |
+| `Flight Centre`, `Flightcentre` | "the Marketplace", or "the client" if a reference is unavoidable |
+| `Flight Centre Influencer Marketplace` | `Influencer Travel Marketplace` |
+| `QUT`, `QUT Group 51`, `Group 51` | omit entirely |
+| `group51@qut.edu.au`, `qut.edu.au` | omit entirely — no contact email |
+| `fc-marketplace.com` | use `api.example.com` until a real domain is decided |
+
+A [`.githooks/pre-commit`](.githooks/pre-commit) script blocks staged changes that contain these. Enable it once per clone:
+
+```sh
+git config core.hooksPath .githooks
+```
+
+Never bypass with `--no-verify` to ship a forbidden term. If a real reference is unavoidable (e.g. a test fixture for user-supplied input), discuss with the human first.
+
 ## Repo shape
 
 Monorepo:
