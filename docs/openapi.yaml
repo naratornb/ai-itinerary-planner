@@ -16,7 +16,7 @@ info:
 
     ## Architecture
 
-    - **Backend:** FastAPI (Python), deployed on Railway
+    - **Backend:** FastAPI (Python), deployed on Railway *— Phase 2 target; Phase 1 is Flask 3.0.3 on port 5000 with no `/v1` prefix. See [apps/api/docs/adr/0001-flask-now-fastapi-for-ai.md](../apps/api/docs/adr/0001-flask-now-fastapi-for-ai.md).*
     - **Database:** Supabase PostgreSQL (13 tables)
     - **AI:** LangChain RAG pipeline with GPT-4o (NFR-P-101: responses < 10 seconds)
     - **Frontend:** Next.js + Tailwind CSS, deployed on Vercel
