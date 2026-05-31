@@ -42,19 +42,19 @@ Default branch: `main`. Active dev branch: `develop`.
 
 Use the same `type` vocabulary as commits (below).
 
-### Commit messages (Conventional Commits)
+### Commit messages
 
-`<type>(<scope>): <imperative summary>`
+`<type>: <imperative summary>`
 
 - **Types**: `feat`, `fix`, `doc`, `refactor`, `test`, `chore`, `style`, `perf`, `build`, `ci`
-- **Scope** (optional but encouraged): `api`, `web`, `infra`, `db`, or a more specific module
+- **No scope.** Do **not** use `type(scope):` parentheses — the type alone is enough. This applies to every type listed above.
 - **Summary**: imperative mood, no trailing period, ≤72 chars
 
 Examples (matches existing repo style):
 - `doc: add relevant doc for reference`
-- `feat(api): add /itineraries POST endpoint`
-- `fix(web): handle 401 on dashboard route`
-- `chore(infra): bump postgres to 17.2`
+- `feat: add /itineraries POST endpoint`
+- `fix: handle 401 on dashboard route`
+- `chore: bump postgres to 17.2`
 
 For multi-line bodies, leave a blank line after the summary, then explain *why* (not what — the diff shows what).
 
