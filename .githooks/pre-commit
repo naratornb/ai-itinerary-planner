@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Block commits that introduce forbidden client / institution identifiers.
+# See AGENTS.md > "Forbidden terminology" for the rule and substitutions.
+#
+# Enable once per clone:  git config core.hooksPath .githooks
+
+set -euo pipefail
+
+# Single perl filter — portable across macOS (BSD) and Linux (GNU).
+# - skips diff hunk headers (^+++)
+# - inspects only added lines (^+)
+# - case-insensitive on spelled-out terms; \bQUT\b stays case-sensitive
+#   so lowercase "qut" inside ordinary words doesn't false-positive
+matches=$(git diff --cached --no-color -U0 \
+          -- ':(exclude).githooks/pre-commit' ':(exclude)AGENTS.md' \
+          | perl -ne '
+              next if /^\+\+\+/;
+              next unless /^\+/;
+              print if /(?i:flight[ -]?centre|fc-marketplace|qut\.edu\.au|group[ -]?51)|\bQUT\b/;
+            ')
+
+if [ -n "$matches" ]; then
+  echo "ERROR: commit blocked — staged changes contain forbidden terms."
+  echo
+  echo "Offending lines:"
+  printf '%s\n' "$matches" | sed 's/^/  /'
+  echo
+  echo "See AGENTS.md > 'Forbidden terminology' for the substitution table."
+  echo "Do NOT bypass with --no-verify; fix the wording instead."
+  exit 1
+fi

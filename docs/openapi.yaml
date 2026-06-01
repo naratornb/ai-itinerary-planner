@@ -1,11 +1,11 @@
 openapi: 3.0.3
 
 info:
-  title: Flight Centre Influencer Marketplace — AI-Powered Itinerary Planning API
+  title: Influencer Travel Marketplace — AI-Powered Itinerary Planning API
   description: |
     ## Overview
 
-    REST API for the **Flight Centre Influencer Marketplace** platform (QUT Group 51).
+    REST API for the **Influencer Travel Marketplace** platform.
     This API enables three user roles to interact with the marketplace:
 
     | Role | Capabilities |
@@ -16,7 +16,7 @@ info:
 
     ## Architecture
 
-    - **Backend:** FastAPI (Python), deployed on Railway
+    - **Backend:** FastAPI (Python), deployed on Railway *— Phase 2 target; Phase 1 is Flask 3.0.3 on port 5000 with no `/v1` prefix. See [apps/api/docs/adr/0001-flask-now-fastapi-for-ai.md](../apps/api/docs/adr/0001-flask-now-fastapi-for-ai.md).*
     - **Database:** Supabase PostgreSQL (13 tables)
     - **AI:** LangChain RAG pipeline with GPT-4o (NFR-P-101: responses < 10 seconds)
     - **Frontend:** Next.js + Tailwind CSS, deployed on Vercel
@@ -41,14 +41,11 @@ info:
     All monetary values are stored and returned as **integer cents (AUD)** to avoid floating-point precision issues.
 
   version: "1.0.0"
-  contact:
-    name: QUT Group 51
-    email: group51@qut.edu.au
   license:
     name: Academic Use Only
 
 servers:
-  - url: https://api.fc-marketplace.com/v1
+  - url: https://api.example.com/v1
     description: Production (Railway)
   - url: http://localhost:8000/v1
     description: Local development

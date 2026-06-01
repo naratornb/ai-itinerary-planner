@@ -1,6 +1,6 @@
 -- ============================================================
--- Flight Centre Influencer Marketplace — Revised DB Schema
--- Group 51 | ERD Revision based on Project Proposal
+-- Influencer Travel Marketplace — Revised DB Schema
+-- ERD Revision based on Project Proposal
 -- ============================================================
 
 -- ─────────────────────────────────────────────
