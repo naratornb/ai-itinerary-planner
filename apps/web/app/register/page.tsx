@@ -121,7 +121,7 @@ export default function RegisterPage() {
                     className="material-symbols-outlined text-status-active text-[32px]"
                     style={{ fontVariationSettings: "'FILL' 1" }}
                   >
-                    mark_email_read
+                    check_circle
                   </span>
                 </div>
                 <div>
@@ -132,8 +132,8 @@ export default function RegisterPage() {
                     Account created!
                   </h2>
                   <p className="text-sm text-text-secondary mt-2 leading-relaxed">
-                    We&apos;ve sent a verification email to{" "}
-                    <span className="font-semibold text-text-primary">{email}</span>. Please check your inbox before logging in.
+                    Your account for{" "}
+                    <span className="font-semibold text-text-primary">{email}</span> is ready. You can sign in now.
                   </p>
                 </div>
                 <button
@@ -141,7 +141,7 @@ export default function RegisterPage() {
                   className="btn-primary w-full"
                   style={{ borderRadius: "10px" }}
                 >
-                  Go to Login
+                  Sign in
                 </button>
               </motion.div>
             ) : (
