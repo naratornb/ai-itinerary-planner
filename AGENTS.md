@@ -33,6 +33,10 @@ Default branch: `main`. Active dev branch: `develop`.
 
 ## Git workflow
 
+### No automatic pushes
+
+**AI agents must never push code without explicit human approval — no exceptions.** Committing locally is fine when asked; `git push` (any branch, any remote) requires the human to approve that specific push first. "Commit and push" style instructions still mean: commit, then ask before pushing.
+
 ### Branch naming
 
 `<type>/<short-kebab-summary>`, e.g.:
