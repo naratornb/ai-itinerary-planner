@@ -68,13 +68,35 @@ Same format as commit summary.
 
 Apply [`karpathy-guidelines`](https://github.com/andrejkarpathy) (Skill: `andrej-karpathy-skills:karpathy-guidelines`) when writing, reviewing, or refactoring code in this repo. Core posture: prefer surgical changes, avoid overcomplication, surface assumptions explicitly, and define verifiable success criteria before declaring done.
 
+### Coding posture (ponytail)
+
+Every code change in this repo — by any collaborator or AI tool — follows the [ponytail](https://github.com/DietrichGebert/ponytail) lazy-coding posture:
+
+- Take the laziest solution that works, in this order: reuse existing repo code → stdlib → native platform/DB feature → already-installed dependency → minimum new code. Never add a dependency for what a few lines can do.
+- No speculative abstractions, no scaffolding "for later". Shortest working diff wins; deletion beats addition.
+- Mark deliberate shortcuts with a `ponytail:` comment naming the ceiling and the upgrade path, e.g. `# ponytail: O(n²) scan, index it if packages exceed ~10k`.
+
+Claude Code users get the plugin automatically: `.claude/settings.json` declares the marketplace and enables `ponytail@ponytail` — accept the install prompt on first open. Other AI tools (Cursor, Codex, …) must follow the rules above from this file.
+
+### Frontend design (anydesign)
+
+All frontend/UI implementation in `apps/web/` goes through the [`anydesign`](https://github.com/uxKero/anydesign) skill (`.claude/skills/anydesign/`):
+
+- Given any visual reference (screenshot, URL, Figma, mockup), run the skill first to produce `design.md` + `design-tokens.json` — commit them under `apps/web/design/`.
+- Implement UI **against those committed tokens** (colors, type, spacing, radii) — never hard-code ad-hoc values that bypass them.
+- If `apps/web/design/` doesn't exist yet and there's no visual reference, proceed normally, but any new design decision worth keeping goes into `design.md` when it's first created.
+
 ### Issue tracker
 
-GitHub Issues on `naratornb/ai-itinerary-planner`, via the `gh` CLI. See [docs/agents/issue-tracker.md](docs/agents/issue-tracker.md).
+GitHub Issues on `naratornb/ai-itinerary-planner`, via the `gh` CLI. External PRs are not a triage surface. See [docs/agents/issue-tracker.md](docs/agents/issue-tracker.md).
 
 ### Triage labels
 
 Default vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See [docs/agents/triage-labels.md](docs/agents/triage-labels.md).
+
+### Database migrations
+
+All schema changes must be recorded as Supabase migrations in `supabase/migrations/` — never applied ad-hoc via Studio or psql. See [docs/agents/database.md](docs/agents/database.md).
 
 ### Domain docs
 

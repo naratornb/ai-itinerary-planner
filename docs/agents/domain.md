@@ -6,7 +6,7 @@ How the engineering skills should consume this repo's domain documentation when 
 
 This repo's contexts are mapped from [CONTEXT-MAP.md](../../CONTEXT-MAP.md) at the root. Per-context glossaries live next to the code:
 
-- [apps/api/CONTEXT.md](../../apps/api/CONTEXT.md) — Python FastAPI backend
+- [apps/api/CONTEXT.md](../../apps/api/CONTEXT.md) — Python Flask backend (FastAPI planned for Phase 2, see ADR-0001)
 - [apps/web/CONTEXT.md](../../apps/web/CONTEXT.md) — Next.js + TypeScript frontend
 
 System-wide ADRs live in `docs/adr/`. Context-scoped ADRs live in `apps/<context>/docs/adr/`.

@@ -13,9 +13,13 @@ Issues and PRDs for this repo live as GitHub issues on `naratornb/ai-itinerary-p
 
 Infer the repo from `git remote -v` — `gh` does this automatically when run inside a clone.
 
+## PRs as a request surface
+
+**No.** External PRs are not pulled into the triage queue — `/triage` processes issues only.
+
 ## Issue titles
 
-Follow the same Conventional Commits style as commits and PR titles: `<type>(<scope>): <summary>`. See `AGENTS.md` for the full vocabulary.
+Follow the same Conventional Commits style as commits and PR titles: `<type>: <summary>` — **no scope parentheses**. See `AGENTS.md` for the full vocabulary.
 
 ## When a skill says "publish to the issue tracker"
 
