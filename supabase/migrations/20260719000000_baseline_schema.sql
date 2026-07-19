@@ -1,6 +1,5 @@
 -- ============================================================
--- Influencer Travel Marketplace — Revised DB Schema
--- ERD Revision based on Project Proposal
+-- Influencer Travel Marketplace — Baseline Schema
 -- ============================================================
 
 -- ─────────────────────────────────────────────
@@ -211,11 +210,10 @@ CREATE TABLE package_reviews (
 CREATE TABLE feasibility_rules (
   rule_id    		UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
   rule_description	text,
-  is_active  		bool		  NOT NULL DEFAULT 0,
+  is_active  		bool		  NOT NULL DEFAULT FALSE,
   rule_priority     BIGINT        NOT NULL,
   updated_at   		TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
-  created_at   		TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
-  UNIQUE (rule_id)
+  created_at   		TIMESTAMPTZ   NOT NULL DEFAULT NOW()
 );
 
 -- ─────────────────────────────────────────────
