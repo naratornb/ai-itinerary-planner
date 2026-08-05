@@ -27,7 +27,7 @@ Never bypass with `--no-verify` to ship a forbidden term. If a real reference is
 Monorepo:
 - `apps/api/` — Python **Flask** backend (Phase 1); FastAPI planned for Phase 2 before the first AI route — see [ADR-0001](apps/api/docs/adr/0001-flask-now-fastapi-for-ai.md). Glossary: [apps/api/CONTEXT.md](apps/api/CONTEXT.md)
 - `apps/web/` — Next.js + TypeScript frontend (see [apps/web/CONTEXT.md](apps/web/CONTEXT.md))
-- Docker Compose stack at root for Supabase self-hosting
+- Supabase Cloud for auth/DB — no local Supabase stack; apps run natively (single root `.env`, see `.env.example`)
 
 Default branch: `main`. Active dev branch: `develop`.
 

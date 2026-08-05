@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, type Variants } from "framer-motion";
 
 import { supabase } from "../../lib/supabase/client";
 
@@ -13,7 +13,7 @@ const container = {
     transition: { staggerChildren: 0.08, delayChildren: 0.05 },
   },
 };
-const item = {
+const item: Variants = {
   hidden: { opacity: 0, y: 14 },
   show: { opacity: 1, y: 0, transition: { duration: 0.45, ease: [0.22, 1, 0.36, 1] } },
 };

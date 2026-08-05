@@ -1,8 +1,12 @@
 import os
+from pathlib import Path
 
 import requests
+from dotenv import load_dotenv
 from flask import Flask, jsonify, request
 from flask_cors import CORS
+
+load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
 app = Flask(__name__)
 CORS(app)
