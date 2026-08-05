@@ -32,6 +32,8 @@ Monorepo:
 
 Default branch: `main`. Active dev branch: `develop`.
 
+Branch protection: `main` requires a PR, 1 approving review, and a green `ci-ok` status check; `develop` requires green `ci-ok` (no force pushes on either). CI lives in `.github/workflows/ci.yml` (lint, typecheck, build, ruff, forbidden-terms scan) plus CodeQL and Dependabot.
+
 ## Workflow & quality rules
 
 These apply to **every collaborator — human or AI agent — in any tool**.

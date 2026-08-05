@@ -1,5 +1,7 @@
 # Influencer Travel Marketplace
 
+[![CI](https://github.com/naratornb/ai-itinerary-planner/actions/workflows/ci.yml/badge.svg)](https://github.com/naratornb/ai-itinerary-planner/actions/workflows/ci.yml)
+
 AI-powered itinerary service for travel influencers. Next.js web app (`apps/web`) + Flask API (`apps/api`) backed by [Supabase Cloud](https://supabase.com).
 
 ## Setup
@@ -20,6 +22,12 @@ AI-powered itinerary service for travel influencers. Next.js web app (`apps/web`
    ```
 
 ## Run (dev)
+
+```sh
+npm run dev   # starts api + web (runs ./dev.sh); Ctrl-C stops both
+```
+
+Or individually:
 
 ```sh
 # web — http://localhost:3000
