@@ -17,6 +17,11 @@ type UserRow = {
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5001";
 
+async function authHeaders(): Promise<Record<string, string>> {
+  const { data } = await supabase.auth.getSession();
+  return { Authorization: `Bearer ${data.session?.access_token ?? ""}` };
+}
+
 const AVATAR_COLORS = [
   { bg: "#dae2fd", fg: "#3f465c" },
   { bg: "#fcdeb5", fg: "#574425" },
@@ -108,7 +113,7 @@ export default function UsersPage() {
     setIsLoading(true);
     setErrorMessage("");
     try {
-      const res = await fetch(`${API_URL}/users`);
+      const res = await fetch(`${API_URL}/users`, { headers: await authHeaders() });
       if (!res.ok) throw new Error("Failed to load users.");
       const data = await res.json();
       setUsers(data.users || []);
@@ -141,7 +146,7 @@ export default function UsersPage() {
     try {
       const res = await fetch(`${API_URL}/users/${selectedUser.id}`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...(await authHeaders()) },
         body: JSON.stringify({ email: editEmail, status: editStatus, createdAt: editCreatedAt }),
       });
       if (!res.ok) throw new Error("Unable to save changes.");

@@ -4,6 +4,7 @@
 .env
 .env.local
 .env.*.local
+.env.backup*
 
 # IDE and Editor
 .vscode/
@@ -31,6 +32,7 @@ __pycache__/
 .Python
 env/
 venv/
+.venv/
 ENV/
 *.egg-info/
 dist/
@@ -63,3 +65,4 @@ logs/
 *.bak
 *.swp
 .cache/
+.vercel
