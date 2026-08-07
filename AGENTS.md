@@ -25,11 +25,50 @@ Never bypass with `--no-verify` to ship a forbidden term. If a real reference is
 ## Repo shape
 
 Monorepo:
-- `apps/api/` — Python **Flask** backend (Phase 1); FastAPI planned for Phase 2 before the first AI route — see [ADR-0001](apps/api/docs/adr/0001-flask-now-fastapi-for-ai.md). Glossary: [apps/api/CONTEXT.md](apps/api/CONTEXT.md)
-- `apps/web/` — Next.js + TypeScript frontend (see [apps/web/CONTEXT.md](apps/web/CONTEXT.md))
-- Docker Compose stack at root for Supabase self-hosting
+- `apps/api/` — Python backend: **Flask today, consolidating to async FastAPI** (per [ADR-0001](apps/api/docs/adr/0001-flask-now-fastapi-for-ai.md)). New endpoints go to FastAPI once the migration lands; don't grow the Flask surface. Glossary: [apps/api/CONTEXT.md](apps/api/CONTEXT.md)
+- `apps/web/` — Next.js + **TypeScript** frontend (see [apps/web/CONTEXT.md](apps/web/CONTEXT.md)). No plain-JS additions.
+- Supabase Cloud for auth/DB — no local Supabase stack; apps run natively (single root `.env`, see `.env.example`)
+- Deploy target: **Vercel** (web + FastAPI serverless together). Keep the backend Vercel-compatible: app entrypoint importable as a serverless handler, no long-lived local state.
 
 Default branch: `main`. Active dev branch: `develop`.
+
+Branch protection: `main` requires a PR, 1 approving review, and a green `ci-ok` status check; `develop` requires green `ci-ok` (no force pushes on either). CI lives in `.github/workflows/ci.yml` (lint, typecheck, build, ruff, forbidden-terms scan) plus CodeQL and Dependabot.
+
+## Workflow & quality rules
+
+These apply to **every collaborator — human or AI agent — in any tool**.
+
+### 1. Plan before code
+
+- Non-trivial change (new endpoint, new page, schema change, refactor touching >2 files): state a short plan first — what changes, which files, how it's verified — and get it confirmed before editing. Claude Code: use plan mode; other tools: write the plan in the PR/issue first.
+- Stress-test plans, don't rubber-stamp them: challenge scope, simpler alternatives, and edge cases before building (Claude Code: `/grilling` or `/scrutinize`).
+- Trivial fixes (typo, one-liner, doc edit) skip planning — don't ceremonialize the small stuff.
+
+### 2. Ponytail is the coding posture
+
+[ponytail](https://github.com/DietrichGebert/ponytail) governs every code change (see Agent skills below): laziest solution that works, reuse before writing, stdlib/native before dependencies, deletion beats addition. A new dependency needs a one-line justification in the PR for why existing code/stdlib can't do it.
+
+### 3. Tests & gates
+
+- **Bug fixes are test-first**: write the failing test that reproduces the bug, then fix it. A fix without a test that would have caught it is not done.
+- **Features ship with at least one runnable check** that fails if the logic breaks — one focused test file, not a suite for its own sake (YAGNI applies to tests too).
+- Before every commit: `npm run lint` and `npm run build` pass in `apps/web`; the API test suite (when present) and an import smoke-check pass in `apps/api`.
+- Never weaken a gate to get green: no skipped tests, no `--no-verify`, no loosening lint rules or types (`any`, `@ts-ignore`) without a comment explaining why and human sign-off.
+
+### 4. PR & review discipline
+
+- PRs are **small vertical slices**: one user-visible change end to end, not a layer at a time. If the diff description needs "and", consider splitting.
+- **One change per branch.** A branch carries exactly one feature/fix/chore — the one its `<type>/<summary>` name states. Never stack several features or unrelated changes on a single branch; a second idea gets its own branch off `develop`. If a branch has drifted into multiple concerns, split it before opening the PR.
+- Self-review before requesting human review (Claude Code: `/code-review` or `/scrutinize`). Fix what you find; note in the PR anything you saw and deliberately left.
+- The PR body states: what changed, why, and **how it was verified** (commands run, what you observed). "Should work" is not verification.
+- Migrations ship in the same PR as the code that depends on them.
+
+### 5. Database & secrets guardrails
+
+- Schema changes are **migrations only** (`supabase/migrations/`, append-only) — never ad-hoc via Studio, psql, or RPC. See [docs/agents/database.md](docs/agents/database.md).
+- Every new table gets **RLS enabled and policies defined in the same migration** before it holds real data.
+- The **service role key is server-only**: never in `apps/web`, never in a `NEXT_PUBLIC_*` var, never logged. The browser gets the anon key only.
+- All config through the single root `.env` (`.env.example` is the contract — update it in the same PR as any new variable). Never commit `.env` or any secret value; secrets for deploys go in Vercel project settings, not files.
 
 ## Git workflow
 
@@ -61,6 +100,8 @@ Examples (matches existing repo style):
 - `chore: bump postgres to 17.2`
 
 For multi-line bodies, leave a blank line after the summary, then explain *why* (not what — the diff shows what).
+
+**No AI attribution trailers.** Never add `Co-Authored-By`, "Generated with Claude Code", or any other AI-authorship line to commit messages, PR titles/bodies, or code comments.
 
 ### PR titles
 

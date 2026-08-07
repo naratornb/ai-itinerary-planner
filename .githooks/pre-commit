@@ -13,6 +13,7 @@ set -euo pipefail
 #   so lowercase "qut" inside ordinary words doesn't false-positive
 matches=$(git diff --cached --no-color -U0 \
           -- ':(exclude).githooks/pre-commit' ':(exclude)AGENTS.md' \
+             ':(exclude).github/workflows/ci.yml' \
           | perl -ne '
               next if /^\+\+\+/;
               next unless /^\+/;

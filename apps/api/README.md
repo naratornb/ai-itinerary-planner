@@ -6,22 +6,14 @@ Flask backend (Phase 1) for the Influencer Travel Marketplace. Handles Supabase 
 
 ## Run
 
-Via the root Docker Compose stack (recommended):
-
-```sh
-docker compose up -d api          # from repo root, after root .env is set up
-```
-
-Standalone for development:
+Reads `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` from the root `.env` (see repo README).
 
 ```sh
 pip install -r requirements.txt
-SUPABASE_URL=http://localhost:8000 \
-SUPABASE_SERVICE_ROLE_KEY=<service-role-key> \
-python app.py
+flask run --port 5001
 ```
 
-Listens on `http://localhost:5001` in Docker, `http://localhost:5000` standalone.
+Listens on `http://localhost:5001`.
 
 ## Endpoints
 

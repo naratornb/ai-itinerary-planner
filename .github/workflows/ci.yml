@@ -1,0 +1,99 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      web: ${{ steps.filter.outputs.web }}
+      api: ${{ steps.filter.outputs.api }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            web:
+              - 'apps/web/**'
+            api:
+              - 'apps/api/**'
+
+  web:
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    env:
+      # Dummy values so the supabase client guard doesn't fail the static build.
+      NEXT_PUBLIC_SUPABASE_URL: https://dummy.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: dummy
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run build
+      # No test job yet — add `npm test` here when the first test lands (AGENTS.md rule 3).
+
+  api:
+    needs: changes
+    if: needs.changes.outputs.api == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: apps/api/requirements*.txt
+      - run: pip install -r requirements-dev.txt
+      - run: ruff check .
+      - run: python -c "import app"
+      # No test job yet — add `pytest` here when the first test lands (AGENTS.md rule 3).
+
+  forbidden-terms:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Mirrors .githooks/pre-commit (local hooks aren't guaranteed enabled).
+      - name: Scan tracked files for forbidden terminology
+        run: |
+          matches=$(git grep -nI -P '(?i:flight[ -]?centre|fc-marketplace|qut\.edu\.au|group[ -]?51)|\bQUT\b' \
+            -- ':(exclude).githooks/pre-commit' ':(exclude)AGENTS.md' ':(exclude).github/workflows/ci.yml' || true)
+          if [ -n "$matches" ]; then
+            echo "Forbidden terms found (see AGENTS.md > Forbidden terminology):"
+            printf '%s\n' "$matches"
+            exit 1
+          fi
+
+  # Single required status check for branch protection; green even when
+  # path-filtered jobs are skipped, red if any ran and failed.
+  ci-ok:
+    needs: [web, api, forbidden-terms]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check job results
+        run: |
+          results="${{ needs.web.result }} ${{ needs.api.result }} ${{ needs.forbidden-terms.result }}"
+          echo "results: $results"
+          case "$results" in
+            *failure*|*cancelled*) exit 1 ;;
+          esac

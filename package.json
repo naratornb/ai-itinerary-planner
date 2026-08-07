@@ -1,0 +1,7 @@
+{
+  "name": "ai-itinerary-planner",
+  "private": true,
+  "scripts": {
+    "dev": "./dev.sh"
+  }
+}
