@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
 import { supabase } from "../../lib/supabase/client";
+import { Spinner } from "../auth-ui";
 
 type UserRow = {
   id: string;
@@ -173,7 +174,7 @@ export default function UsersPage() {
   const colCount = isAdmin ? 6 : 2;
 
   return (
-    <div className="bg-surface-alt font-body-base text-text-primary h-screen flex overflow-hidden">
+    <div className="bg-surface-alt text-text-primary h-screen flex overflow-hidden">
 
       {/* ── Sidebar ── */}
       <nav
@@ -189,7 +190,7 @@ export default function UsersPage() {
             <span className="material-symbols-outlined text-white text-[16px]" style={{ fontVariationSettings: "'FILL' 1" }}>token</span>
           </div>
           <div className="flex flex-col min-w-0">
-            <span className="text-[13px] font-bold text-text-primary truncate" style={{ fontFamily: "var(--font-plus-jakarta, inherit)" }}>Project Alpha</span>
+            <span className="text-[13px] font-bold text-text-primary truncate font-display">Project Alpha</span>
             <span className="text-[11px] text-text-secondary">Authentication</span>
           </div>
         </div>
@@ -227,10 +228,7 @@ export default function UsersPage() {
         {/* Top bar */}
         <header className="bg-white border-b border-border-subtle flex justify-between items-center px-6 h-14 shrink-0">
           <div className="flex items-center gap-5 flex-1">
-            <span
-              className="text-lg font-bold text-text-primary tracking-tight"
-              style={{ fontFamily: "var(--font-plus-jakarta, inherit)", letterSpacing: "-0.02em" }}
-            >
+            <span className="text-lg font-bold text-text-primary font-display tracking-[-0.02em]">
               Supabase Admin
             </span>
             <div className="relative max-w-xs w-full hidden md:block">
@@ -269,10 +267,7 @@ export default function UsersPage() {
               className="flex flex-col md:flex-row md:items-end justify-between gap-4"
             >
               <div>
-                <h1
-                  className="text-[22px] font-bold text-text-primary"
-                  style={{ fontFamily: "var(--font-plus-jakarta, inherit)", letterSpacing: "-0.02em" }}
-                >
+                <h1 className="text-[22px] font-bold text-text-primary font-display tracking-[-0.02em]">
                   User Management
                 </h1>
                 <p className="text-sm text-text-secondary mt-0.5">Manage access, roles, and user lifecycle events.</p>
@@ -288,19 +283,12 @@ export default function UsersPage() {
                     onChange={(e) => setFilter(e.target.value)}
                   />
                 </div>
-                <button
-                  onClick={loadUsers}
-                  className="btn-ghost h-9 px-3 gap-2"
-                  style={{ borderRadius: "8px" }}
-                >
+                <button onClick={loadUsers} className="btn-ghost h-9 px-3 gap-2 rounded-lg">
                   <span className="material-symbols-outlined text-[16px]">refresh</span>
                   Refresh
                 </button>
                 {isAdmin && (
-                  <button
-                    className="btn-primary h-9 px-3 gap-1.5"
-                    style={{ borderRadius: "8px", fontSize: "13px" }}
-                  >
+                  <button className="btn-primary h-9 px-3 gap-1.5 rounded-lg text-[13px]">
                     <span className="material-symbols-outlined text-[16px]">add</span>
                     Invite User
                   </button>
@@ -342,7 +330,7 @@ export default function UsersPage() {
                           <div className="flex flex-col items-center gap-3 text-status-error">
                             <span className="material-symbols-outlined text-[36px]" style={{ fontVariationSettings: "'FILL' 1" }}>error_circle</span>
                             <p className="text-sm font-medium">{errorMessage}</p>
-                            <button onClick={loadUsers} className="btn-ghost h-8 px-3 text-xs" style={{ borderRadius: "6px" }}>
+                            <button onClick={loadUsers} className="btn-ghost h-8 px-3 text-xs rounded-md">
                               Retry
                             </button>
                           </div>
@@ -564,27 +552,12 @@ export default function UsersPage() {
 
             {/* Drawer footer */}
             <div className="p-5 border-t border-border-subtle bg-white shrink-0 flex gap-3">
-              <button
-                onClick={closeDrawer}
-                className="btn-ghost flex-1"
-                style={{ borderRadius: "10px", height: "40px" }}
-              >
+              <button onClick={closeDrawer} className="btn-ghost flex-1">
                 Cancel
               </button>
-              <button
-                onClick={handleSave}
-                disabled={isSaving}
-                className="btn-primary flex-1"
-                style={{ borderRadius: "10px", height: "40px" }}
-              >
+              <button onClick={handleSave} disabled={isSaving} className="btn-primary flex-1">
                 {isSaving ? (
-                  <>
-                    <svg className="animate-spin h-4 w-4 text-white" viewBox="0 0 24 24" fill="none">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-                    </svg>
-                    Saving…
-                  </>
+                  <><Spinner /> Saving…</>
                 ) : "Save Changes"}
               </button>
             </div>
