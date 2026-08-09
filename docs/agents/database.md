@@ -8,9 +8,10 @@ How schema changes are made in this repo. This applies to every collaborator —
 
 ## Making a schema change
 
-1. Create a new file: `supabase/migrations/<UTC-timestamp>_<short-kebab-name>.sql`
-   - Timestamp format: `YYYYMMDDHHMMSS` (e.g. `20260719143000_add_rls_policies.sql`)
+1. Create a new file: `supabase/migrations/<version>_<short-kebab-name>.sql`
+   - Version format: zero-padded sequence number, one higher than the latest existing migration (e.g. `0003_add_rls_policies.sql`)
    - One migration per logical change.
+   - Migrations apply in lexicographic order of the version prefix. If two branches claim the same number, the later-merged branch renumbers before merging.
 2. Apply it to the linked Supabase Cloud project:
    ```sh
    supabase link --project-ref <project-ref>   # once per clone
