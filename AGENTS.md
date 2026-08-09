@@ -72,6 +72,15 @@ These apply to **every collaborator — human or AI agent — in any tool**.
 
 ## Git workflow
 
+### Branch from `develop`, never `main`
+
+Every feature/fix/chore branch is created from the latest `develop` — **never from `main`**. `main` only moves by merging `develop` into it via PR. PRs from work branches target `develop`.
+
+```sh
+git fetch origin
+git switch -c feat/<summary> origin/develop
+```
+
 ### No automatic pushes
 
 **AI agents must never push code without explicit human approval — no exceptions.** Committing locally is fine when asked; `git push` (any branch, any remote) requires the human to approve that specific push first. "Commit and push" style instructions still mean: commit, then ask before pushing.
@@ -83,7 +92,12 @@ These apply to **every collaborator — human or AI agent — in any tool**.
 - `fix/web-auth-redirect`
 - `chore/bump-postgrest`
 
-Use the same `type` vocabulary as commits (below).
+Use the same `type` vocabulary as commits (below). Rules:
+
+- **Lowercase kebab-case only** — no spaces, underscores, or uppercase; `/` appears once, between type and summary.
+- **Short and descriptive** (≤ ~40 chars): say what the branch delivers, not how.
+- **Reference the issue when one exists**: `fix/123-auth-redirect`.
+- Never work directly on `main` or `develop`.
 
 ### Commit messages
 
