@@ -66,6 +66,7 @@ These apply to **every collaborator — human or AI agent — in any tool**.
 ### 5. Database & secrets guardrails
 
 - Schema changes are **migrations only** (`supabase/migrations/`, append-only) — never ad-hoc via Studio, psql, or RPC. See [docs/agents/database.md](docs/agents/database.md).
+- **Never run `supabase db push`** (or any command that applies migrations to a remote database). Use `supabase db push --dry-run` to preview only; the git pipeline applies migrations after merge.
 - Every new table gets **RLS enabled and policies defined in the same migration** before it holds real data.
 - The **service role key is server-only**: never in `apps/web`, never in a `NEXT_PUBLIC_*` var, never logged. The browser gets the anon key only.
 - All config through the single root `.env` (`.env.example` is the contract — update it in the same PR as any new variable). Never commit `.env` or any secret value; secrets for deploys go in Vercel project settings, not files.
