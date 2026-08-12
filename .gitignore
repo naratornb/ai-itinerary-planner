@@ -66,3 +66,9 @@ logs/
 *.swp
 .cache/
 .vercel
+
+# Supabase CLI scratch
+supabase/.temp/
+
+# root has no deps; real lockfile is apps/web/package-lock.json
+/package-lock.json
