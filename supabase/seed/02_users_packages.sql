@@ -117,14 +117,31 @@ INSERT INTO public.package_activities (package_id, activity_id, day_number, sequ
   ('b0000000-0000-0000-0000-000000000008', 'AC-CUZ-004', 3, 1, 'After acclimatisation day');
 
 -- ---------- media (one cover per package) ----------
-INSERT INTO public.package_media (package_id, uploaded_by, media_type, url, thumbnail_url, caption, is_cover)
-SELECT p.package_id, p.creator_id, 'photo',
+INSERT INTO public.package_media (package_id, uploaded_by, media_type, url, thumbnail_url, caption, is_cover, sort_order)
+SELECT p.package_id, p.creator_id, 'image',
   'https://picsum.photos/seed/' || p.package_id::text || '-' || n || '/1200/800',
   'https://picsum.photos/seed/' || p.package_id::text || '-' || n || '/400/267',
   CASE WHEN n = 1 THEN 'Cover — ' || p.title ELSE p.destination_city || ' snapshot ' || n END,
-  n = 1
+  n = 1, n
 FROM public.travel_packages p, generate_series(1, 3) n
 WHERE p.package_id::text LIKE 'b0000000-%';
+
+-- ---------- detail-page fields (live packages) ----------
+UPDATE public.travel_packages SET tags = ARRAY['food', 'culture', 'city'], max_group_size = 8
+  WHERE package_id = 'b0000000-0000-0000-0000-000000000001';
+UPDATE public.travel_packages SET tags = ARRAY['adventure', 'outdoors'], max_group_size = 10
+  WHERE package_id = 'b0000000-0000-0000-0000-000000000002';
+UPDATE public.travel_packages SET tags = ARRAY['city', 'romance', 'art'], max_group_size = 6
+  WHERE package_id = 'b0000000-0000-0000-0000-000000000003';
+
+INSERT INTO public.package_days (package_id, day_number, title, summary) VALUES
+  ('b0000000-0000-0000-0000-000000000001', 1, 'Arrive in Tokyo', 'Land at Narita, check in near Shinjuku and ease in with an evening izakaya crawl.'),
+  ('b0000000-0000-0000-0000-000000000001', 2, 'Markets & old Tokyo', 'Tsukiji outer market breakfast, then a guided walk through Yanaka''s backstreets.'),
+  ('b0000000-0000-0000-0000-000000000001', 3, 'Cooking class day', 'Hands-on morning cooking class with a market visit; free evening.'),
+  ('b0000000-0000-0000-0000-000000000002', 1, 'Arrive in Queenstown', 'Fly into ZQN, lakefront check-in and a sunset gondola ride.'),
+  ('b0000000-0000-0000-0000-000000000002', 2, 'Adrenaline day one', 'Ziplines in the morning, jet boat on the Shotover in the afternoon.'),
+  ('b0000000-0000-0000-0000-000000000003', 1, 'Bonjour Paris', 'Arrive at CDG, drop bags and take a golden-hour Seine river cruise.'),
+  ('b0000000-0000-0000-0000-000000000003', 2, 'Galleries & food walk', 'Musée d''Orsay in the morning, evening patisserie and wine walk in Le Marais.');
 
 -- ---------- approvals ----------
 INSERT INTO public.package_approvals (package_id, admin_id, action, rejection_reason, actioned_at) VALUES

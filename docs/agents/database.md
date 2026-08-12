@@ -24,6 +24,7 @@ How schema changes are made in this repo. This applies to every collaborator —
 - **Append-only.** Never edit or delete a migration that has been applied anywhere (including a teammate's machine). To fix a mistake, write a new migration that corrects it.
 - **`supabase/migrations/` is the single source of truth** for the app schema. Don't create parallel schema files in `docs/` or elsewhere; keep ERDs/diagrams pointing at the migrations.
 - If PostgREST doesn't see a new table/column, reload it: `NOTIFY pgrst, 'reload schema';`.
+- **ERD stays in sync, versioned by migration number.** The ER diagram in `docs/fc_db_diagrams.excalidraw` carries a `Schema vNNNN — <date>` label where `NNNN` = the latest migration sequence number. Any PR adding a migration that changes tables/columns updates the diagram and bumps this label in the same PR (grep the file for `Schema v` to find it).
 
 ## Verifying
 

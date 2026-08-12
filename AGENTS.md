@@ -71,6 +71,12 @@ These apply to **every collaborator — human or AI agent — in any tool**.
 - The **service role key is server-only**: never in `apps/web`, never in a `NEXT_PUBLIC_*` var, never logged. The browser gets the anon key only.
 - All config through the single root `.env` (`.env.example` is the contract — update it in the same PR as any new variable). Never commit `.env` or any secret value; secrets for deploys go in Vercel project settings, not files.
 
+### 6. API contract (`apps/api/openapi.yaml`)
+
+- `apps/api/openapi.yaml` is the API contract. Any change to endpoints, payloads, or semantics that conflicts with it must update the spec **in the same PR** — code and contract never diverge.
+- Bump `info.version` (semver: patch = doc fix, minor = additive, major = breaking) on every spec change.
+- The deployed Swagger UI (`GET /docs-ui`) renders this file; keep it valid OpenAPI 3.
+
 ## Git workflow
 
 ### Branch from `develop`, never `main`

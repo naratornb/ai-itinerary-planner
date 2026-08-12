@@ -46,5 +46,5 @@ The baseline has no row-level security yet; `public` tables are reachable with t
 ## More
 
 - App-specific READMEs: [apps/api](apps/api/README.md), [apps/web](apps/web/README.md)
-- API spec: [docs/openapi.yaml](docs/openapi.yaml)
+- API spec: [apps/api/openapi.yaml](apps/api/openapi.yaml)
 - Contributor / agent guide: [AGENTS.md](AGENTS.md)

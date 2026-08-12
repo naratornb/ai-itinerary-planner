@@ -43,6 +43,24 @@ const ok = (name) => console.log(`PASS  ${name}`);
   ok('anon embeds creator profile (full_name present) and package_media');
 }
 
+// (b2) package_days (0005): anon sees days of live packages only, cannot insert
+{
+  const { data: livePkgs, error: e0 } = await anon.from('travel_packages').select('package_id');
+  assert.ifError(e0);
+  const liveIds = new Set(livePkgs.map((p) => p.package_id));
+  const { data, error } = await anon.from('package_days').select('package_id,day_number');
+  assert.ifError(error);
+  assert(data.length > 0, 'expected at least one package_days row visible to anon');
+  assert(data.every((d) => liveIds.has(d.package_id)), 'anon saw package_days of a non-live package');
+  ok('anon sees package_days of live packages only');
+
+  const { error: insErr } = await anon
+    .from('package_days')
+    .insert({ package_id: [...liveIds][0], day_number: 99, title: 'rls-probe' });
+  assert(insErr, 'anon insert into package_days unexpectedly succeeded');
+  ok('anon insert into package_days rejected');
+}
+
 // (c) anon cannot insert
 {
   const { error } = await anon

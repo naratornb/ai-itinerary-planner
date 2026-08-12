@@ -31,16 +31,16 @@ info:
 
     ## Non-Functional Requirements
 
-    - **NFR-P-100:** All user-facing text is localised to English (Australia); prices in AUD (cents).
+    - **NFR-P-100:** All user-facing text is localised to English (Australia); prices in whole AUD dollars.
     - **NFR-P-101:** AI suggestion endpoint must respond within 10 seconds end-to-end.
 
     ## Assessor Notes
 
     This specification covers all six API groups: `auth`, `packages`, `approvals`, `media`, `ai`, `marketplace`.
     Error responses use a consistent `ErrorResponse` schema throughout.
-    All monetary values are stored and returned as **integer cents (AUD)** to avoid floating-point precision issues.
+    All monetary values are stored and returned as **whole AUD dollars** (integer), matching the database columns.
 
-  version: "1.0.0"
+  version: "1.1.0"
   license:
     name: Academic Use Only
 
@@ -200,7 +200,7 @@ components:
     # ── Packages ──────────────────────────────
     TravelPackageBase:
       type: object
-      required: [title, description, base_price_aud, destination_country, destination_city, duration_nights]
+      required: [title, description, base_price_aud, destination_country, destination_city, duration_days]
       properties:
         title:
           type: string
@@ -215,15 +215,15 @@ components:
         destination_city:
           type: string
           example: "Bali"
-        duration_nights:
+        duration_days:
           type: integer
           minimum: 1
           example: 10
         base_price_aud:
           type: integer
-          description: Package price in **AUD cents** (e.g. 350000 = $3,500.00 AUD).
+          description: Package price in **whole AUD dollars** (e.g. 3500 = $3,500 AUD).
           minimum: 0
-          example: 350000
+          example: 3500
         max_group_size:
           type: integer
           nullable: true
@@ -268,12 +268,12 @@ components:
         destination_city:
           type: string
           example: "Bali"
-        duration_nights:
+        duration_days:
           type: integer
           example: 10
         base_price_aud:
           type: integer
-          example: 350000
+          example: 3500
         status:
           $ref: '#/components/schemas/PackageStatus'
         creator_id:
@@ -326,6 +326,14 @@ components:
               type: array
               items:
                 $ref: '#/components/schemas/MediaItem'
+            days:
+              type: array
+              description: Per-day narrative for detail-page rendering, ordered by day_number. Group flights/hotels/activities client-side via their day_number / check_in_day fields.
+              items:
+                $ref: '#/components/schemas/PackageDay'
+            creator:
+              $ref: '#/components/schemas/PackageCreator'
+              nullable: true
             latest_approval:
               $ref: '#/components/schemas/ApprovalRecord'
               nullable: true
@@ -355,7 +363,7 @@ components:
           type: string
         destination_city:
           type: string
-        duration_nights:
+        duration_days:
           type: integer
           minimum: 1
         base_price_aud:
@@ -405,8 +413,8 @@ components:
           example: "economy"
         price_aud:
           type: integer
-          description: Per-person flight price in AUD cents.
-          example: 85000
+          description: Per-person flight price in whole AUD dollars.
+          example: 850
 
     FlightDetail:
       allOf:
@@ -450,9 +458,9 @@ components:
           example: "2025-07-21"
         price_per_night_aud:
           type: integer
-          description: Per-night price in AUD cents.
+          description: Per-night price in whole AUD dollars.
           nullable: true
-          example: 42000
+          example: 420
         room_type:
           type: string
           nullable: true
@@ -492,8 +500,8 @@ components:
         price_aud:
           type: integer
           nullable: true
-          description: Per-person activity price in AUD cents.
-          example: 12000
+          description: Per-person activity price in whole AUD dollars.
+          example: 120
         description:
           type: string
           nullable: true
@@ -584,12 +592,15 @@ components:
           type: string
           format: uri
           example: "https://storage.supabase.co/object/public/media/pkg-00001/bali-rice-terrace.jpg"
-        filename:
+        thumbnail_url:
           type: string
-          example: "bali-rice-terrace.jpg"
-        file_size_bytes:
-          type: integer
-          example: 2457600
+          format: uri
+          nullable: true
+          example: "https://storage.supabase.co/object/public/media/pkg-00001/bali-rice-terrace-thumb.jpg"
+        caption:
+          type: string
+          nullable: true
+          example: "Rice terraces at sunrise"
         is_cover:
           type: boolean
           description: Whether this item is the cover/thumbnail for the package.
@@ -600,6 +611,57 @@ components:
         uploaded_at:
           type: string
           format: date-time
+
+    # ── Detail-page extras ─────────────────────
+    PackageDay:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        package_id:
+          type: string
+          format: uuid
+        day_number:
+          type: integer
+          minimum: 1
+          example: 1
+        title:
+          type: string
+          nullable: true
+          example: "Arrive in Tokyo"
+        summary:
+          type: string
+          nullable: true
+          example: "Land at Narita, check in near Shinjuku and ease in with an evening izakaya crawl."
+
+    PackageCreator:
+      type: object
+      description: Creator profile embedded in marketplace detail responses.
+      properties:
+        full_name:
+          type: string
+          example: "Mia Tanaka"
+        avatar_url:
+          type: string
+          format: uri
+          nullable: true
+        influencer_profiles:
+          type: array
+          items:
+            type: object
+            properties:
+              bio:
+                type: string
+                nullable: true
+              social_handle:
+                type: string
+                example: "@mia.eats.world"
+              follower_count:
+                type: integer
+                example: 482000
+              verified:
+                type: boolean
 
     MediaUploadResponse:
       type: object
@@ -724,12 +786,12 @@ components:
         destination_city:
           type: string
           example: "Bali"
-        duration_nights:
+        duration_days:
           type: integer
           example: 10
         base_price_aud:
           type: integer
-          example: 350000
+          example: 3500
         cover_image_url:
           type: string
           format: uri
@@ -794,7 +856,7 @@ components:
           description: Additional context (e.g. validation field errors).
           example:
             field: "base_price_aud"
-            issue: "Must be a positive integer (AUD cents)."
+            issue: "Must be a positive integer (whole AUD dollars)."
 
   # ─────────────────────────────────────────────
   #  REUSABLE PARAMETERS
@@ -874,7 +936,7 @@ components:
             message: "One or more fields are invalid."
             details:
               field: "base_price_aud"
-              issue: "Must be a positive integer (AUD cents)."
+              issue: "Must be a positive integer (whole AUD dollars)."
 
 
 # ─────────────────────────────────────────────
@@ -1046,8 +1108,8 @@ paths:
               description: "Explore Ubud's rice terraces, catch waves at Canggu, and dine at Seminyak's finest restaurants."
               destination_country: "Indonesia"
               destination_city: "Bali"
-              duration_nights: 10
-              base_price_aud: 350000
+              duration_days: 10
+              base_price_aud: 3500
               max_group_size: 12
               tags: ["beach", "culture", "food", "surf"]
               flights:
@@ -1058,14 +1120,14 @@ paths:
                   departure_datetime: "2025-07-14T06:30:00+10:00"
                   arrival_datetime: "2025-07-14T11:45:00+08:00"
                   cabin_class: "economy"
-                  price_aud: 85000
+                  price_aud: 850
               hotels:
                 - hotel_name: "The Layar Private Villas"
                   star_rating: 5
                   city: "Seminyak, Bali"
                   check_in_date: "2025-07-14"
                   check_out_date: "2025-07-21"
-                  price_per_night_aud: 42000
+                  price_per_night_aud: 420
                   room_type: "Pool Villa, King Bed"
       responses:
         "201":
@@ -1823,14 +1885,14 @@ paths:
           schema:
             type: integer
             minimum: 0
-          description: Minimum price filter in AUD cents (inclusive).
+          description: Minimum price filter in whole AUD dollars (inclusive).
           example: 100000
         - name: max_price_aud
           in: query
           schema:
             type: integer
             minimum: 0
-          description: Maximum price filter in AUD cents (inclusive).
+          description: Maximum price filter in whole AUD dollars (inclusive).
           example: 500000
         - name: min_nights
           in: query
@@ -1882,8 +1944,8 @@ paths:
                     title: "10-Day Bali Escape: Culture, Surf & Cuisine"
                     destination_country: "Indonesia"
                     destination_city: "Bali"
-                    duration_nights: 10
-                    base_price_aud: 350000
+                    duration_days: 10
+                    base_price_aud: 3500
                     cover_image_url: "https://storage.supabase.co/object/public/media/pkg-00001/cover.jpg"
                     tags: ["beach", "culture", "food", "surf"]
                     influencer:
