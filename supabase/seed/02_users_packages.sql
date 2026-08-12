@@ -11,12 +11,17 @@ DELETE FROM public.feasibility_rules WHERE rule_id::text LIKE 'f0000000-%';
 DELETE FROM auth.users WHERE email LIKE '%@seed.local'; -- cascades to profiles etc.
 
 -- ---------- auth users (trigger creates public.profiles) ----------
+-- Token columns must be '' not NULL: GoTrue scans them into non-nullable Go
+-- strings, and a NULL makes every admin/auth query touching the row fail.
 INSERT INTO auth.users (id, instance_id, aud, role, email, encrypted_password,
-  email_confirmed_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
+  email_confirmed_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at,
+  confirmation_token, recovery_token, email_change, email_change_token_new,
+  email_change_token_current, phone_change, phone_change_token, reauthentication_token)
 SELECT id, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
   email, crypt('Password123!', gen_salt('bf')), now(),
   '{"provider":"email","providers":["email"]}'::jsonb,
-  jsonb_build_object('full_name', full_name), now(), now()
+  jsonb_build_object('full_name', full_name), now(), now(),
+  '', '', '', '', '', '', '', ''
 FROM (VALUES
   ('a0000000-0000-0000-0000-000000000001'::uuid, 'mia.influencer@seed.local',  'Mia Tanaka'),
   ('a0000000-0000-0000-0000-000000000002'::uuid, 'leo.influencer@seed.local',  'Leo Vandermeer'),
