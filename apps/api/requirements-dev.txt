@@ -1,6 +1,6 @@
 -r requirements.txt
 ruff==0.5.7
 uvicorn==0.35.0
-pytest==8.3.5
+pytest==9.1.1
 pyyaml==6.0.2
 httpx==0.28.1
