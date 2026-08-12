@@ -1,22 +1,35 @@
 # API
 
-Flask backend (Phase 1) for the Influencer Travel Marketplace. Handles Supabase auth and basic user admin.
+FastAPI backend for the Influencer Travel Marketplace. Talks to Supabase over PostgREST/Auth HTTP.
 
-> Phase 2 (planned): full migration to FastAPI before the first `/ai/*` endpoint. See [docs/adr/0001-flask-now-fastapi-for-ai.md](docs/adr/0001-flask-now-fastapi-for-ai.md).
+## Layout
+
+```
+app/
+├── main.py            # FastAPI(), CORS, /health + /openapi.yaml + /docs-ui, include_router()
+├── core.py            # env config, Supabase headers, require_user() auth dependency
+├── marketplace/router.py
+└── users/router.py
+tests/
+```
 
 ## Run
 
-Reads `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` from the root `.env` (see repo README).
+Reads `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` and `SUPABASE_ANON_KEY` (or `NEXT_PUBLIC_SUPABASE_ANON_KEY`) from the root `.env`.
 
 ```sh
-pip install -r requirements.txt
-flask run --port 5001
+pip install -r requirements-dev.txt
+uvicorn app.main:app --port 8000   # from apps/api
+pytest
 ```
-
-Listens on `http://localhost:5001`.
 
 ## Endpoints
 
 - `GET /health` — liveness check
+- `GET /openapi.yaml` — the canonical API contract
+- `GET /docs-ui` — Swagger UI over the contract
+- `GET /marketplace/packages/{package_id}` — public package detail
 - `GET /users` — list Supabase auth users (service-role)
-- `PATCH /users/<id>` — update email / status / role
+- `PATCH /users/{user_id}` — update email / status
+
+Conventions for this service: [AGENTS.md](AGENTS.md).

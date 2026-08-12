@@ -1,9 +1,11 @@
 import yaml
 from fastapi.testclient import TestClient
 
-import app as app_module
+from app import core as app_core
+from app.main import app
+from app.marketplace import router as marketplace_router
 
-client = TestClient(app_module.app)
+client = TestClient(app)
 
 
 class FakeResp:
@@ -40,13 +42,13 @@ def _fake_get(payload, calls):
 
 
 def _configure(monkeypatch):
-    monkeypatch.setattr(app_module, "SUPABASE_URL", "https://example.supabase.co")
-    monkeypatch.setattr(app_module, "SUPABASE_ANON_KEY", "anon-key")
+    monkeypatch.setattr(app_core, "SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setattr(app_core, "SUPABASE_ANON_KEY", "anon-key")
 
 
 def test_404_when_not_visible(monkeypatch):
     _configure(monkeypatch)
-    monkeypatch.setattr(app_module.requests, "get", _fake_get([], []))
+    monkeypatch.setattr(marketplace_router.requests, "get", _fake_get([], []))
     resp = client.get("/marketplace/packages/b0000000-0000-0000-0000-000000000008")
     assert resp.status_code == 404
     assert resp.json()["error_code"] == "PACKAGE_NOT_FOUND"
@@ -55,7 +57,7 @@ def test_404_when_not_visible(monkeypatch):
 def test_detail_passthrough_and_query(monkeypatch):
     _configure(monkeypatch)
     calls = []
-    monkeypatch.setattr(app_module.requests, "get", _fake_get([FIXTURE], calls))
+    monkeypatch.setattr(marketplace_router.requests, "get", _fake_get([FIXTURE], calls))
     resp = client.get("/marketplace/packages/b0000000-0000-0000-0000-000000000001")
     assert resp.status_code == 200
     body = resp.json()
@@ -75,7 +77,7 @@ def test_detail_passthrough_and_query(monkeypatch):
 
 def test_price_whole_dollars(monkeypatch):
     _configure(monkeypatch)
-    monkeypatch.setattr(app_module.requests, "get", _fake_get([FIXTURE], []))
+    monkeypatch.setattr(marketplace_router.requests, "get", _fake_get([FIXTURE], []))
     resp = client.get("/marketplace/packages/b0000000-0000-0000-0000-000000000001")
     assert resp.json()["base_price_aud"] == 2999  # no cents conversion, ever
 
@@ -87,3 +89,7 @@ def test_openapi_yaml_served_and_valid():
     assert doc["openapi"].startswith("3.")
     assert "/marketplace/packages/{package_id}" in doc["paths"]
     assert "PackageDay" in doc["components"]["schemas"]
+    for path in ("/packages", "/packages/{package_id}", "/packages/{package_id}/submit"):
+        assert path in doc["paths"]
+    for schema in ("TravelPackageCreate", "TravelPackageUpdate", "TravelPackageDetail"):
+        assert schema in doc["components"]["schemas"]
