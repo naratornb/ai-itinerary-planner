@@ -66,7 +66,7 @@ jobs:
       - run: pip install -r requirements-dev.txt
       - run: ruff check .
       - run: python -c "import app"
-      # No test job yet — add `pytest` here when the first test lands (AGENTS.md rule 3).
+      - run: pytest
 
   forbidden-terms:
     runs-on: ubuntu-latest
