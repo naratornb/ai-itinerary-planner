@@ -1,0 +1,23 @@
+info:
+  name: docs-ui
+  type: http
+  seq: 3
+http:
+  method: GET
+  url: "{{host-api}}/docs-ui"
+runtime:
+  assertions:
+    - expression: res.status
+      operator: eq
+      value: "200"
+  scripts:
+    - type: tests
+      code: |-
+        test("serves swagger ui html", function() {
+          expect(String(res.body).toLowerCase()).to.contain("swagger");
+        });
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

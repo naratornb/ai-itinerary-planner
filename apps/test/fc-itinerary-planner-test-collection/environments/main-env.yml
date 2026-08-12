@@ -1,0 +1,14 @@
+name: main-env
+variables:
+  - name: host-api
+    value: "{{process.env.HOST_API_URL}}"
+    description: ""
+  - name: host-app
+    value: "{{process.env.HOST_APP_URL}}"
+    description: ""
+  - name: supabase-url
+    value: "{{process.env.SUPABASE_URL}}"
+    description: Supabase project URL (from collection-root .env)
+  - name: supabase-anon-key
+    value: "{{process.env.SUPABASE_ANON_KEY}}"
+    description: Supabase anon key (from collection-root .env)

@@ -1,0 +1,8 @@
+info:
+  name: 04-users
+  seq: 5
+  description: |-
+    User endpoints. Only GET /users is covered.
+
+    PATCH /users/{user_id} is deliberately NOT included: it mutates a real
+    auth account's metadata and there is no clean rollback.

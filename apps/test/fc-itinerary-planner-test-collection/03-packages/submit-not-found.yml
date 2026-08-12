@@ -1,0 +1,38 @@
+info:
+  name: submit-not-found
+  type: http
+  seq: 5
+
+http:
+  method: POST
+  url: "{{host-api}}/packages/00000000-0000-0000-0000-000000000000/submit"
+  headers:
+    - name: content-type
+      value: application/json
+    - name: accept
+      value: application/json
+  auth:
+    type: bearer
+    token: "{{access-token}}"
+  body:
+    type: json
+    data: |-
+      {}
+
+runtime:
+  assertions:
+    - expression: res.status
+      operator: eq
+      value: "404"
+  scripts:
+    - type: tests
+      code: |-
+        test("returns the error envelope for an unknown package", function() {
+          expect(res.body.error_code).to.equal("NOT_FOUND");
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

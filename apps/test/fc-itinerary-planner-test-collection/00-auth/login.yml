@@ -1,0 +1,46 @@
+info:
+  name: login
+  type: http
+  seq: 1
+http:
+  method: POST
+  url: "{{supabase-url}}/auth/v1/token?grant_type=password"
+  headers:
+    - name: apikey
+      value: "{{supabase-anon-key}}"
+    - name: content-type
+      value: application/json
+  params:
+    - name: grant_type
+      value: password
+      type: query
+  body:
+    type: json
+    data: |-
+      {
+        "email": "{{process.env.SMOKE_EMAIL}}",
+        "password": "{{process.env.SMOKE_PASSWORD}}"
+      }
+runtime:
+  assertions:
+    - expression: res.status
+      operator: eq
+      value: "200"
+  scripts:
+    - type: after-response
+      code: |-
+        bru.setVar("access-token", res.body.access_token);
+        bru.setVar("user-id", res.body.user.id);
+    - type: tests
+      code: |-
+        test("access token returned", function() {
+          expect(res.body.access_token).to.be.a("string").and.not.be.empty;
+        });
+        test("user id is set", function() {
+          expect(bru.getVar("user-id")).to.be.a("string").and.not.be.empty;
+        });
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

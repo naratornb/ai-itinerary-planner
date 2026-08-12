@@ -1,0 +1,27 @@
+info:
+  name: openapi-spec
+  type: http
+  seq: 2
+http:
+  method: GET
+  url: "{{host-api}}/openapi.yaml"
+runtime:
+  assertions:
+    - expression: res.status
+      operator: eq
+      value: "200"
+  scripts:
+    - type: tests
+      code: |-
+        const spec = String(res.body);
+        test("looks like an openapi document", function() {
+          expect(spec).to.contain("openapi:");
+        });
+        test("still documents /packages", function() {
+          expect(spec).to.contain("/packages");
+        });
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
