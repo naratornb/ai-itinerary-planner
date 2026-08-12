@@ -1,6 +1,6 @@
 -r requirements.txt
-ruff==0.5.7
-uvicorn==0.35.0
+ruff==0.16.2
+uvicorn==0.52.1
 pytest==8.3.5
-pyyaml==6.0.2
+pyyaml==6.0.3
 httpx==0.28.1
