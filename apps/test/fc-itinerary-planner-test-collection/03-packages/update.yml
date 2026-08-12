@@ -1,0 +1,43 @@
+info:
+  name: update
+  type: http
+  seq: 4
+
+http:
+  method: PUT
+  url: "{{host-api}}/packages/{{package-id}}"
+  headers:
+    - name: content-type
+      value: application/json
+    - name: accept
+      value: application/json
+  auth:
+    type: bearer
+    token: "{{access-token}}"
+  body:
+    type: json
+    data: |-
+      {
+        "title": "Smoke Test Draft (updated)",
+        "base_price_aud": 2750
+      }
+
+runtime:
+  assertions:
+    - expression: res.status
+      operator: eq
+      value: "200"
+  scripts:
+    - type: tests
+      code: |-
+        test("applies a partial update", function() {
+          expect(res.body.title).to.equal("Smoke Test Draft (updated)");
+          expect(res.body.base_price_aud).to.equal(2750);
+          expect(res.body.destination_city).to.equal("Tokyo");
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

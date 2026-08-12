@@ -1,0 +1,14 @@
+opencollection: 1.0.0
+
+info:
+  name: fc-itinerary-planner-test-collection
+bundled: false
+request:
+  headers:
+    - name: accept
+      value: application/json
+extensions:
+  bruno:
+    ignore:
+      - node_modules
+      - .git
