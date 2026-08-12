@@ -175,7 +175,9 @@ for (const r of routes) {
       flight_id: `${r.code}${num}-${ymd}`,
       airline: r.name,
       origin: `${r.origin[0]} (${r.origin[2]})`,
+      origin_country: r.origin[1],
       destination: `${r.dest[0]} (${r.dest[2]})`,
+      destination_country: r.dest[1],
       departure_datetime: new Date(dep).toISOString(),
       arrival_datetime: new Date(arr).toISOString(),
       duration_mins: durOut,
@@ -262,7 +264,7 @@ const ACT = [
 ];
 const activities = [];
 for (const c of CITIES) {
-  const [city, , code, , , idx] = c;
+  const [city, country, code, , , idx] = c;
   const n = ri(34, 44);
   const used = new Set();
   for (let i = 1; i <= n; i++) {
@@ -274,6 +276,7 @@ for (const c of CITIES) {
       activity_id: `AC-${code}-${String(i).padStart(3, '0')}`,
       activity_name: name,
       city,
+      country,
       category: t[1],
       price_aud: Math.round(ri(t[2][0], t[2][1]) * idx),
       rating: rf(3.4, 5.0),
