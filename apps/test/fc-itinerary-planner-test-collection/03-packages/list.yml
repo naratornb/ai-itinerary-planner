@@ -1,0 +1,45 @@
+info:
+  name: list
+  type: http
+  seq: 1
+
+http:
+  method: GET
+  url: "{{host-api}}/packages?page=1&per_page=20&sort=created_at_desc"
+  headers:
+    - name: accept
+      value: application/json
+  params:
+    - name: page
+      value: "1"
+      type: query
+    - name: per_page
+      value: "20"
+      type: query
+    - name: sort
+      value: created_at_desc
+      type: query
+  auth:
+    type: bearer
+    token: "{{access-token}}"
+
+runtime:
+  scripts:
+    - type: tests
+      code: |-
+        test("returns a page of the caller's packages", function() {
+          expect(res.body.data).to.be.an("array");
+          expect(res.body.meta.per_page).to.equal(20);
+          const userId = bru.getVar("user-id");
+          expect(res.body.data.every(p => p.creator_id === userId)).to.be.true;
+        });
+  assertions:
+    - expression: res.status
+      operator: eq
+      value: "200"
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

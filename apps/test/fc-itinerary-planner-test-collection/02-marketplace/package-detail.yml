@@ -1,0 +1,31 @@
+info:
+  name: package-detail
+  type: http
+  seq: 1
+http:
+  method: GET
+  url: "{{host-api}}/marketplace/packages/b0000000-0000-0000-0000-000000000001"
+runtime:
+  assertions:
+    - expression: res.status
+      operator: eq
+      value: "200"
+  scripts:
+    - type: tests
+      code: |-
+        test("returns the requested package", function() {
+          expect(res.body.package_id).to.equal("b0000000-0000-0000-0000-000000000001");
+        });
+        test("only live packages are public", function() {
+          expect(res.body.status).to.equal("live");
+        });
+        test("component collections are arrays", function() {
+          ["flights", "hotels", "activities", "media", "days"].forEach(function(key) {
+            expect(res.body[key]).to.be.an("array");
+          });
+        });
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
