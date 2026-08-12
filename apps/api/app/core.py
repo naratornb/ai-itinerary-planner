@@ -4,6 +4,7 @@ from pathlib import Path
 import requests
 from dotenv import load_dotenv
 from fastapi import Header, HTTPException
+from fastapi.responses import JSONResponse
 
 # Loaded here (not main.py) because these module-level env reads run first.
 load_dotenv(Path(__file__).resolve().parents[3] / ".env")
@@ -47,3 +48,22 @@ def require_user(authorization: str = Header(default="")):
     if not response.ok:
         raise HTTPException(401, "Invalid or expired token.")
     return response.json()
+
+
+def _err(status_code, error_code, message, details=None):
+    """The one ErrorResponse shape from openapi.yaml."""
+    body = {"error_code": error_code, "message": message}
+    if details is not None:
+        body["details"] = details
+    return JSONResponse(body, status_code=status_code)
+
+
+def require_user_ctx(authorization: str = Header(default="")):
+    """require_user plus the PostgREST headers that act as that user (RLS)."""
+    if not SUPABASE_ANON_KEY:
+        raise HTTPException(500, "Supabase anon credentials not configured.")
+    user = require_user(authorization)
+    return {
+        "uid": user["id"],
+        "headers": {"apikey": SUPABASE_ANON_KEY, "Authorization": authorization},
+    }

@@ -1,11 +1,16 @@
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import FileResponse
+from starlette.exceptions import HTTPException
 
+from app.core import _err
 from app.marketplace.router import router as marketplace_router
+from app.packages.router import router as packages_router
 from app.users.router import router as users_router
 
 OPENAPI_SPEC = Path(__file__).resolve().parents[1] / "openapi.yaml"
@@ -37,5 +42,30 @@ def docs_ui():
     return get_swagger_ui_html(openapi_url="/openapi.yaml", title="API contract")
 
 
+# Every error response shares the ErrorResponse shape from openapi.yaml.
+_STATUS_CODES = {401: "UNAUTHORIZED", 403: "FORBIDDEN", 404: "NOT_FOUND"}
+
+
+@app.exception_handler(RequestValidationError)
+def validation_error_handler(_request: Request, exc: RequestValidationError):
+    return _err(
+        422,
+        "VALIDATION_ERROR",
+        "One or more fields are invalid.",
+        # errors() can carry non-JSON ctx values (raw exceptions) in Pydantic v2.
+        {"errors": jsonable_encoder(exc.errors())},
+    )
+
+
+@app.exception_handler(HTTPException)
+def http_exception_handler(_request: Request, exc: HTTPException):
+    return _err(
+        exc.status_code,
+        _STATUS_CODES.get(exc.status_code, "ERROR"),
+        str(exc.detail),
+    )
+
+
 app.include_router(marketplace_router, tags=["marketplace"])
+app.include_router(packages_router, tags=["packages"])
 app.include_router(users_router, tags=["users"])

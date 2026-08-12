@@ -89,3 +89,7 @@ def test_openapi_yaml_served_and_valid():
     assert doc["openapi"].startswith("3.")
     assert "/marketplace/packages/{package_id}" in doc["paths"]
     assert "PackageDay" in doc["components"]["schemas"]
+    for path in ("/packages", "/packages/{package_id}", "/packages/{package_id}/submit"):
+        assert path in doc["paths"]
+    for schema in ("TravelPackageCreate", "TravelPackageUpdate", "TravelPackageDetail"):
+        assert schema in doc["components"]["schemas"]
