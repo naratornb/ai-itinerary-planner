@@ -25,7 +25,7 @@ Never bypass with `--no-verify` to ship a forbidden term. If a real reference is
 ## Repo shape
 
 Monorepo:
-- `apps/api/` — Python backend: **Flask today, consolidating to async FastAPI** (per [ADR-0001](apps/api/docs/adr/0001-flask-now-fastapi-for-ai.md)). New endpoints go to FastAPI once the migration lands; don't grow the Flask surface. Glossary: [apps/api/CONTEXT.md](apps/api/CONTEXT.md)
+- `apps/api/` — Python backend: **FastAPI** (migrated from Flask per [ADR-0001](apps/api/docs/adr/0001-flask-now-fastapi-for-ai.md)), feature-folder layout under `apps/api/app/`. Glossary: [apps/api/CONTEXT.md](apps/api/CONTEXT.md). FastAPI ruleset (API-scoped): [apps/api/AGENTS.md](apps/api/AGENTS.md)
 - `apps/web/` — Next.js + **TypeScript** frontend (see [apps/web/CONTEXT.md](apps/web/CONTEXT.md)). No plain-JS additions.
 - Supabase Cloud for auth/DB — no local Supabase stack; apps run natively (single root `.env`, see `.env.example`)
 - Deploy target: **Vercel** (web + FastAPI serverless together). Keep the backend Vercel-compatible: app entrypoint importable as a serverless handler, no long-lived local state.
