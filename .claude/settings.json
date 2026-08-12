@@ -3,5 +3,8 @@
     "ask": [
       "Bash(git push*)"
     ]
+  },
+  "worktree": {
+    "bgIsolation": "none"
   }
 }
