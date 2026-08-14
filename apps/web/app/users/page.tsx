@@ -190,7 +190,7 @@ export default function UsersPage() {
             <span className="material-symbols-outlined text-white text-[16px]" style={{ fontVariationSettings: "'FILL' 1" }}>token</span>
           </div>
           <div className="flex flex-col min-w-0">
-            <span className="text-[13px] font-bold text-text-primary truncate font-display">Project Alpha</span>
+            <span className="text-[13px] font-bold text-text-primary truncate">Project Alpha</span>
             <span className="text-[11px] text-text-secondary">Authentication</span>
           </div>
         </div>
@@ -228,7 +228,7 @@ export default function UsersPage() {
         {/* Top bar */}
         <header className="bg-white border-b border-border-subtle flex justify-between items-center px-6 h-14 shrink-0">
           <div className="flex items-center gap-5 flex-1">
-            <span className="text-lg font-bold text-text-primary font-display tracking-[-0.02em]">
+            <span className="text-lg font-bold text-text-primary tracking-[-0.02em]">
               Supabase Admin
             </span>
             <div className="relative max-w-xs w-full hidden md:block">
@@ -267,7 +267,7 @@ export default function UsersPage() {
               className="flex flex-col md:flex-row md:items-end justify-between gap-4"
             >
               <div>
-                <h1 className="text-[22px] font-bold text-text-primary font-display tracking-[-0.02em]">
+                <h1 className="text-[22px] font-bold text-text-primary tracking-[-0.02em]">
                   User Management
                 </h1>
                 <p className="text-sm text-text-secondary mt-0.5">Manage access, roles, and user lifecycle events.</p>
@@ -371,7 +371,7 @@ export default function UsersPage() {
                               </div>
                               <div className="flex flex-col">
                                 <span className={`font-medium ${isSuspended ? "line-through" : ""}`}>{user.username}</span>
-                                <span className="text-[11px] text-text-secondary font-mono">{user.id.slice(0, 8)}</span>
+                                <span className="text-[11px] text-text-secondary">{user.id.slice(0, 8)}</span>
                               </div>
                             </div>
                           </td>
@@ -464,7 +464,7 @@ export default function UsersPage() {
                 </div>
                 <div>
                   <p className="text-sm font-semibold text-text-primary leading-tight">Edit User</p>
-                  <p className="text-[11px] text-text-secondary font-mono leading-tight">{selectedUser.id.slice(0, 12)}</p>
+                  <p className="text-[11px] text-text-secondary leading-tight">{selectedUser.id.slice(0, 12)}</p>
                 </div>
               </div>
               <button
@@ -517,7 +517,7 @@ export default function UsersPage() {
                   <input
                     id="edit-created-at"
                     type="text"
-                    className="form-input font-mono text-sm"
+                    className="form-input text-sm"
                     value={editCreatedAt}
                     onChange={(e) => setEditCreatedAt(e.target.value)}
                   />
@@ -535,7 +535,7 @@ export default function UsersPage() {
                   ].map(({ label, value }) => (
                     <div key={label} className="flex justify-between items-center py-1 border-b border-border-subtle/60 last:border-0">
                       <span className="text-xs text-text-secondary">{label}</span>
-                      <span className="font-mono text-xs text-text-primary truncate max-w-[200px]">{value}</span>
+                      <span className="text-xs text-text-primary truncate max-w-[200px]">{value}</span>
                     </div>
                   ))}
                 </div>
