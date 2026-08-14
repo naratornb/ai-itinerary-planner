@@ -435,6 +435,7 @@ button:focus-visible, textarea:focus-visible { outline: 3px solid var(--fc-focus
 .hotel-choice-copy { min-width: 0; padding: 12px; display: grid; gap: 3px; }
 .hotel-choice-copy strong { overflow: hidden; font-size: 14px; line-height: 20px; text-overflow: ellipsis; white-space: nowrap; }
 .hotel-choice-copy small,.hotel-choice-copy span { color: var(--fc-secondary); font-size: 12px; line-height: 17px; }
+.hotel-choice-copy .hotel-star-rating { color: var(--fc-warning); font-weight: 700; letter-spacing: .01em; }
 .hotel-choice-copy b { margin-top: 6px; color: var(--fc-ink); font-size: 13px; line-height: 18px; }
 .hotel-choice-check { position: absolute; top: 10px; right: 10px; width: 28px; height: 28px; display: grid; place-items: center; border-radius: 999px; background: var(--fc-blue); color: #fff; }
 .hotel-choice-check:empty { display: none; }

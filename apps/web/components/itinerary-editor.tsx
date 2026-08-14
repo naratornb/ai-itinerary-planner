@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
-import { HOTEL_OPTIONS } from "./hotel-catalog";
+import { formatHotelStarRating, HOTEL_OPTIONS } from "./hotel-catalog";
 import RouteMap from "./route-map";
 
 type IconName = "plane" | "star" | "hotel" | "plus" | "alert" | "check" | "clock" | "chevron";
@@ -388,7 +388,7 @@ export default function ItineraryEditor({ onBack }: { onBack: () => void }) {
                     <div className="hotel-choice-grid" role="radiogroup" aria-label="Available hotels">
                       {HOTEL_OPTIONS.map((hotel) => <button key={hotel.id} type="button" role="radio" aria-checked={selectedHotelOptionId === hotel.id} className={`hotel-choice-card${selectedHotelOptionId === hotel.id ? " selected" : ""}`} onClick={() => setSelectedHotelOptionId(hotel.id)}>
                         <span className="hotel-choice-image"><Image src={hotel.image} alt={hotel.imageAlt} fill sizes="(max-width: 720px) 100vw, 33vw" /></span>
-                        <span className="hotel-choice-copy"><strong>{hotel.name}</strong><small>{hotel.area}</small><span>{hotel.room}</span><b>${hotel.price.toLocaleString("en-US")} total</b></span>
+                        <span className="hotel-choice-copy"><strong>{hotel.name}</strong><span className="hotel-star-rating">{formatHotelStarRating(hotel.starRating)}</span><small>{hotel.area}</small><span>{hotel.room}</span><b>${hotel.price.toLocaleString("en-US")} total</b></span>
                         <span className="hotel-choice-check" aria-hidden="true">{selectedHotelOptionId === hotel.id ? <Icon name="check" size={20} /> : ""}</span>
                       </button>)}
                     </div>

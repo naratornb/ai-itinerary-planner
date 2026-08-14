@@ -2,15 +2,19 @@ import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import test from "node:test";
 
-import { HOTEL_OPTIONS } from "./hotel-catalog";
+import { formatHotelStarRating, HOTEL_OPTIONS } from "./hotel-catalog";
+
+test("formats hotel ratings in English", () => {
+  assert.equal(formatHotelStarRating(4), "★★★★☆ 4-star hotel");
+});
 
 test("fixed hotel choices provide complete local booking details", () => {
   assert.deepEqual(
-    HOTEL_OPTIONS.map(({ name, room, price }) => ({ name, room, price })),
+    HOTEL_OPTIONS.map(({ name, room, price, starRating }) => ({ name, room, price, starRating })),
     [
-      { name: "Shibuya Excel Hotel Tokyu", room: "Standard room", price: 720 },
-      { name: "Park Hyatt Tokyo", room: "Deluxe room", price: 1680 },
-      { name: "9h Capsule Hotel", room: "Shared room", price: 270 },
+      { name: "Shibuya Excel Hotel Tokyu", room: "Standard room", price: 720, starRating: 4 },
+      { name: "Park Hyatt Tokyo", room: "Deluxe room", price: 1680, starRating: 5 },
+      { name: "9h Capsule Hotel", room: "Shared room", price: 270, starRating: 2 },
     ],
   );
 

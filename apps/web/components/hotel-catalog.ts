@@ -7,6 +7,7 @@ export type HotelOption = {
   checkOut: string;
   room: string;
   price: number;
+  starRating: number;
   image: string;
   imageAlt: string;
 };
@@ -21,6 +22,7 @@ export const HOTEL_OPTIONS: readonly HotelOption[] = [
     checkOut: "11:00",
     room: "Standard room",
     price: 720,
+    starRating: 4,
     image: "/hotels/shibuya-excel.jpg",
     imageAlt: "Hotel pool and terrace in warm evening light",
   },
@@ -33,6 +35,7 @@ export const HOTEL_OPTIONS: readonly HotelOption[] = [
     checkOut: "12:00",
     room: "Deluxe room",
     price: 1680,
+    starRating: 5,
     image: "/hotels/park-hyatt.jpg",
     imageAlt: "Guest room at Park Hyatt Tokyo",
   },
@@ -45,7 +48,12 @@ export const HOTEL_OPTIONS: readonly HotelOption[] = [
     checkOut: "10:00",
     room: "Shared room",
     price: 270,
+    starRating: 2,
     image: "/hotels/9h-capsule.jpg",
     imageAlt: "Compact shared sleeping room with bunk beds",
   },
 ];
+
+export function formatHotelStarRating(starRating: number) {
+  return `${"★".repeat(starRating)}${"☆".repeat(5 - starRating)} ${starRating}-star hotel`;
+}
