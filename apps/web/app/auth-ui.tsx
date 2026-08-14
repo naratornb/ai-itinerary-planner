@@ -84,7 +84,7 @@ export function AuthShell({
               {icon}
             </span>
           </div>
-          <h1 className="text-[28px] font-extrabold text-text-primary font-display tracking-[-0.03em]">
+          <h1 className="text-[28px] font-extrabold text-text-primary tracking-[-0.03em]">
             {title}
           </h1>
           <p className="text-sm text-text-secondary mt-1.5 text-center max-w-xs">{subtitle}</p>
