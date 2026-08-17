@@ -47,7 +47,7 @@ UPDATE public.profiles SET role = 'customer',
 UPDATE public.profiles SET avatar_url = 'https://i.pravatar.cc/150?u=' || id::text
   WHERE avatar_url IS NULL AND id::text LIKE 'a0000000-%';
 
-INSERT INTO public.influencer_profiles (user_id, bio, social_handle, follower_count, specialty, verified) VALUES
+INSERT INTO public.influencer_profiles (user_id, bio, instagram_handle, follower_count, specialty, verified) VALUES
   ('a0000000-0000-0000-0000-000000000001', 'Tokyo-based creator sharing food-first city guides across Asia.', '@mia.eats.world', 482000, 'food & culture', TRUE),
   ('a0000000-0000-0000-0000-000000000002', 'Adventure filmmaker chasing mountains, fjords and powder.', '@leo.outside', 213000, 'adventure', TRUE),
   ('a0000000-0000-0000-0000-000000000003', 'Budget-luxe European city breaks and hidden-gem itineraries.', '@aria.wanders', 96000, 'city breaks', FALSE);
