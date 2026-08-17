@@ -149,7 +149,7 @@ INSERT INTO public.package_days (package_id, day_number, title, summary) VALUES
   ('b0000000-0000-0000-0000-000000000003', 2, 'Galleries & food walk', 'Musée d''Orsay in the morning, evening patisserie and wine walk in Le Marais.');
 
 -- ---------- approvals ----------
-INSERT INTO public.package_approvals (package_id, admin_id, action, rejection_reason, actioned_at) VALUES
+INSERT INTO public.package_approvals (package_id, reviewer_id, decision, rejection_reason, reviewed_at) VALUES
   ('b0000000-0000-0000-0000-000000000001', 'a0000000-0000-0000-0000-000000000004', 'approved', NULL, now() - interval '26 days'),
   ('b0000000-0000-0000-0000-000000000002', 'a0000000-0000-0000-0000-000000000004', 'approved', NULL, now() - interval '19 days'),
   ('b0000000-0000-0000-0000-000000000003', 'a0000000-0000-0000-0000-000000000004', 'approved', NULL, now() - interval '11 days'),
