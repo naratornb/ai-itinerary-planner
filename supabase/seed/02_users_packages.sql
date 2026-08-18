@@ -47,7 +47,7 @@ UPDATE public.profiles SET role = 'customer',
 UPDATE public.profiles SET avatar_url = 'https://i.pravatar.cc/150?u=' || id::text
   WHERE avatar_url IS NULL AND id::text LIKE 'a0000000-%';
 
-INSERT INTO public.influencer_profiles (user_id, bio, social_handle, follower_count, specialty, verified) VALUES
+INSERT INTO public.influencer_profiles (user_id, bio, instagram_handle, follower_count, specialty, verified) VALUES
   ('a0000000-0000-0000-0000-000000000001', 'Tokyo-based creator sharing food-first city guides across Asia.', '@mia.eats.world', 482000, 'food & culture', TRUE),
   ('a0000000-0000-0000-0000-000000000002', 'Adventure filmmaker chasing mountains, fjords and powder.', '@leo.outside', 213000, 'adventure', TRUE),
   ('a0000000-0000-0000-0000-000000000003', 'Budget-luxe European city breaks and hidden-gem itineraries.', '@aria.wanders', 96000, 'city breaks', FALSE);
@@ -149,7 +149,7 @@ INSERT INTO public.package_days (package_id, day_number, title, summary) VALUES
   ('b0000000-0000-0000-0000-000000000003', 2, 'Galleries & food walk', 'Musée d''Orsay in the morning, evening patisserie and wine walk in Le Marais.');
 
 -- ---------- approvals ----------
-INSERT INTO public.package_approvals (package_id, admin_id, action, rejection_reason, actioned_at) VALUES
+INSERT INTO public.package_approvals (package_id, reviewer_id, decision, rejection_reason, reviewed_at) VALUES
   ('b0000000-0000-0000-0000-000000000001', 'a0000000-0000-0000-0000-000000000004', 'approved', NULL, now() - interval '26 days'),
   ('b0000000-0000-0000-0000-000000000002', 'a0000000-0000-0000-0000-000000000004', 'approved', NULL, now() - interval '19 days'),
   ('b0000000-0000-0000-0000-000000000003', 'a0000000-0000-0000-0000-000000000004', 'approved', NULL, now() - interval '11 days'),
