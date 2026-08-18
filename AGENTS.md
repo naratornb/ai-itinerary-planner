@@ -88,6 +88,10 @@ git fetch origin
 git switch -c feat/<summary> origin/develop
 ```
 
+### No direct pushes to `develop` or `main`
+
+Never commit or push directly to `develop` or `main` — humans and AI agents alike. All changes land via a PR from a feature/fix/chore branch. If a commit accidentally lands on `develop` locally, move it to a branch (`git branch <name> && git reset --hard origin/develop`) before pushing.
+
 ### No automatic pushes
 
 **AI agents must never push code without explicit human approval — no exceptions.** Committing locally is fine when asked; `git push` (any branch, any remote) requires the human to approve that specific push first. "Commit and push" style instructions still mean: commit, then ask before pushing.
