@@ -58,7 +58,7 @@ These apply to **every collaborator — human or AI agent — in any tool**.
 ### 4. PR & review discipline
 
 - PRs are **small vertical slices**: one user-visible change end to end, not a layer at a time. If the diff description needs "and", consider splitting.
-- **One change per branch.** A branch carries exactly one feature/fix/chore — the one its `<type>/<summary>` name states. Never stack several features or unrelated changes on a single branch; a second idea gets its own branch off `develop`. If a branch has drifted into multiple concerns, split it before opening the PR.
+- **Branch granularity is the human's call.** One change per branch is the default, but when work contains multiple distinguishable changes, ask the human whether to keep them on one branch or split into separate branches/PRs — never split (or bundle) unilaterally. If splitting, each branch gets its own `<type>/<summary>` name off `develop`.
 - Self-review before requesting human review (Claude Code: `/code-review` or `/scrutinize`). Fix what you find; note in the PR anything you saw and deliberately left.
 - The PR body states: what changed, why, and **how it was verified** (commands run, what you observed). "Should work" is not verification.
 - Migrations ship in the same PR as the code that depends on them.
