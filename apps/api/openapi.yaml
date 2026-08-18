@@ -40,7 +40,7 @@ info:
     Error responses use a consistent `ErrorResponse` schema throughout.
     All monetary values are stored and returned as **whole AUD dollars** (integer), matching the database columns.
 
-  version: "1.1.0"
+  version: "2.0.0"
   license:
     name: Academic Use Only
 
@@ -654,9 +654,14 @@ components:
               bio:
                 type: string
                 nullable: true
-              social_handle:
+              instagram_handle:
                 type: string
+                nullable: true
                 example: "@mia.eats.world"
+              tiktok_handle:
+                type: string
+                nullable: true
+                example: "@mia.eats"
               follower_count:
                 type: integer
                 example: 482000
@@ -994,6 +999,15 @@ paths:
               example:
                 error_code: "INVALID_CREDENTIALS"
                 message: "The email address or password is incorrect."
+        "404":
+          description: Credentials valid but no profile row exists for the user.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error_code: "NOT_FOUND"
+                message: "Profile not found."
         "422":
           $ref: '#/components/responses/UnprocessableEntity'
 
@@ -1016,6 +1030,8 @@ paths:
                 $ref: '#/components/schemas/UserProfile'
         "401":
           $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
 
   /auth/logout:
     post:
