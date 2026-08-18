@@ -8,6 +8,7 @@ from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import FileResponse
 from starlette.exceptions import HTTPException
 
+from app.ai.router import router as ai_router
 from app.core import _err
 from app.marketplace.router import router as marketplace_router
 from app.media.router import router as media_router
@@ -67,6 +68,7 @@ def http_exception_handler(_request: Request, exc: HTTPException):
     )
 
 
+app.include_router(ai_router, tags=["ai"])
 app.include_router(marketplace_router, tags=["marketplace"])
 app.include_router(media_router, tags=["media"])
 app.include_router(packages_router, tags=["packages"])
