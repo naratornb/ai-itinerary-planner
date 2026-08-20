@@ -12,6 +12,12 @@ import {
   signInWithEmail,
   type CreatorPackage,
 } from "../lib/creator-api";
+import {
+  fetchMarketplacePackages,
+  searchMarketplacePackages,
+  uniqueDestinationSuggestions,
+  type MarketplacePackageSummary,
+} from "../lib/marketplace-api";
 import { supabase } from "../lib/supabase/client";
 const creatorBannerImg = "/creator-banner.png";
 
@@ -280,8 +286,8 @@ export function TopNav({ screen, onNav }: { screen: Screen; onNav: (s: Screen) =
                 aria-expanded={marketplaceSession ? accountOpen : undefined}
                 aria-label={marketplaceSession ? `Open profile menu for ${marketplaceProfile.displayName}` : "Sign in"}
                 style={{
-                  display: "inline-flex", alignItems: "center", gap: 8,
-                  height: 40, padding: "0 12px 0 4px",
+                  display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8,
+                  height: 40, padding: marketplaceSession ? "0 12px 0 4px" : "0 20px",
                   border: 0, borderRadius: 9999,
                   background: C.white, color: C.ink,
                   font: "500 14px/20px var(--fc-font-body)",
@@ -641,58 +647,98 @@ export function LoginScreen({ onNav }: { onNav: (s: Screen) => void }) {
 }
 
 // ─── Marketplace Screen ────────────────────────────────────────────────────────
-const REGION_TABS = ["UK & Europe", "Asia", "USA & Canada", "Africa"];
+const MARKETPLACE_API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-const TOUR_CARDS = [
-  {
-    img: IMG.santorini,
-    save: "SAVE $1,407",
-    exclusive: undefined,
-    title: "Stay & Tour: Athens Discovery + Santorini Escape",
-    date: "18 Feb 2026", nights: 10, country: "Greece",
-    includedValue: "$1,820",
-    inclusions: ["10 nights accommodation", "Flights in Greece included", "Daily breakfast included"],
-    price: "$3,299", priceNote: "From per person twin share",
-    creator: { name: "Sophie Laurent", handle: "@sophietravels", avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=64&h=64&fit=crop&crop=face" },
-  },
-  {
-    img: IMG.bali,
-    save: "SAVE $890",
-    exclusive: "EXCLUSIVE SAVE $799pp",
-    title: "Fly, Stay & Tour: Best of Sri Lanka & Beaches",
-    date: "4 Apr 2026", nights: 15, country: "Sri Lanka",
-    includedValue: "$2,100",
-    inclusions: ["15 nights accommodation", "Return flights to Colombo", "Guided cultural tours"],
-    price: "$4,199", priceNote: "From per person twin share",
-    creator: { name: "Marcus Chen", handle: "@marcuswanders", avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=64&h=64&fit=crop&crop=face" },
-  },
-  {
-    img: IMG.morocco,
-    save: "SAVE $1,240",
-    exclusive: undefined,
-    title: "Fly, Stay & Tour: Casablanca Stay and Morocco Encompassed",
-    date: "21 Nov 2026", nights: 18, country: "Morocco",
-    includedValue: "$2,560",
-    inclusions: ["18 nights accommodation", "Intercity flights included", "Guided desert excursion"],
-    price: "$5,499", priceNote: "From per person twin share",
-    creator: { name: "Aisha Okonkwo", handle: "@aishaexplores", avatar: "https://images.unsplash.com/photo-1531123897727-8f129e1688ce?w=64&h=64&fit=crop&crop=face" },
-  },
-  {
-    img: IMG.tokyo,
-    save: undefined,
-    exclusive: "EXCLUSIVE SAVE $500pp",
-    title: "Ancient Shores & Island Escapes: Dubrovnik to the Greek Islands",
-    date: "11 May 2026", nights: 27, country: "Croatia & Greece",
-    includedValue: "$3,400",
-    inclusions: ["27 nights accommodation", "Flights to Dubrovnik included", "Scenic island cruise"],
-    price: "$7,299", priceNote: "From per person twin share",
-    creator: { name: "Lena Hoffmann", handle: "@lenahoffmann", avatar: "https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=64&h=64&fit=crop&crop=face" },
-  },
-];
+function marketplacePrice(price: number | null) {
+  if (price === null) return "Price on request";
+  return new Intl.NumberFormat("en-AU", {
+    style: "currency", currency: "AUD", maximumFractionDigits: 0,
+  }).format(price);
+}
 
 export function MarketplaceScreen() {
+  const router = useRouter();
   const [search, setSearch] = useState("");
-  const [activeRegion, setActiveRegion] = useState("UK & Europe");
+  const [packages, setPackages] = useState<MarketplacePackageSummary[]>([]);
+  const [allPackages, setAllPackages] = useState<MarketplacePackageSummary[]>([]);
+  const [liveResults, setLiveResults] = useState<MarketplacePackageSummary[]>([]);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const loadPackages = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const data = await fetchMarketplacePackages(fetch, MARKETPLACE_API_URL);
+      setPackages(data);
+      setAllPackages(data);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Unable to load marketplace packages.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    let active = true;
+    void fetchMarketplacePackages(fetch, MARKETPLACE_API_URL)
+      .then((data) => {
+        if (!active) return;
+        setPackages(data);
+        setAllPackages(data);
+      })
+      .catch((loadError: unknown) => {
+        if (active) setError(loadError instanceof Error ? loadError.message : "Unable to load marketplace packages.");
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    const query = search.trim();
+    if (query.length < 2) return;
+    let active = true;
+    const timer = window.setTimeout(async () => {
+      try {
+        const data = await searchMarketplacePackages(fetch, MARKETPLACE_API_URL, query);
+        if (!active) return;
+        setLiveResults(data);
+        setSuggestions(uniqueDestinationSuggestions(data));
+        setShowSuggestions(true);
+      } catch {
+        if (active) setSuggestions([]);
+      }
+    }, 300);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [search]);
+
+  const submitSearch = async (query = search) => {
+    const trimmed = query.trim();
+    setShowSuggestions(false);
+    if (!trimmed) {
+      setPackages(allPackages);
+      return;
+    }
+    if (trimmed.length < 2) {
+      setError("Enter at least 2 characters to search.");
+      return;
+    }
+    setLoading(true);
+    setError("");
+    try {
+      const data = query === search && liveResults.length ? liveResults
+        : await searchMarketplacePackages(fetch, MARKETPLACE_API_URL, trimmed);
+      setPackages(data);
+    } catch (searchError) {
+      setError(searchError instanceof Error ? searchError.message : "Unable to search marketplace packages.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <div style={{ background: C.white, minHeight: "100vh" }}>
@@ -722,7 +768,7 @@ export function MarketplaceScreen() {
           </h1>
 
           {/* Search card */}
-          <div style={{
+          <form onSubmit={(event) => { event.preventDefault(); void submitSearch(); }} style={{
             background: C.white,
             borderRadius: 20,
             padding: "28px 28px 0",
@@ -737,19 +783,66 @@ export function MarketplaceScreen() {
               padding: "0 24px",
               height: 60,
               marginBottom: 20,
+              position: "relative",
             }}>
               <svg width="20" height="20" viewBox="0 0 24 24" fill="#212121" style={{ flexShrink: 0, marginRight: 14, opacity: 0.55 }}>
                 <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
               </svg>
               <input
                 value={search}
-                onChange={(e) => setSearch(e.target.value)}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setSearch(value);
+                  setShowSuggestions(true);
+                  setError("");
+                  if (value.trim().length < 2) {
+                    setSuggestions([]);
+                    setLiveResults([]);
+                    if (!value.trim()) setPackages(allPackages);
+                  }
+                }}
+                onFocus={() => setShowSuggestions(true)}
                 placeholder="All destinations"
+                role="combobox"
+                aria-label="Search destinations"
+                aria-autocomplete="list"
+                aria-expanded={showSuggestions && suggestions.length > 0}
+                aria-controls="marketplace-destination-suggestions"
                 style={{
                   flex: 1, border: "none", outline: "none", background: "transparent",
                   fontFamily: "var(--fc-font-body)", fontSize: 17, color: C.ink,
                 }}
               />
+              {showSuggestions && search.trim().length >= 2 && (
+                <div id="marketplace-destination-suggestions" role="listbox" style={{
+                  position: "absolute", zIndex: 10, top: 66, left: 0, right: 0,
+                  background: C.white, border: `1px solid ${C.border}`,
+                  borderRadius: C.radiusMd, boxShadow: C.shadowRaised, overflow: "hidden",
+                }}>
+                  {suggestions.length > 0 ? suggestions.map((destination) => (
+                    <button
+                      key={destination}
+                      type="button"
+                      role="option"
+                      aria-selected="false"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => { setSearch(destination); void submitSearch(destination); }}
+                      style={{
+                        width: "100%", padding: "12px 18px", border: "none",
+                        borderBottom: `1px solid ${C.border}`, background: C.white,
+                        textAlign: "left", fontFamily: "var(--fc-font-body)",
+                        fontSize: 15, color: C.ink, cursor: "pointer",
+                      }}
+                    >
+                      {destination}
+                    </button>
+                  )) : (
+                    <p style={{ margin: 0, padding: "12px 18px", color: C.secondary, fontSize: 14 }}>
+                      No matching destinations
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Row 2: filters + search button */}
@@ -759,7 +852,7 @@ export function MarketplaceScreen() {
             }}>
               <div style={{ display: "flex", gap: 4 }}>
                 {["All departure dates", "All trip types"].map((label) => (
-                  <button key={label} style={{
+                  <button key={label} type="button" style={{
                     display: "inline-flex", alignItems: "center", gap: 6,
                     background: "none", border: "none", cursor: "pointer",
                     fontFamily: "var(--fc-font-body)", fontSize: 15, fontWeight: 500,
@@ -774,6 +867,7 @@ export function MarketplaceScreen() {
                 ))}
               </div>
               <button
+                type="submit"
                 onMouseEnter={(e) => (e.currentTarget.style.background = C.blueDark)}
                 onMouseLeave={(e) => (e.currentTarget.style.background = C.blue)}
                 style={{
@@ -785,7 +879,7 @@ export function MarketplaceScreen() {
                 Search trips
               </button>
             </div>
-          </div>
+          </form>
         </div>
       </section>
 
@@ -806,46 +900,23 @@ export function MarketplaceScreen() {
           </p>
         </div>
 
-        {/* Region tabs + arrows */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 32 }}>
-          <div style={{ display: "flex", gap: 6 }}>
-            {REGION_TABS.map((r) => {
-              const on = activeRegion === r;
-              return (
-                <button key={r} onClick={() => setActiveRegion(r)} style={{
-                  fontFamily: "var(--fc-font-body)", fontSize: 16, fontWeight: on ? 600 : 400,
-                  color: on ? C.ink : C.secondary,
-                  background: on ? C.subtle : "none",
-                  border: on ? `1px solid ${C.border}` : "1px solid transparent",
-                  borderRadius: 999, padding: "10px 22px",
-                  cursor: "pointer", transition: "all 140ms",
-                }}>
-                  {r}
-                </button>
-              );
-            })}
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <a href="#" style={{ fontFamily: "var(--fc-font-body)", fontSize: 15, color: C.ink, fontWeight: 500, textDecoration: "underline", textUnderlineOffset: 3, marginRight: 4 }}>See all</a>
-            {(["M15 18l-6-6 6-6", "M9 18l6-6-6-6"] as const).map((d, i) => (
-              <button key={i} style={{
-                width: 40, height: 40, borderRadius: "50%",
-                border: `1px solid ${C.border}`, background: C.white,
-                display: "flex", alignItems: "center", justifyContent: "center",
-                cursor: "pointer",
-              }}>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.ink} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d={d}/>
-                </svg>
-              </button>
-            ))}
-          </div>
-        </div>
-
         {/* 4-col tour card grid */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 20, marginBottom: 56 }}>
-          {TOUR_CARDS.map((card) => (
-            <div key={card.title} style={{
+        {loading ? (
+          <p role="status" style={{ color: C.secondary, padding: "48px 0", textAlign: "center" }}>Loading trips…</p>
+        ) : error ? (
+          <div role="alert" style={{ textAlign: "center", padding: "48px 0" }}>
+            <p style={{ color: C.red }}>{error}</p>
+            <BtnSecondary onClick={() => void loadPackages()}>Try again</BtnSecondary>
+          </div>
+        ) : packages.length === 0 ? (
+          <p style={{ color: C.secondary, padding: "48px 0", textAlign: "center" }}>No trips match your search.</p>
+        ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))", gap: 20, marginBottom: 56 }}>
+          {packages.map((card) => {
+            const destination = [card.destination_city, card.destination_country].filter(Boolean).join(", ");
+            const creatorName = card.influencer?.display_name || "Marketplace creator";
+            return (
+            <article key={card.package_id} style={{
               borderRadius: 14, overflow: "hidden",
               border: `1px solid ${C.border}`,
               background: C.white,
@@ -854,30 +925,13 @@ export function MarketplaceScreen() {
             }}>
               {/* Image */}
               <div style={{ position: "relative", aspectRatio: "3/2", overflow: "hidden" }}>
-                <img src={card.img} alt={card.title} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                {card.save && (
-                  <span style={{
-                    position: "absolute", top: 12, left: 12,
-                    background: "#C8001A", color: "#fff",
-                    fontFamily: "var(--fc-font-body)", fontSize: 12, fontWeight: 700,
-                    padding: "5px 10px", borderRadius: 5, letterSpacing: "0.02em",
-                  }}>{card.save}</span>
-                )}
-                {card.exclusive && (
-                  <span style={{
-                    position: "absolute", top: 12, right: 12,
-                    background: "#1A1A1A", color: "#fff",
-                    fontFamily: "var(--fc-font-body)", fontSize: 11, fontWeight: 700,
-                    padding: "5px 10px", borderRadius: 5, letterSpacing: "0.02em",
-                    maxWidth: 120, textAlign: "center", lineHeight: "15px",
-                  }}>{card.exclusive}</span>
-                )}
+                <img src={card.cover_image_url || IMG.hero} alt={card.title} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
               </div>
 
               {/* Body */}
               <div style={{ padding: "18px 18px 20px", flex: 1, display: "flex", flexDirection: "column", gap: 10 }}>
                 <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, color: C.secondary, margin: 0 }}>
-                  {card.date} · {card.nights} nights · {card.country}
+                  {card.duration_days ? `${card.duration_days} days` : "Duration on request"} · {destination || "Destination coming soon"}
                 </p>
                 <p style={{
                   fontFamily: "var(--fc-font-body)", fontSize: 15, fontWeight: 600,
@@ -888,31 +942,15 @@ export function MarketplaceScreen() {
                   {card.title}
                 </p>
 
-                <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 12, marginTop: 2 }}>
-                  <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 700, color: C.secondary, margin: "0 0 8px", textTransform: "uppercase", letterSpacing: "0.04em" }}>
-                    Included value <span style={{ color: C.ink }}>{card.includedValue}</span>
-                  </p>
-                  {card.inclusions.map((inc) => (
-                    <div key={inc} style={{ display: "flex", alignItems: "flex-start", gap: 7, marginBottom: 5 }}>
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill={C.blue} style={{ flexShrink: 0, marginTop: 2 }}>
-                        <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/>
-                      </svg>
-                      <span style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, color: C.secondary, lineHeight: "20px" }}>{inc}</span>
-                    </div>
-                  ))}
-                </div>
-
                 {/* Creator info */}
                 <div style={{
                   display: "flex", alignItems: "center", gap: 10,
                   padding: "12px 0", borderTop: `1px solid ${C.border}`, marginTop: 6,
                 }}>
-                  <img src={card.creator.avatar} alt={card.creator.name} style={{
-                    width: 34, height: 34, borderRadius: "50%", objectFit: "cover", flexShrink: 0,
-                  }} />
+                  <span aria-hidden="true" style={{ width: 34, height: 34, borderRadius: "50%", background: C.subtle, display: "grid", placeItems: "center", fontWeight: 700 }}>{creatorName.charAt(0).toUpperCase()}</span>
                   <div>
-                    <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 600, color: C.ink, margin: 0, lineHeight: "20px" }}>{card.creator.name}</p>
-                    <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, color: C.secondary, margin: 0, lineHeight: "18px" }}>{card.creator.handle}</p>
+                    <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 600, color: C.ink, margin: 0, lineHeight: "20px" }}>{creatorName}</p>
+                    {card.influencer?.instagram_handle && <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, color: C.secondary, margin: 0, lineHeight: "18px" }}>{card.influencer.instagram_handle}</p>}
                   </div>
                   <span style={{
                     marginLeft: "auto", background: "#EEF5FF", color: C.blue,
@@ -922,17 +960,15 @@ export function MarketplaceScreen() {
                 </div>
 
                 <div style={{ paddingTop: 6 }}>
-                  <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 12, color: C.secondary, margin: "0 0 3px" }}>{card.priceNote}</p>
-                  <p style={{ fontFamily: "var(--fc-font-display)", fontSize: 24, fontWeight: 700, color: C.ink, margin: 0, letterSpacing: "-0.01em" }}>{card.price}</p>
+                  <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 12, color: C.secondary, margin: "0 0 3px" }}>From per person</p>
+                  <p style={{ fontFamily: "var(--fc-font-display)", fontSize: 24, fontWeight: 700, color: C.ink, margin: "0 0 14px", letterSpacing: "-0.01em" }}>{marketplacePrice(card.base_price_aud)}</p>
+                  <BtnPrimary full onClick={() => router.push(`/marketplace/packages/${card.package_id}`)}>View trip</BtnPrimary>
                 </div>
               </div>
-            </div>
-          ))}
+            </article>
+          )})}
         </div>
-
-        <div style={{ textAlign: "center" }}>
-          <BtnSecondary>Load more trips</BtnSecondary>
-        </div>
+        )}
       </div>
 
       {/* Creator Program Banner */}
