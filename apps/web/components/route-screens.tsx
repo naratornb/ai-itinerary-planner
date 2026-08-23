@@ -38,6 +38,10 @@ export function MarketplaceRouteScreen() {
   return <><TopNav screen="marketplace" onNav={onNav} /><MarketplaceScreen /></>;
 }
 
+export function MarketplaceRouteNav() {
+  return <TopNav screen="marketplace" onNav={useScreenNavigation()} />;
+}
+
 export function DashboardRouteScreen() {
   const onNav = useScreenNavigation();
   return <><CreatorNav activeItem="Dashboard" onItem={() => undefined} onNav={onNav} /><DashboardScreen onNav={onNav} /></>;
