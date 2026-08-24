@@ -3,7 +3,7 @@ from pathlib import Path
 
 import requests
 from dotenv import load_dotenv
-from fastapi import Header, HTTPException
+from fastapi import Depends, Header, HTTPException
 from fastapi.responses import JSONResponse
 
 # Loaded here (not main.py) because these module-level env reads run first.
@@ -67,3 +67,22 @@ def require_user_ctx(authorization: str = Header(default="")):
         "uid": user["id"],
         "headers": {"apikey": SUPABASE_ANON_KEY, "Authorization": authorization},
     }
+
+
+def require_admin_ctx(ctx: dict = Depends(require_user_ctx)):
+    """require_user_ctx plus a role check against profiles (403 for non-admins)."""
+    try:
+        response = requests.get(
+            f"{SUPABASE_URL}/rest/v1/profiles",
+            params={"id": f"eq.{ctx['uid']}", "select": "role"},
+            headers=ctx["headers"],
+            timeout=15,
+        )
+    except requests.RequestException:
+        raise HTTPException(503, "Database unreachable.")
+    if not response.ok:
+        raise HTTPException(503, "Database unreachable.")
+    rows = response.json()
+    if not rows or rows[0].get("role") != "admin":
+        raise HTTPException(403, "Admin role required.")
+    return ctx

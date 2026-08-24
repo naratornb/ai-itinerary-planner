@@ -44,10 +44,10 @@ jobs:
           cache: npm
           cache-dependency-path: apps/web/package-lock.json
       - run: npm ci
+      - run: npm test
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run build
-      # No test job yet — add `npm test` here when the first test lands (AGENTS.md rule 3).
 
   api:
     needs: changes
