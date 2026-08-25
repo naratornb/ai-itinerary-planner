@@ -2,11 +2,14 @@
 
 import { useEffect, useRef, useState } from "react";
 import RouteMap from "./route-map";
+import type { EditorState } from "../lib/ai/itinerary";
 
 type IconName = "plane" | "star" | "hotel" | "plus" | "alert" | "check" | "clock" | "chevron";
 
 type TimelineItem = {
   id: number;
+  dayIndex?: number;      // which day tab this belongs to (AI-generated items)
+  sourceId?: string;      // inventory id from Supabase — proves provenance
   time: string;
   type: string;
   title: string;
@@ -72,20 +75,24 @@ function StatusToggle({ tone, count, label, expanded, onClick }: { tone: "critic
   return <button className="status-toggle" aria-expanded={expanded} onClick={onClick}><span className={`${tone}-icon`}><Icon name={tone === "pass" ? "check" : "alert"} size={16} /></span><strong>{count}</strong><span>{label}</span><span className="status-chevron"><Icon name="chevron" size={17} /></span></button>;
 }
 
-export default function ItineraryEditor({ onBack }: { onBack: () => void }) {
+export default function ItineraryEditor({ onBack, initialState }: { onBack: () => void; initialState?: EditorState | null }) {
   const nextItemId = useRef(1000);
-  const [packageTitle, setPackageTitle] = useState("Tokyo Food & Culture Experience");
-  const [titleDraft, setTitleDraft] = useState("Tokyo Food & Culture Experience");
+  // initialState is the AI result. Absent means manual build, so fall back
+  // to the demo defaults.
+  const [packageTitle, setPackageTitle] = useState(initialState?.packageTitle ?? "Tokyo Food & Culture Experience");
+  const [titleDraft, setTitleDraft] = useState(initialState?.packageTitle ?? "Tokyo Food & Culture Experience");
   const [editingTitle, setEditingTitle] = useState(false);
   const [activeDay, setActiveDay] = useState(0);
-  const [days, setDays] = useState(INITIAL_DAYS);
-  const [story, setStory] = useState("");
-  const [items, setItems] = useState(INITIAL_ITEMS);
+  const [days, setDays] = useState(initialState?.days ?? INITIAL_DAYS);
+  const [story, setStory] = useState(initialState?.story ?? "");
+  const [items, setItems] = useState<TimelineItem[]>(
+    (initialState?.items as TimelineItem[] | undefined) ?? INITIAL_ITEMS,
+  );
   const [saved, setSaved] = useState(false);
   const [published, setPublished] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
-  const [selectedHotel, setSelectedHotel] = useState("Shibuya Excel Hotel Tokyu");
-  const [packagePrice, setPackagePrice] = useState(1928);
+  const [selectedHotel, setSelectedHotel] = useState(initialState?.selectedHotel || "Shibuya Excel Hotel Tokyu");
+  const [packagePrice, setPackagePrice] = useState(initialState?.packagePrice ?? 1928);
   const [photos, setPhotos] = useState([
     { src: "https://images.unsplash.com/photo-1519501025264-65ba15a82390?w=720&h=720&fit=crop", alt: "Shibuya crossing at night" },
     { src: "https://images.unsplash.com/photo-1569718212165-3a8278d5f624?w=720&h=720&fit=crop", alt: "A bowl of Tokyo ramen" },
