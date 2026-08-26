@@ -5,4 +5,3 @@ supabase==2.31.0
 pandas==2.2.3
 rank-bm25==0.2.2
 nltk==3.9.1
-uvicorn[standard]==0.34.0

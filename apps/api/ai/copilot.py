@@ -1474,7 +1474,7 @@ def build_doc_prompt(
 
         docs_block = (
             "(No matching records found "
-            "in Flight Centre database)"
+            "in the marketplace database)"
         )
 
 
@@ -1537,7 +1537,7 @@ def build_doc_prompt(
     return f"""
 === INVENTORY CONTEXT ===
 
-Only use the following verified Flight Centre inventory.
+Only use the following verified the marketplace inventory.
 
 --- Retrieved Records ---
 {docs_block}
@@ -1625,7 +1625,7 @@ def build_criteria_prompt(
     return f"""
 === CO-PILOT CRITERIA ===
 
-You are a travel co-pilot for Flight Centre.
+You are a travel co-pilot for the marketplace.
 
 Your job is to help the user build a travel itinerary
 using ONLY the verified inventory records supplied in
@@ -1999,14 +1999,14 @@ def _fallback_response(
             "warnings": [
                 {
                     "code": "NO_MATCH",
-                    "message": "No matching Flight Centre inventory was found.",
+                    "message": "No matching the marketplace inventory was found.",
                     "severity": "warning"
                 }
             ],
 
             "copilot_message": (
                 "I couldn't find a matching option in the "
-                "current Flight Centre inventory."
+                "current the marketplace inventory."
             )
         }
 
@@ -2150,7 +2150,7 @@ def _fallback_response(
 
         "copilot_message": (
             "Here are some matching options "
-            "from the verified Flight Centre inventory."
+            "from the verified the marketplace inventory."
         )
     }
 
@@ -2243,7 +2243,7 @@ def call_llm(
                     clean
                 )
 
-            except json.JSONDecodeError as json_error:
+            except json.JSONDecodeError:
 
                 print(
                     "❌ LLM returned invalid JSON"

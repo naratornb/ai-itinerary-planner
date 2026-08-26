@@ -13,10 +13,9 @@ from app.marketplace.router import router as marketplace_router
 from app.packages.router import router as packages_router
 from app.users.router import router as users_router
 from routes.ai_routes import router as ai_router
-
-OPENAPI_SPEC = Path(__file__).resolve().parents[1] / "openapi.yaml"
-from pathlib import Path
 from dotenv import load_dotenv
+OPENAPI_SPEC = Path(__file__).resolve().parents[1] / "openapi.yaml"
+
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 app = FastAPI()

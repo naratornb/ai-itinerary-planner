@@ -289,6 +289,15 @@ export default function ItineraryEditor({ onBack, initialState }: { onBack: () =
     showNotice(`Day ${indexToDelete + 1} deleted`);
   };
 
+  // Items carry dayIndex only when they came from the AI. Manual/demo items
+  // have none, so show everything in that case (preserves old behaviour).
+  // Pair each item with its ORIGINAL index — delete, drag and insert all
+  // index into the full items[] array.
+  const hasDayTags = items.some((item) => item.dayIndex !== undefined);
+  const visibleItems = items
+    .map((item, index) => ({ item, index }))
+    .filter(({ item }) => !hasDayTags || (item.dayIndex ?? 0) === activeDay);
+
   return (
     <main className="itinerary-editor">
       <header className="editor-topbar">
@@ -332,7 +341,7 @@ export default function ItineraryEditor({ onBack, initialState }: { onBack: () =
           <section className="timeline-section">
             <h3>Timeline</h3>
             <div className="timeline-list">
-              {items.map((item, index) => <div key={item.id} className={`timeline-group ${addingAfter === index ? "adding" : ""} ${dropTarget?.index === index ? `drop-${dropTarget.position}` : ""}`} onDragOver={(event) => { event.preventDefault(); if (draggedItemId === item.id) return; const rect = event.currentTarget.getBoundingClientRect(); setDropTarget({ index, position: event.clientY < rect.top + rect.height / 2 ? "before" : "after" }); }} onDrop={(event) => { event.preventDefault(); dropItem(); endDrag(); }}>
+              {visibleItems.map(({ item, index }) => <div key={item.id} className={`timeline-group ${addingAfter === index ? "adding" : ""} ${dropTarget?.index === index ? `drop-${dropTarget.position}` : ""}`} onDragOver={(event) => { event.preventDefault(); if (draggedItemId === item.id) return; const rect = event.currentTarget.getBoundingClientRect(); setDropTarget({ index, position: event.clientY < rect.top + rect.height / 2 ? "before" : "after" }); }} onDrop={(event) => { event.preventDefault(); dropItem(); endDrag(); }}>
                 <article className={`timeline-item ${item.status} ${draggedItemId === item.id ? "dragging" : ""} ${item.type !== "FLIGHT" && item.type !== "HOTEL" ? "editable" : ""} ${editingItem?.id === item.id ? "expanded" : ""}`} onClick={(event) => { if (item.type === "FLIGHT" || item.type === "HOTEL" || (event.target as HTMLElement).closest("button")) return; startEditingItem(item); }} onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && item.type !== "FLIGHT" && item.type !== "HOTEL" && !(event.target as HTMLElement).closest("button")) { event.preventDefault(); startEditingItem(item); } }} tabIndex={item.type !== "FLIGHT" && item.type !== "HOTEL" ? 0 : undefined} role={item.type !== "FLIGHT" && item.type !== "HOTEL" ? "button" : undefined} aria-expanded={item.type !== "FLIGHT" && item.type !== "HOTEL" ? editingItem?.id === item.id : undefined}>
                   <button className="drag-handle" draggable aria-label={`Move ${item.title}. Use drag and drop, or the up and down arrow keys.`} onDragStart={(event) => { setEditingItem(null); setDraggedItemId(item.id); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", String(item.id)); }} onDragEnd={endDrag} onKeyDown={(event) => { if (event.key === "ArrowUp") { event.preventDefault(); moveItem(index, index - 1); } if (event.key === "ArrowDown") { event.preventDefault(); moveItem(index, index + 1); } }}><span /><span /><span /><span /><span /><span /></button>
                   <div className="item-time"><Icon name={item.icon} /><strong>{item.time}</strong></div>

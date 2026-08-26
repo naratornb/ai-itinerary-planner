@@ -46,7 +46,6 @@ import os
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Optional
 
 import pandas as pd
 
@@ -85,55 +84,154 @@ TRANSPORT_COST_PER_PERSON_PER_DAY = 25.0
 # ============================================================================
 
 CITY_ALIASES = {
-    "sydney": "Sydney",
-    "melbourne": "Melbourne",
-    "brisbane": "Brisbane",
-    "tokyo": "Tokyo",
-    "kyoto": "Kyoto",
-    "osaka": "Osaka",
-    "paris": "Paris",
-    "dubai": "Dubai",
-    "singapore": "Singapore",
-    "london": "London",
-    "new york": "New York",
-    "nyc": "New York",
-    "los angeles": "Los Angeles",
-    "san francisco": "San Francisco",
+    "amsterdam": "Amsterdam",
+    "athens": "Athens",
+    "auckland": "Auckland",
     "bangkok": "Bangkok",
-    "seoul": "Seoul",
-    "rome": "Rome",
     "barcelona": "Barcelona",
     "berlin": "Berlin",
-    "amsterdam": "Amsterdam",
-    "istanbul": "Istanbul",
-    "hong kong": "Hong Kong",
+    "brisbane": "Brisbane",
+    "buenos aires": "Buenos Aires",
+    "busan": "Busan",
+    "cairns": "Cairns",
+    "cairo": "Cairo",
+    "cancun": "Cancun",
+    "cancún": "Cancun",
     "cape town": "Cape Town",
-    "zurich": "Zurich",
+    "chiang mai": "Chiang Mai",
+    "colombo": "Colombo",
+    "cusco": "Cusco",
+    "da nang": "Da Nang",
+    "delhi": "Delhi",
+    "denpasar": "Denpasar",
+    "bali": "Denpasar",
+    "doha": "Doha",
+    "dubai": "Dubai",
+    "edinburgh": "Edinburgh",
+    "florence": "Florence",
+    "firenze": "Florence",
+    "hanoi": "Hanoi",
+    "ho chi minh city": "Ho Chi Minh City",
+    "saigon": "Ho Chi Minh City",
+    "hcmc": "Ho Chi Minh City",
+    "hong kong": "Hong Kong",
+    "honolulu": "Honolulu",
+    "hawaii": "Honolulu",
+    "oahu": "Honolulu",
+    "istanbul": "Istanbul",
+    "jakarta": "Jakarta",
+    "krakow": "Krakow",
+    "kraków": "Krakow",
+    "cracow": "Krakow",
+    "kuala lumpur": "Kuala Lumpur",
+    "kyoto": "Kyoto",
+    "lisbon": "Lisbon",
+    "london": "London",
+    "los angeles": "Los Angeles",
+    "madrid": "Madrid",
+    "manila": "Manila",
+    "marrakech": "Marrakech",
+    "marrakesh": "Marrakech",
+    "medellin": "Medellin",
+    "medellín": "Medellin",
+    "melbourne": "Melbourne",
+    "mexico city": "Mexico City",
+    "cdmx": "Mexico City",
     "mumbai": "Mumbai",
-    "toronto": "Toronto",
+    "nairobi": "Nairobi",
+    "new york": "New York",
+    "nyc": "New York",
+    "new york city": "New York",
+    "nice": "Nice",
+    "osaka": "Osaka",
+    "paris": "Paris",
+    "perth": "Perth",
+    "phuket": "Phuket",
+    "phuket island": "Phuket",
+    "porto": "Porto",
+    "prague": "Prague",
+    "praha": "Prague",
+    "queenstown": "Queenstown",
+    "queenstown nz": "Queenstown",
+    "reykjavik": "Reykjavik",
+    "iceland": "Reykjavik",
+    "reykjavík": "Reykjavik",
+    "rio de janeiro": "Rio de Janeiro",
+    "rio": "Rio de Janeiro",
+    "rome": "Rome",
+    "san francisco": "San Francisco",
+    "santorini": "Santorini",
+    "thira": "Santorini",
+    "sapporo": "Sapporo",
+    "hokkaido": "Sapporo",
+    "seoul": "Seoul",
+    "shanghai": "Shanghai",
+    "singapore": "Singapore",
+    "sydney": "Sydney",
+    "taipei": "Taipei",
+    "taiwan": "Taipei",
+    "tokyo": "Tokyo",
+    "valencia": "Valencia",
+    "vancouver": "Vancouver",
+    "venice": "Venice",
+    "venezia": "Venice",
+    "vienna": "Vienna",
+    "wien": "Vienna",
 }
 
 
 COUNTRY_TO_CITIES = {
-    "japan": ["Tokyo"],
-    "france": ["Paris"],
-    "uk": ["London"],
-    "united kingdom": ["London"],
-    "england": ["London"],
-    "usa": ["New York", "Los Angeles", "San Francisco"],
-    "united states": ["New York", "Los Angeles", "San Francisco"],
-    "thailand": ["Bangkok"],
-    "south korea": ["Seoul"],
-    "korea": ["Seoul"],
-    "italy": ["Rome"],
-    "spain": ["Barcelona"],
+    "argentina": ["Buenos Aires"],
+    "australia": ["Brisbane", "Cairns", "Melbourne", "Perth", "Sydney"],
+    "austria": ["Vienna"],
+    "brazil": ["Rio de Janeiro"],
+    "canada": ["Vancouver"],
+    "china": ["Hong Kong", "Shanghai"],
+    "colombia": ["Medellin"],
+    "czech republic": ["Prague"],
+    "czechia": ["Prague"],
+    "egypt": ["Cairo"],
+    "france": ["Nice", "Paris"],
     "germany": ["Berlin"],
+    "greece": ["Athens", "Santorini"],
+    "iceland": ["Reykjavik"],
+    "india": ["Delhi", "Mumbai"],
+    "indonesia": ["Denpasar", "Jakarta"],
+    "italy": ["Florence", "Rome", "Venice"],
+    "japan": ["Kyoto", "Osaka", "Sapporo", "Tokyo"],
+    "kenya": ["Nairobi"],
+    "malaysia": ["Kuala Lumpur"],
+    "mexico": ["Cancun", "Mexico City"],
+    "morocco": ["Marrakech"],
     "netherlands": ["Amsterdam"],
-    "turkey": ["Istanbul"],
-    "switzerland": ["Zurich"],
-    "india": ["Mumbai"],
-    "canada": ["Toronto"],
+    "holland": ["Amsterdam"],
+    "new zealand": ["Auckland", "Queenstown"],
+    "nz": ["Auckland", "Queenstown"],
+    "peru": ["Cusco"],
+    "philippines": ["Manila"],
+    "poland": ["Krakow"],
+    "portugal": ["Lisbon", "Porto"],
+    "qatar": ["Doha"],
+    "singapore": ["Singapore"],
     "south africa": ["Cape Town"],
+    "south korea": ["Busan", "Seoul"],
+    "korea": ["Busan", "Seoul"],
+    "spain": ["Barcelona", "Madrid", "Valencia"],
+    "sri lanka": ["Colombo"],
+    "taiwan": ["Taipei"],
+    "thailand": ["Bangkok", "Chiang Mai", "Phuket"],
+    "turkey": ["Istanbul"],
+    "united arab emirates": ["Dubai"],
+    "uae": ["Dubai"],
+    "united kingdom": ["Edinburgh", "London"],
+    "uk": ["Edinburgh", "London"],
+    "britain": ["Edinburgh", "London"],
+    "england": ["Edinburgh", "London"],
+    "united states": ["Honolulu", "Los Angeles", "New York", "San Francisco"],
+    "usa": ["Honolulu", "Los Angeles", "New York", "San Francisco"],
+    "us": ["Honolulu", "Los Angeles", "New York", "San Francisco"],
+    "america": ["Honolulu", "Los Angeles", "New York", "San Francisco"],
+    "vietnam": ["Da Nang", "Hanoi", "Ho Chi Minh City"],
 }
 
 
@@ -627,13 +725,16 @@ def parse_user_request(
 
     destinations = []
 
-    for alias, city in CITY_ALIASES.items():
-        if alias in text:
-            destinations.append(city)
+    # Match on word boundaries, not raw substrings: a plain `alias in text`
+    # lets "la" match inside "iceland" and hijack the destination.
+    # Longest alias first so "new york city" wins over "new york".
+    for alias in sorted(CITY_ALIASES, key=len, reverse=True):
+        if re.search(rf"\b{re.escape(alias)}\b", text):
+            destinations.append(CITY_ALIASES[alias])
 
-    for country, cities in COUNTRY_TO_CITIES.items():
-        if country in text:
-            destinations.extend(cities)
+    for country in sorted(COUNTRY_TO_CITIES, key=len, reverse=True):
+        if re.search(rf"\b{re.escape(country)}\b", text):
+            destinations.extend(COUNTRY_TO_CITIES[country])
 
     destinations = list(
         dict.fromkeys(destinations)
@@ -777,6 +878,7 @@ def query_inventory(params: dict) -> dict:
     destinations = params["destinations"]
 
     theme = params["theme"]
+    duration_days = params.get("duration_days") or DEFAULT_DURATION_DAYS
     group_size = params["group_size"]
     budget = params.get("budget_aud")
     cabin_preference = params["cabin_preference"]
@@ -964,8 +1066,16 @@ def query_inventory(params: dict) -> dict:
             else None
         )
 
+        # Send enough options for the LLM to fill every day. A flat cap of
+        # MAX_ACTIVITIES starves long trips: 8 options across 11 days forces
+        # roughly one activity per day.
+        per_city_cap = max(
+            MAX_ACTIVITIES,
+            duration_days * 3 // max(1, len(destinations)),
+        )
+
         activity_options[city] = combined.head(
-            MAX_ACTIVITIES
+            per_city_cap
         ).to_dict(
             orient="records"
         )
