@@ -75,12 +75,6 @@ function StatusToggle({ tone, count, label, expanded, onClick }: { tone: "critic
   return <button className="status-toggle" aria-expanded={expanded} onClick={onClick}><span className={`${tone}-icon`}><Icon name={tone === "pass" ? "check" : "alert"} size={16} /></span><strong>{count}</strong><span>{label}</span><span className="status-chevron"><Icon name="chevron" size={17} /></span></button>;
 }
 
-// Filenames are user-controlled. React escapes JSX values, but strip anything
-// non-plain-text before it reaches an alt attribute so the intent is explicit.
-function safeAlt(name: string): string {
-  return name.replace(/[<>&"']/g, "").slice(0, 120) || "Uploaded photo";
-}
-
 export default function ItineraryEditor({ onBack, initialState }: { onBack: () => void; initialState?: EditorState | null }) {
   const nextItemId = useRef(1000);
   // initialState is the AI result. Absent means manual build, so fall back
@@ -335,7 +329,7 @@ export default function ItineraryEditor({ onBack, initialState }: { onBack: () =
             <div className="section-label"><h3>Tell your story</h3><span>3 uploaded</span></div>
             <div className="photo-grid">
               {photos.map((photo) => <img key={photo.src} src={photo.src} alt={photo.alt} />)}
-              <label className="photo-add"><input type="file" accept="image/png,image/jpeg" onChange={(event) => { const file = event.target.files?.[0]; if (!file) return; setPhotos([...photos, { src: URL.createObjectURL(file), alt: safeAlt(file.name) }]); showNotice("Photo uploaded"); }} /><Icon name="plus" size={30} /><span>Add photo</span><small>JPG or PNG</small></label>
+              <label className="photo-add"><input type="file" accept="image/png,image/jpeg" onChange={(event) => { const file = event.target.files?.[0]; if (!file) return; setPhotos([...photos, { src: URL.createObjectURL(file), alt: file.name }]); showNotice("Photo uploaded"); }} /><Icon name="plus" size={30} /><span>Add photo</span><small>JPG or PNG</small></label>
             </div>
           </section>
 

@@ -16,7 +16,7 @@ type UserRow = {
   createdAt?: string;
 };
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5001";
+const NEXT_PUBLIC_API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5001";
 
 async function authHeaders(): Promise<Record<string, string>> {
   const { data } = await supabase.auth.getSession();
@@ -39,8 +39,8 @@ function getAvatarStyle(str: string) {
 
 function StatusBadge({ status }: { status?: string }) {
   const map: Record<string, { dot: string; label: string }> = {
-    active:    { dot: "#10b981", label: "Active" },
-    invited:   { dot: "#f59e0b", label: "Invited" },
+    active: { dot: "#10b981", label: "Active" },
+    invited: { dot: "#f59e0b", label: "Invited" },
     suspended: { dot: "#94a3b8", label: "Suspended" },
   };
   const s = map[status || "active"] ?? map.active;
@@ -82,17 +82,17 @@ function SkeletonRow({ cols }: { cols: number }) {
 
 export default function UsersPage() {
   const router = useRouter();
-  const [users, setUsers]               = useState<UserRow[]>([]);
-  const [isLoading, setIsLoading]       = useState(true);
+  const [users, setUsers] = useState<UserRow[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
-  const [role, setRole]                 = useState("member");
-  const [filter, setFilter]             = useState("");
+  const [role, setRole] = useState("member");
+  const [filter, setFilter] = useState("");
   const [selectedUser, setSelectedUser] = useState<UserRow | null>(null);
-  const [drawerOpen, setDrawerOpen]     = useState(false);
-  const [editEmail, setEditEmail]       = useState("");
-  const [editStatus, setEditStatus]     = useState("active");
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [editEmail, setEditEmail] = useState("");
+  const [editStatus, setEditStatus] = useState("active");
   const [editCreatedAt, setEditCreatedAt] = useState("");
-  const [isSaving, setIsSaving]         = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
   const isAdmin = role === "admin";
 
@@ -114,7 +114,7 @@ export default function UsersPage() {
     setIsLoading(true);
     setErrorMessage("");
     try {
-      const res = await fetch(`${API_URL}/users`, { headers: await authHeaders() });
+      const res = await fetch(`${NEXT_PUBLIC_API_URL}/users`, { headers: await authHeaders() });
       if (!res.ok) throw new Error("Failed to load users.");
       const data = await res.json();
       setUsers(data.users || []);
@@ -145,7 +145,7 @@ export default function UsersPage() {
     if (!selectedUser) return;
     setIsSaving(true);
     try {
-      const res = await fetch(`${API_URL}/users/${selectedUser.id}`, {
+      const res = await fetch(`${NEXT_PUBLIC_API_URL}/users/${selectedUser.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", ...(await authHeaders()) },
         body: JSON.stringify({ email: editEmail, status: editStatus, createdAt: editCreatedAt }),
@@ -529,9 +529,9 @@ export default function UsersPage() {
                 <h3 className="text-[11px] font-bold uppercase tracking-widest text-text-secondary">System Metadata</h3>
                 <div className="flex flex-col gap-2">
                   {[
-                    { label: "User ID",  value: selectedUser.id },
+                    { label: "User ID", value: selectedUser.id },
                     { label: "Username", value: selectedUser.username },
-                    { label: "Role",     value: selectedUser.role },
+                    { label: "Role", value: selectedUser.role },
                   ].map(({ label, value }) => (
                     <div key={label} className="flex justify-between items-center py-1 border-b border-border-subtle/60 last:border-0">
                       <span className="text-xs text-text-secondary">{label}</span>
