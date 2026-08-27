@@ -7,6 +7,47 @@ request:
   headers:
     - name: accept
       value: application/json
+  scripts:
+    - type: before-request
+      code: |-
+        // Keep Supabase tokens fresh: GUI runs are slow enough for JWTs
+        // captured in 00-auth to expire mid-run. Refresh any token that is
+        // missing or within 120s of its exp claim. Skips the login requests
+        // themselves so they still exercise the real login paths.
+        const url = req.getUrl() || "";
+        if (!url.includes("/auth/v1/token") && !url.includes("/auth/login")) {
+          const secondsLeft = (token) => {
+            try {
+              const payload = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+              return JSON.parse(atob(payload)).exp - Math.floor(Date.now() / 1000);
+            } catch (e) {
+              return -1;
+            }
+          };
+          const login = async (email, password) => {
+            const res = await bru.sendRequest({
+              method: "POST",
+              url: bru.getEnvVar("supabase-url") + "/auth/v1/token?grant_type=password",
+              headers: { apikey: bru.getEnvVar("supabase-anon-key"), "content-type": "application/json" },
+              data: { email: email, password: password }
+            });
+            return res.data.access_token;
+          };
+          const refresh = async (varName, email, password) => {
+            if (!email || !password) return;
+            const current = bru.getVar(varName);
+            if (!current || secondsLeft(current) < 120) {
+              // Best-effort: on login failure (e.g. auth rate limit) keep the
+              // existing token and let the request fail loudly on its own.
+              try {
+                bru.setVar(varName, await login(email, password));
+              } catch (e) {}
+            }
+          };
+          await refresh("access-token", bru.getProcessEnv("SMOKE_EMAIL"), bru.getProcessEnv("SMOKE_PASSWORD"));
+          await refresh("admin-access-token", bru.getProcessEnv("SMOKE_ADMIN_EMAIL"), bru.getProcessEnv("SMOKE_ADMIN_PASSWORD"));
+          await refresh("api-access-token", bru.getProcessEnv("SMOKE_EMAIL"), bru.getProcessEnv("SMOKE_PASSWORD"));
+        }
 extensions:
   bruno:
     ignore:

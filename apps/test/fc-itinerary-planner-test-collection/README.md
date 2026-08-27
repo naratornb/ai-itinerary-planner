@@ -43,6 +43,12 @@ admin-only approvals requests do not depend on the API auth surface being health
 whether the account really is an admin is verified by `05-approvals` itself
 (`approve-not-found` expects admin 404, `list-forbidden` expects non-admin 403).
 
+A collection-level `before-request` script (in `opencollection.yml`) auto-refreshes any
+of the three tokens that is missing or within 120s of its JWT `exp`. CLI runs finish
+well inside a token's lifetime, but GUI runs are slow enough for tokens captured in
+`00-auth` to expire mid-run — without the refresh, everything from `06-ai` onward 401s.
+The script skips the login requests themselves so they still exercise the real paths.
+
 ## Folders
 
 | Folder | What it does |
