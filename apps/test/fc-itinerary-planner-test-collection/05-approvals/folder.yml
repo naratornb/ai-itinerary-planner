@@ -1,0 +1,10 @@
+info:
+  name: 05-approvals
+  seq: 6
+  description: |-
+    Reject-path approval lifecycle. Each run deliberately leaves one private
+    rejected "Smoke Test" package behind: submitted packages can never be
+    deleted (DELETE requires draft status). The approve and publish happy
+    paths are intentionally skipped so the smoke run never publishes residue
+    to the public marketplace; they are covered by 404/409 negative tests
+    instead.

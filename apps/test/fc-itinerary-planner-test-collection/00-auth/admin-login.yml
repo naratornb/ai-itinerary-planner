@@ -1,0 +1,45 @@
+info:
+  name: admin-login
+  type: http
+  seq: 3
+
+http:
+  method: POST
+  url: "{{supabase-url}}/auth/v1/token?grant_type=password"
+  headers:
+    - name: apikey
+      value: "{{supabase-anon-key}}"
+    - name: content-type
+      value: application/json
+  params:
+    - name: grant_type
+      value: password
+      type: query
+  body:
+    type: json
+    data: |-
+      {
+        "email": "{{process.env.SMOKE_ADMIN_EMAIL}}",
+        "password": "{{process.env.SMOKE_ADMIN_PASSWORD}}"
+      }
+
+runtime:
+  assertions:
+    - expression: res.status
+      operator: eq
+      value: "200"
+  scripts:
+    - type: tests
+      code: |-
+        test("returns a bearer token for the admin account", function() {
+          expect(res.body.access_token).to.be.a("string").and.not.be.empty;
+        });
+    - type: after-response
+      code: |-
+        bru.setVar("admin-access-token", res.body.access_token);
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
