@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { formatHotelStarRating, HOTEL_OPTIONS } from "./hotel-catalog";
 import RouteMap from "./route-map";
 
@@ -23,6 +23,35 @@ type TimelineItem = {
   notes?: string;
   photo?: string;
 };
+
+type FeasibilityIssue = {
+  error_code: string;
+  rule: string;
+  severity: "error" | "warning";
+  field?: string;
+  field_value?: string;
+  affected_item: string;
+  message: string;
+  action: string;
+};
+
+type FeasibilityResult = {
+  package_id: string;
+  is_feasible: boolean;
+  has_warnings: boolean;
+  hard_errors: FeasibilityIssue[];
+  soft_warnings: FeasibilityIssue[];
+  summary: string;
+  quality_score?: number;
+  can_publish?: boolean;
+};
+
+function timeToSlot(time: string): string {
+  const h = parseInt(time.split(":")[0], 10);
+  if (isNaN(h) || h < 13) return "Morning";
+  if (h < 18) return "Afternoon";
+  return "Evening";
+}
 
 function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
   const paths: Record<IconName, React.ReactNode> = {
@@ -79,6 +108,12 @@ export default function ItineraryEditor({ onBack }: { onBack: () => void }) {
   const [packageTitle, setPackageTitle] = useState("Tokyo Food & Culture Experience");
   const [titleDraft, setTitleDraft] = useState("Tokyo Food & Culture Experience");
   const [editingTitle, setEditingTitle] = useState(false);
+  const [destination] = useState("Tokyo");
+  const [country] = useState("Japan");
+  const [groupSize, setGroupSize] = useState(2);
+  const [travelMonth, setTravelMonth] = useState("April");
+  const [feasResult, setFeasResult] = useState<FeasibilityResult | null>(null);
+  const [feasLoading, setFeasLoading] = useState(false);
   const [activeDay, setActiveDay] = useState(0);
   const [days, setDays] = useState(INITIAL_DAYS);
   const [story, setStory] = useState("");
@@ -108,6 +143,69 @@ export default function ItineraryEditor({ onBack }: { onBack: () => void }) {
   const [selectedHotelOptionId, setSelectedHotelOptionId] = useState<string | null>(null);
   const [hotelNotes, setHotelNotes] = useState("");
   const [creatorDraft, setCreatorDraft] = useState({ title: "", category: "Activity", address: "", time: "12:00", duration: "60", price: "", reason: "" });
+
+  function buildValidationPayload() {
+    return {
+      package_id: packageTitle.toLowerCase().replace(/\s+/g, "-"),
+      trip_name: packageTitle,
+      city: destination,
+      country: country,
+      travel_month: travelMonth,
+      total_days: days.length,
+      group_size: groupSize,
+      hotel_name: selectedHotel,
+      hotel_stars: 4,
+      days_json: JSON.stringify(
+        days.map((day, dayIndex) => ({
+          day_number: day.day,
+          activities: items
+            .filter((_, i) => Math.floor(i / 3) === dayIndex)
+            .filter((item) => item.type !== "FLIGHT" && item.type !== "HOTEL")
+            .map((item) => ({
+              activity_name: item.title,
+              slot: timeToSlot(item.time),
+              category: item.category ?? item.type ?? "Activity",
+              duration_hours: Number(item.duration ?? 60) / 60,
+              suitable_for: "Couple",
+              address: item.address ?? "",
+              description: item.notes ?? "",
+            })),
+        }))
+      ),
+    };
+  }
+
+  const runFeasibilityCheck = useCallback(async () => {
+    setFeasLoading(true);
+    try {
+      const res = await fetch("/api/ai/validate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildValidationPayload()),
+      });
+      if (res.ok) {
+        setFeasResult(await res.json());
+      }
+    } catch (err) {
+      console.error("Failed to run feasibility check:", err);
+    } finally {
+      setFeasLoading(false);
+    }
+  }, [packageTitle, destination, country, travelMonth, groupSize, selectedHotel, days, items]);
+
+  // Invalidate the check result whenever itinerary content changes after a check has been run.
+  // This forces creators to re-check before they can publish edited content.
+  const isFirstMount = useRef(true);
+  useEffect(() => {
+    if (isFirstMount.current) {
+      isFirstMount.current = false;
+      return;
+    }
+    if (!feasLoading) {
+      setFeasResult(null);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, days, story, packageTitle, selectedHotel, groupSize, travelMonth, packagePrice, photos]);
 
   useEffect(() => {
     if (pendingDeleteDay === null) return;
@@ -289,6 +387,15 @@ export default function ItineraryEditor({ onBack }: { onBack: () => void }) {
     showNotice(`Day ${indexToDelete + 1} deleted`);
   };
 
+  const hardErrors = feasResult?.hard_errors ?? [];
+  const softWarnings = feasResult?.soft_warnings ?? [];
+  const isReadyToPublish = Boolean(
+    feasResult &&
+    (feasResult.quality_score ?? 0) >= 70 &&
+    hardErrors.length === 0 &&
+    feasResult.is_feasible
+  );
+
   return (
     <main className="itinerary-editor">
       <header className="editor-topbar">
@@ -297,7 +404,9 @@ export default function ItineraryEditor({ onBack }: { onBack: () => void }) {
         <div className="editor-actions">
           <button className="quiet-button" onClick={() => { setSaved(true); showNotice("Draft saved"); }}>{saved ? "Saved" : "Save Draft"}</button>
           <button className="quiet-button" onClick={() => setPreviewOpen(true)}>Preview</button>
-          <button className="publish-button" onClick={() => { setPublished(true); showNotice("Package ready to publish"); }}>{published ? "Ready to publish" : "Continue to publish"}</button>
+          <button className="publish-button" disabled={!isReadyToPublish || feasLoading} onClick={() => { setPublished(true); showNotice("Package ready to publish"); }}>
+            {!isReadyToPublish ? (feasResult && !feasResult.is_feasible ? "Fix issues to publish" : "Check content to publish") : "Continue to publish"}
+          </button>
         </div>
       </header>
 
@@ -347,7 +456,7 @@ export default function ItineraryEditor({ onBack }: { onBack: () => void }) {
                     <label className="edit-address"><span>Address</span><input value={editingItem.address} onChange={(event) => setEditingItem({ ...editingItem, address: event.target.value })} placeholder="Add an address" /></label>
                     <label><span>Start time</span><input type="time" value={editingItem.time} onChange={(event) => setEditingItem({ ...editingItem, time: event.target.value })} /></label>
                     <label><span>Duration (min)</span><select value={editingItem.duration} onChange={(event) => setEditingItem({ ...editingItem, duration: event.target.value })}>{DURATION_OPTIONS.map((duration) => <option key={duration}>{duration}</option>)}</select></label>
-                    <label><span>Ends at</span><input value={getEndTime(editingItem.time, editingItem.duration)} readOnly /></label>
+                    <label><span>Ends at</span><input value={getEndTime(editingItem.time, editingItem.duration ?? "60")} readOnly /></label>
                     <label className="edit-notes"><span>Notes</span><textarea value={editingItem.notes} onChange={(event) => setEditingItem({ ...editingItem, notes: event.target.value })} placeholder="Share why this is worth a stop" /></label>
                   </div>
                   <div className="edit-photo"><span>Photos <small>Optional</small></span><div>{editingItem.photo && <figure><img src={editingItem.photo} alt="Activity cover" /><b>Cover</b></figure>}<label><input type="file" accept="image/png,image/jpeg" onChange={(event) => { const file = event.target.files?.[0]; if (file) setEditingItem({ ...editingItem, photo: URL.createObjectURL(file) }); }} /><Icon name="plus" size={18} />Add photo</label></div></div>
@@ -450,26 +559,64 @@ export default function ItineraryEditor({ onBack }: { onBack: () => void }) {
 
         <aside className="editor-sidebar">
           <Panel title="Package quality" className="quality-panel">
-            <div className="quality-score"><strong>78</strong><span>/100</span></div>
-            <div className="score-track" role="meter" aria-label="Package quality score, 78 out of 100. Minimum score to publish is 70." aria-valuemin={0} aria-valuemax={100} aria-valuenow={78}>
-              <span className="score-fill" />
+            <div className="quality-score"><strong>{feasResult?.quality_score !== undefined ? feasResult.quality_score : "(-)"}</strong><span>/100</span></div>
+            <div className="score-track" role="meter" aria-label={feasResult?.quality_score !== undefined ? `Package quality score, ${feasResult.quality_score} out of 100. Minimum score to publish is 70.` : "Package quality score not yet checked. Minimum score to publish is 70."} aria-valuemin={0} aria-valuemax={100} aria-valuenow={feasResult?.quality_score ?? 0}>
+              <span className="score-fill" style={{ width: feasResult?.quality_score !== undefined ? `${Math.min(100, Math.max(0, feasResult.quality_score))}%` : "0%" }} />
               <i aria-hidden="true" />
               <span className="score-threshold" aria-label="Minimum publish score is 70"><small>Minimum publish score:</small><strong>70</strong></span>
             </div>
-            <div className="quality-meta"><strong><Icon name="check" size={14} />Ready to publish</strong></div>
+            <div className="quality-meta">
+              <button
+                className="quiet-button check-content-button"
+                onClick={runFeasibilityCheck}
+                disabled={feasLoading}
+              >
+                {feasLoading ? "Checking..." : "Check content"}
+              </button>
+              {isReadyToPublish ? (
+                <strong><Icon name="check" size={14} />Ready to publish</strong>
+              ) : (
+                <strong className="warning">
+                  <Icon name="alert" size={14} />
+                  {!feasResult
+                    ? "Please check content"
+                    : hardErrors.length > 0
+                    ? "Fix critical issues"
+                    : "Score below 70"}
+                </strong>
+              )}
+            </div>
           </Panel>
           <Panel title="Feasibility status" className="status-panel">
-            <StatusToggle tone="critical" count={2} label="Critical issues" expanded={expandedFeasibility === "critical"} onClick={() => setExpandedFeasibility(expandedFeasibility === "critical" ? null : "critical")} />
+            <StatusToggle tone="critical" count={hardErrors.length} label="Critical issues" expanded={expandedFeasibility === "critical"} onClick={() => setExpandedFeasibility(expandedFeasibility === "critical" ? null : "critical")} />
             {expandedFeasibility === "critical" && <div className="status-details">
-              <article><span className="critical-icon"><Icon name="alert" size={16} /></span><div><strong>Transfer time is too short</strong><p>Only 10 minutes between arrival and Shibuya Crossing. Allow at least 75 minutes.</p><button onClick={() => showNotice("Flight and activity highlighted")}>View affected stops</button></div></article>
-              <article><span className="critical-icon"><Icon name="alert" size={16} /></span><div><strong>Hotel check-in conflict</strong><p>Check-in overlaps with the evening activity.</p><button onClick={() => showNotice("Hotel timing highlighted")}>View affected stops</button></div></article>
+              {hardErrors.map((err, idx) => (
+                <article key={idx}>
+                  <span className="critical-icon"><Icon name="alert" size={16} /></span>
+                  <div>
+                    <strong>{err.affected_item}</strong>
+                    <p>{err.message}</p>
+                    <small>Fix: {err.action}</small>
+                  </div>
+                </article>
+              ))}
+              {hardErrors.length === 0 && <p style={{ padding: "8px", fontSize: "0.85rem", color: "#16a34a" }}>No critical issues detected.</p>}
             </div>}
-            <StatusToggle tone="warning" count={2} label="Suggestions" expanded={expandedFeasibility === "suggestions"} onClick={() => setExpandedFeasibility(expandedFeasibility === "suggestions" ? null : "suggestions")} />
+            <StatusToggle tone="warning" count={softWarnings.length} label="Suggestions" expanded={expandedFeasibility === "suggestions"} onClick={() => setExpandedFeasibility(expandedFeasibility === "suggestions" ? null : "suggestions")} />
             {expandedFeasibility === "suggestions" && <div className="status-details suggestions-details">
-              <article><span className="warning-icon"><Icon name="alert" size={16} /></span><div><strong>Busy afternoon</strong><p>Eight stops may feel rushed. Consider moving one activity to Day 2.</p></div></article>
-              <article><span className="warning-icon"><Icon name="alert" size={16} /></span><div><strong>Long gap before dinner</strong><p>There is an open window after Tokyo Tower that could include travel or a short break.</p></div></article>
+              {softWarnings.map((warn, idx) => (
+                <article key={idx}>
+                  <span className="warning-icon"><Icon name="alert" size={16} /></span>
+                  <div>
+                    <strong>{warn.affected_item}</strong>
+                    <p>{warn.message}</p>
+                    <small>Fix: {warn.action}</small>
+                  </div>
+                </article>
+              ))}
+              {softWarnings.length === 0 && <p style={{ padding: "8px", fontSize: "0.85rem", color: "#6b7280" }}>No suggestions.</p>}
             </div>}
-            <StatusToggle tone="pass" count={4} label="Passed" expanded={expandedFeasibility === "passed"} onClick={() => setExpandedFeasibility(expandedFeasibility === "passed" ? null : "passed")} />
+            <StatusToggle tone="pass" count={feasResult ? Math.max(0, 11 - hardErrors.length - softWarnings.length) : 0} label="Passed" expanded={expandedFeasibility === "passed"} onClick={() => setExpandedFeasibility(expandedFeasibility === "passed" ? null : "passed")} />
             {expandedFeasibility === "passed" && <ul className="passed-details"><li><Icon name="check" size={15} />Daily schedule has a clear start and end</li><li><Icon name="check" size={15} />All stops have pricing</li><li><Icon name="check" size={15} />Accommodation is included</li><li><Icon name="check" size={15} />Required package photos are uploaded</li></ul>}
           </Panel>
           <Panel title="Pricing & earnings" className="pricing-panel"><span>Total package price</span><strong>${packagePrice.toLocaleString()}</strong><hr/><span>Your commission (20%)</span><strong className="commission">${Math.round(packagePrice * .2).toLocaleString()}</strong><small>Est. 5–8 bookings/month</small><button onClick={() => { const next = window.prompt("Set total package price", String(packagePrice)); if (next && Number(next) > 0) setPackagePrice(Number(next)); }}>Adjust pricing</button></Panel>
@@ -488,7 +635,7 @@ export default function ItineraryEditor({ onBack }: { onBack: () => void }) {
           </div>
         </section>
       </div>}
-      {previewOpen && <div className="preview-backdrop" role="presentation" onMouseDown={() => setPreviewOpen(false)}><section className="preview-dialog" role="dialog" aria-modal="true" aria-labelledby="preview-title" onMouseDown={(event) => event.stopPropagation()}><button className="preview-close" onClick={() => setPreviewOpen(false)} aria-label="Close preview"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg></button><span>Traveller preview</span><h2 id="preview-title">{packageTitle}</h2><p>{story || "Your itinerary story will appear here. Add a personal introduction before publishing."}</p><div><strong>{days.length} days / 2 nights</strong><strong>${packagePrice.toLocaleString()}</strong></div><button className="publish-button" onClick={() => { setPreviewOpen(false); setPublished(true); showNotice("Package ready to publish"); }}>Continue to publish</button></section></div>}
+      {previewOpen && <div className="preview-backdrop" role="presentation" onMouseDown={() => setPreviewOpen(false)}><section className="preview-dialog" role="dialog" aria-modal="true" aria-labelledby="preview-title" onMouseDown={(event) => event.stopPropagation()}><button className="preview-close" onClick={() => setPreviewOpen(false)} aria-label="Close preview"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg></button><span>Traveller preview</span><h2 id="preview-title">{packageTitle}</h2><p>{story || "Your itinerary story will appear here. Add a personal introduction before publishing."}</p><div><strong>{days.length} days / 2 nights</strong><strong>${packagePrice.toLocaleString()}</strong></div><button className="publish-button" disabled={!isReadyToPublish || feasLoading} onClick={() => { setPreviewOpen(false); setPublished(true); showNotice("Package ready to publish"); }}>{!isReadyToPublish ? (feasResult && !feasResult.is_feasible ? "Fix issues to publish" : "Check content to publish") : "Continue to publish"}</button></section></div>}
     </main>
   );
 }
