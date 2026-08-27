@@ -46,6 +46,7 @@ import os
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 import pandas as pd
 
@@ -293,7 +294,9 @@ def normalize_city(value) -> str:
             return city
 
     # City (CODE)
-    match = re.match(r"^(.*?)\s*\(([A-Za-z]{3})\)\s*$", text)
+    # [^(]* rather than (.*?)\s* : the latter overlaps with \s* and
+    # backtracks polynomially on long runs of whitespace (CodeQL).
+    match = re.match(r"^([^(]*)\(([A-Za-z]{3})\)\s*$", text)
 
     if match:
         city_part = match.group(1).strip()
@@ -657,7 +660,9 @@ def parse_user_request(
     # ------------------------------------------------------------
 
     duration_match = re.search(
-        r"(\d+)\s*(day|days|night|nights|week|weeks)",
+        # Bounded {1,4}: unbounded \d+ is retried from every start
+        # position, which CodeQL flags as polynomial backtracking.
+        r"(\d{1,4})\s*(day|days|night|nights|week|weeks)",
         text,
     )
 
@@ -679,9 +684,10 @@ def parse_user_request(
     budget_aud = None
 
     patterns = [
-        r"budget\s*[:=\-]?\s*\$\s*([\d,]+)",
-        r"budget\s*[:=\-]?\s*([\d,]+)\s*(?:aud|dollars?)",
-        r"\$\s*([\d,]+)",
+        # Bounded repetition throughout - see note on duration above.
+        r"budget\s*[:=\-]?\s*\$\s*([\d,]{1,15})",
+        r"budget\s*[:=\-]?\s*([\d,]{1,15})\s*(?:aud|dollars?)",
+        r"\$\s*([\d,]{1,15})",
     ]
 
     for pattern in patterns:
@@ -698,7 +704,7 @@ def parse_user_request(
     # ------------------------------------------------------------
 
     group_match = re.search(
-        r"(\d+)\s*(?:people|person|travellers?|travelers?|adults?|pax)",
+        r"(\d{1,4})\s*(?:people|person|travellers?|travelers?|adults?|pax)",
         text,
     )
 
@@ -2468,7 +2474,7 @@ def summarize_llm_error(
 
     # HTTP errors
     match = re.search(
-        r"Gemini HTTP (\d+)",
+        r"Gemini HTTP (\d{1,3})",
         text,
         re.IGNORECASE,
     )
