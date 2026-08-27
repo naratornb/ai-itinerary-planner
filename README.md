@@ -18,6 +18,17 @@ AI-powered itinerary service for travel influencers. Next.js web app (`apps/web`
 3. Migrations are applied by the pipeline (see below) — nothing to run locally. To preview
    what a deploy would apply: `supabase link --project-ref <project-ref> && supabase db push --dry-run`.
 
+   The root `.env` is **local-only** (gitignored — it never reaches CI or deploys). Pipelines
+   take the same keys as environment variables instead:
+
+   - **GitHub Actions**: no secrets needed — `ci.yml` injects dummy `NEXT_PUBLIC_SUPABASE_URL`
+     / `NEXT_PUBLIC_SUPABASE_ANON_KEY` inline so the static web build passes.
+   - **Vercel (web)**: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`,
+     `NEXT_PUBLIC_API_URL` — set in the project's dashboard env settings.
+   - **Vercel (api)**: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and `SUPABASE_ANON_KEY`
+     (or the `NEXT_PUBLIC_` fallback) — dashboard env settings; without the service role key
+     every authenticated route returns 500.
+
 ## Run (dev)
 
 ```sh
