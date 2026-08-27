@@ -11,18 +11,6 @@ from app.packages.service import _DETAIL_SELECT, UpstreamError
 
 router = APIRouter()
 
-# Nested PostgREST embed for the marketplace detail page. Ordering is
-# done by PostgREST (order= params), not in Python. influencer_profiles
-# hangs off profiles, not the package, hence the nesting.
-_DETAIL_SELECT = (
-    "*,"
-    "creator:profiles!creator_id(full_name,avatar_url,"
-    "influencer_profiles(bio,instagram_handle,tiktok_handle,follower_count,verified)),"
-    "package_media(*),package_days(*),"
-    "package_flights(*,flights(*)),"
-    "package_hotels(*,hotels(*)),"
-    "package_activities(*,activities(*))"
-)
 
 @router.get("/marketplace/packages", response_model=schemas.MarketplaceListResponse)
 def list_marketplace_packages(
