@@ -1,0 +1,32 @@
+info:
+  name: delete-media
+  type: http
+  seq: 5
+
+http:
+  method: DELETE
+  url: "{{host-api}}/media/{{media-id}}"
+  headers:
+    - name: accept
+      value: application/json
+  auth:
+    type: bearer
+    token: "{{access-token}}"
+
+runtime:
+  assertions:
+    - expression: res.status
+      operator: eq
+      value: "204"
+  scripts:
+    - type: tests
+      code: |-
+        test("returns no content", function() {
+          expect(res.body).to.not.be.ok;
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

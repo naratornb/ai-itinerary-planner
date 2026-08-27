@@ -5,9 +5,18 @@
 -- for suggestion_text/status, adds accepted_at and
 -- response_time_ms, drops suggestion_type (no spec counterpart).
 --
--- Destructive column swaps are safe: the table is empty
--- pre-launch, so there is no data to migrate.
+-- Destructive by design: pre-launch demo rows still use the old
+-- schema and their content column (suggestion_content) is dropped
+-- below anyway, so they are cleared first — without this the
+-- NOT NULL suggestion_text addition fails on any non-empty table.
+-- Re-run supabase/seed/02_users_packages.sql to repopulate demo
+-- suggestions in the new shape.
 -- ============================================================
+
+-- ─────────────────────────────────────────────
+-- 0. Clear old-schema rows (unmigratable + re-seedable)
+-- ─────────────────────────────────────────────
+DELETE FROM public.ai_suggestions;
 
 -- ─────────────────────────────────────────────
 -- 1. Renames

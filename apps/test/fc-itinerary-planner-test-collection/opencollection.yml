@@ -12,3 +12,4 @@ extensions:
     ignore:
       - node_modules
       - .git
+      - assets

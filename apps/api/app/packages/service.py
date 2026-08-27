@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 _DETAIL_SELECT = (
     "*,"
     "creator:profiles!creator_id(full_name,avatar_url,"
-    "influencer_profiles(bio,social_handle,follower_count,verified)),"
+    "influencer_profiles(bio,instagram_handle,tiktok_handle,follower_count,verified)),"
     "package_media(*),package_days(*),"
     "package_flights(*,flights(*)),"
     "package_hotels(*,hotels(*)),"
