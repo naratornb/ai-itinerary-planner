@@ -4,10 +4,9 @@ Next.js 16 + Tailwind CSS 4 frontend for the Influencer Travel Marketplace. It i
 
 ## Run
 
-Env comes from the root `.env` via the `.env.local` symlink (see repo README):
+Env comes from the root `.env` automatically (`next.config.ts` loads it via `lib/root-env.ts` — no symlink or per-app copy needed):
 
 ```sh
-ln -sf ../../.env .env.local   # once
 npm install
 npm run dev
 ```

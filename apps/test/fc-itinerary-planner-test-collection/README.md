@@ -4,8 +4,10 @@ A Bruno collection that smoke tests every currently implemented API endpoint.
 
 ## Prerequisites
 
-- Copy `.env.example` to `.env` and fill it in. You need a real Supabase Auth user —
-  the seeded creator rows are DB-only and cannot log in.
+- Env comes from the single repo-root `.env` (see the root `.env.example` for the smoke
+  keys). This collection reads it through a symlink — create it once on a fresh clone:
+  `ln -s ../../../.env .env` (from this folder). You need a real Supabase Auth user for
+  `SMOKE_EMAIL` — the seeded creator rows are DB-only and cannot log in.
 - An admin account (`SMOKE_ADMIN_EMAIL` / `SMOKE_ADMIN_PASSWORD`) whose `profiles.role`
   is `admin`. `05-approvals` fails fast if it is not.
 - A Supabase Storage bucket named `package-media` — `07-media` uploads to it.
