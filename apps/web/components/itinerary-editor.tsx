@@ -9,6 +9,7 @@ type IconName = "plane" | "star" | "hotel" | "plus" | "alert" | "check" | "clock
 
 type TimelineItem = {
   id: number;
+  day_index: number;   // 0-based index of the day this item belongs to
   time: string;
   type: string;
   title: string;
@@ -67,18 +68,22 @@ function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
 }
 
+// Transfer-gap check thresholds — defined here so INITIAL_ITEMS (which calls annotateItems) can reference them.
+const MIN_TRANSFER_GAP_MIN = 15; // minutes — minimum breathing room between consecutive items
+const LONG_ACTIVITY_MIN = 240;   // minutes — 4 hours
+
 const INITIAL_DAYS = [
   { day: 1, count: 5, title: "Arrival & Shibuya Evening", meta: "Story · 3 photos" },
   { day: 2, count: 3, title: "Traditional Tokyo", meta: "Culture · 4 stops" },
   { day: 3, count: 1, title: "Mt. Fuji Day Trip", meta: "Nature · Full day" },
 ];
 
-const INITIAL_ITEMS: TimelineItem[] = [
-  { id: 1, time: "14:30", type: "FLIGHT", title: "International arrival at Tokyo Narita", price: "$850", icon: "plane" as IconName, problem: "Transfer time is too short", problemDetail: "10 min available · 75 min needed", status: "critical" },
-  { id: 2, time: "14:40", type: "ACTIVITY", title: "Shibuya Crossing Quick Visit", price: "$180", icon: "star" as IconName, problem: "Overlaps airport transfer", problemDetail: "Starts 10 min after arrival", status: "critical", category: "Activity", address: "Shibuya Crossing, Tokyo", duration: "30", notes: "See the crossing from street level, then head upstairs for the city view.", photo: "https://images.unsplash.com/photo-1542051841857-5f90071e7989?w=240&h=180&fit=crop" },
-  { id: 3, time: "17:30", type: "ACTIVITY", title: "Tokyo Tower Observatory visit", price: "$20", icon: "star" as IconName, problem: undefined, problemDetail: undefined, status: "pass", category: "Attraction", address: "4 Chome-2-8 Shibakoen, Minato City, Tokyo", duration: "90", notes: "Arrive before sunset for daytime and evening views." },
-  { id: 4, time: "19:30", type: "HOTEL", title: "Shibuya Excel Hotel Tokyu (2 nights)", price: "$720", icon: "hotel" as IconName, problem: undefined, problemDetail: undefined, status: "pass" },
-];
+const INITIAL_ITEMS: TimelineItem[] = annotateItems([
+  { id: 1, day_index: 0, time: "14:30", type: "FLIGHT", title: "International arrival at Tokyo Narita", price: "$850", icon: "plane" as IconName, status: "pass", duration: "75" },
+  { id: 2, day_index: 0, time: "14:40", type: "ACTIVITY", title: "Shibuya Crossing Quick Visit", price: "$180", icon: "star" as IconName, status: "pass", category: "Activity", address: "Shibuya Crossing, Tokyo", duration: "30", notes: "See the crossing from street level, then head upstairs for the city view.", photo: "https://images.unsplash.com/photo-1542051841857-5f90071e7989?w=240&h=180&fit=crop" },
+  { id: 3, day_index: 0, time: "17:30", type: "ACTIVITY", title: "Tokyo Tower Observatory visit", price: "$20", icon: "star" as IconName, status: "pass", category: "Attraction", address: "4 Chome-2-8 Shibakoen, Minato City, Tokyo", duration: "90", notes: "Arrive before sunset for daytime and evening views." },
+  { id: 4, day_index: 0, time: "19:30", type: "HOTEL", title: "Shibuya Excel Hotel Tokyu (2 nights)", price: "$720", icon: "hotel" as IconName, status: "pass" },
+]);
 
 const AVAILABLE_FLIGHTS = [
   { id: "qf25", airline: "Qantas", number: "QF25", from: "Sydney (SYD)", to: "Tokyo Haneda (HND)", departure: "20:55", arrival: "05:55", duration: "10h", price: 850 },
@@ -93,6 +98,98 @@ function getEndTime(startTime: string, duration: string) {
   const [hours, minutes] = startTime.split(":").map(Number);
   const totalMinutes = hours * 60 + minutes + Number(duration);
   return `${String(Math.floor(totalMinutes / 60) % 24).padStart(2, "0")}:${String(totalMinutes % 60).padStart(2, "0")}`;
+}
+
+/** Convert "HH:MM" to total minutes from midnight. */
+function toMinutes(time: string): number {
+  const parts = time.split(":").map(Number);
+  return (parts[0] ?? 0) * 60 + (parts[1] ?? 0);
+}
+
+/**
+ * Returns true when text appears to contain random/gibberish characters.
+ * Heuristics (both must be language-agnostic enough to avoid false positives on proper nouns):
+ *  1. Any word with 5+ consecutive consonants (e.g. "jrhfurehog")
+ *  2. More than 40% of long words (>4 letters) have a vowel ratio below 15%
+ * Short texts or texts with no long words are left alone.
+ */
+function detectGibberish(text: string): boolean {
+  if (!text || text.trim().length < 8) return false;
+  const lower = text.toLowerCase();
+  // Immediate fail: any 5-consonant run is a strong gibberish signal
+  if (/[^aeiou\s\d\W]{5,}/.test(lower.replace(/[^a-z]/g, " "))) return true;
+  // Secondary: vowel-ratio check across long words
+  const words = lower.split(/\s+/).map((w) => w.replace(/[^a-z]/g, "")).filter((w) => w.length > 4);
+  if (words.length === 0) return false;
+  const suspicious = words.filter((w) => {
+    const vowels = (w.match(/[aeiou]/g) ?? []).length;
+    return vowels / w.length < 0.15;
+  });
+  return suspicious.length / words.length > 0.4;
+}
+
+/**
+ * Annotates each item with problem / problemDetail / status based on (priority order):
+ *  1. LONG_ACTIVITY : a single item's duration exceeds LONG_ACTIVITY_MIN
+ *  2. OVERLAP       : this item starts before the previous item ends
+ *  3. SHORT_TRANSFER: gap to the next item is > 0 but < MIN_TRANSFER_GAP_MIN
+ *  4. GIBBERISH     : item notes contain random/unreadable characters
+ * All other items are marked "pass" with no problem.
+ */
+function annotateItems(raw: TimelineItem[]): TimelineItem[] {
+  return raw.map((item, i) => {
+    const durationMin = Number(item.duration ?? 60);
+    const endMin = toMinutes(item.time) + durationMin;
+
+    // 1. Long single activity
+    if (durationMin > LONG_ACTIVITY_MIN) {
+      const hrs = (durationMin / 60).toFixed(1);
+      return {
+        ...item,
+        status: "critical" as const,
+        problem: "Activity is unusually long",
+        problemDetail: `${hrs} hrs scheduled — consider splitting into two stops`,
+      };
+    }
+
+    // 2 & 3. Gap vs next item — only compare within the same day
+    const next = raw[i + 1];
+    if (next && next.day_index === item.day_index) {
+      const nextStartMin = toMinutes(next.time);
+      const gapMin = nextStartMin - endMin;
+
+      if (gapMin < 0) {
+        const overlapMin = Math.abs(gapMin);
+        return {
+          ...item,
+          status: "critical" as const,
+          problem: "Overlaps next item",
+          problemDetail: `Ends ${overlapMin} min after "${next.title}" starts`,
+        };
+      }
+
+      if (gapMin < MIN_TRANSFER_GAP_MIN) {
+        return {
+          ...item,
+          status: "critical" as const,
+          problem: "Transfer gap is too short",
+          problemDetail: `${gapMin} min to reach "${next.title}" · ${MIN_TRANSFER_GAP_MIN} min minimum`,
+        };
+      }
+    }
+
+    // 4. Gibberish in description
+    if (detectGibberish(item.notes ?? "")) {
+      return {
+        ...item,
+        status: "critical" as const,
+        problem: "Description contains unreadable text",
+        problemDetail: "Remove random characters and use clear, traveller-friendly language",
+      };
+    }
+
+    return { ...item, status: "pass" as const, problem: undefined, problemDetail: undefined };
+  });
 }
 
 function Panel({ title, children, className = "" }: { title: string; children: React.ReactNode; className?: string }) {
@@ -158,11 +255,23 @@ export default function ItineraryEditor({ onBack }: { onBack: () => void }) {
       days_json: JSON.stringify(
         days.map((day, dayIndex) => ({
           day_number: day.day,
+          // Flights on this day — used by R2 transfer-time check in route.ts
+          flights: items
+            .filter((item) => item.day_index === dayIndex)
+            .filter((item) => item.type === "FLIGHT")
+            .map((item) => ({
+              arrival_time: item.time,
+              flight_type: item.title.toLowerCase().includes("international")
+                ? "international"
+                : "domestic",
+              title: item.title,
+            })),
           activities: items
-            .filter((_, i) => Math.floor(i / 3) === dayIndex)
+            .filter((item) => item.day_index === dayIndex)
             .filter((item) => item.type !== "FLIGHT" && item.type !== "HOTEL")
             .map((item) => ({
               activity_name: item.title,
+              start_time: item.time,           // HH:MM — used by R2
               slot: timeToSlot(item.time),
               category: item.category ?? item.type ?? "Activity",
               duration_hours: Number(item.duration ?? 60) / 60,
@@ -204,7 +313,7 @@ export default function ItineraryEditor({ onBack }: { onBack: () => void }) {
     if (!feasLoading) {
       setFeasResult(null);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items, days, story, packageTitle, selectedHotel, groupSize, travelMonth, packagePrice, photos]);
 
   useEffect(() => {
@@ -239,7 +348,7 @@ export default function ItineraryEditor({ onBack }: { onBack: () => void }) {
 
   const saveEditedItem = () => {
     if (!editingItem || !editingItem.title.trim()) return;
-    setItems((current) => current.map((item) => item.id === editingItem.id ? {
+    setItems((current) => annotateItems(current.map((item) => item.id === editingItem.id ? {
       ...item,
       title: editingItem.title.trim(),
       time: editingItem.time,
@@ -249,16 +358,16 @@ export default function ItineraryEditor({ onBack }: { onBack: () => void }) {
       duration: editingItem.duration,
       notes: editingItem.notes.trim(),
       photo: editingItem.photo,
-    } : item));
+    } : item)));
     setEditingItem(null);
     showNotice("Stop updated");
   };
 
-  const insertItem = (after: number, item: Omit<TimelineItem, "id">) => {
+  const insertItem = (after: number, item: Omit<TimelineItem, "id" | "day_index">) => {
     const next = [...items];
     nextItemId.current += 1;
-    next.splice(after + 1, 0, { ...item, id: nextItemId.current });
-    setItems(next);
+    next.splice(after + 1, 0, { ...item, id: nextItemId.current, day_index: activeDay });
+    setItems(annotateItems(next));
     setAddingAfter(null);
     setAddFlow("type");
     showNotice(`${item.title} added`);
@@ -276,7 +385,7 @@ export default function ItineraryEditor({ onBack }: { onBack: () => void }) {
     const next = [...items];
     const [moved] = next.splice(fromIndex, 1);
     next.splice(toIndex, 0, moved);
-    setItems(next);
+    setItems(annotateItems(next));
     setAddingAfter(null);
     showNotice(`${moved.title} moved to position ${toIndex + 1}`);
   };
@@ -290,7 +399,7 @@ export default function ItineraryEditor({ onBack }: { onBack: () => void }) {
     const next = [...items];
     const [moved] = next.splice(fromIndex, 1);
     next.splice(insertionIndex, 0, moved);
-    setItems(next);
+    setItems(annotateItems(next));
     setAddingAfter(null);
     showNotice(`${moved.title} moved to position ${insertionIndex + 1}`);
   };
@@ -441,7 +550,7 @@ export default function ItineraryEditor({ onBack }: { onBack: () => void }) {
           <section className="timeline-section">
             <h3>Timeline</h3>
             <div className="timeline-list">
-              {items.map((item, index) => <div key={item.id} className={`timeline-group ${addingAfter === index ? "adding" : ""} ${dropTarget?.index === index ? `drop-${dropTarget.position}` : ""}`} onDragOver={(event) => { event.preventDefault(); if (draggedItemId === item.id) return; const rect = event.currentTarget.getBoundingClientRect(); setDropTarget({ index, position: event.clientY < rect.top + rect.height / 2 ? "before" : "after" }); }} onDrop={(event) => { event.preventDefault(); dropItem(); endDrag(); }}>
+              {items.filter((item) => item.day_index === activeDay).map((item, index) => <div key={item.id} className={`timeline-group ${addingAfter === index ? "adding" : ""} ${dropTarget?.index === index ? `drop-${dropTarget.position}` : ""}`} onDragOver={(event) => { event.preventDefault(); if (draggedItemId === item.id) return; const rect = event.currentTarget.getBoundingClientRect(); setDropTarget({ index, position: event.clientY < rect.top + rect.height / 2 ? "before" : "after" }); }} onDrop={(event) => { event.preventDefault(); dropItem(); endDrag(); }}>
                 <article className={`timeline-item ${item.status} ${draggedItemId === item.id ? "dragging" : ""} ${item.type !== "FLIGHT" && item.type !== "HOTEL" ? "editable" : ""} ${editingItem?.id === item.id ? "expanded" : ""}`} onClick={(event) => { if (item.type === "FLIGHT" || item.type === "HOTEL" || (event.target as HTMLElement).closest("button")) return; startEditingItem(item); }} onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && item.type !== "FLIGHT" && item.type !== "HOTEL" && !(event.target as HTMLElement).closest("button")) { event.preventDefault(); startEditingItem(item); } }} tabIndex={item.type !== "FLIGHT" && item.type !== "HOTEL" ? 0 : undefined} role={item.type !== "FLIGHT" && item.type !== "HOTEL" ? "button" : undefined} aria-expanded={item.type !== "FLIGHT" && item.type !== "HOTEL" ? editingItem?.id === item.id : undefined}>
                   <button className="drag-handle" draggable aria-label={`Move ${item.title}. Use drag and drop, or the up and down arrow keys.`} onDragStart={(event) => { setEditingItem(null); setDraggedItemId(item.id); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", String(item.id)); }} onDragEnd={endDrag} onKeyDown={(event) => { if (event.key === "ArrowUp") { event.preventDefault(); moveItem(index, index - 1); } if (event.key === "ArrowDown") { event.preventDefault(); moveItem(index, index + 1); } }}><span /><span /><span /><span /><span /><span /></button>
                   <div className="item-time"><Icon name={item.icon} /><strong>{item.time}</strong></div>
@@ -475,7 +584,7 @@ export default function ItineraryEditor({ onBack }: { onBack: () => void }) {
 
                   {addFlow === "flight" && <>
                     <div className="inline-add-head"><button className="inline-back" onClick={() => setAddFlow("type")} aria-label="Back to item types">‹</button><h4>Choose a flight</h4><button onClick={() => setAddingAfter(null)}>Cancel</button></div>
-                    <label className="activity-search"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input value={flightSearch} onChange={(event) => setFlightSearch(event.target.value)} placeholder="Search by airport, airline, or flight number" /></label>
+                    <label className="activity-search"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" /></svg><input value={flightSearch} onChange={(event) => setFlightSearch(event.target.value)} placeholder="Search by airport, airline, or flight number" /></label>
                     <p className="database-note">Flights are supplied by Travel Marketplace and cannot be edited here.</p>
                     <div className="flight-results" role="radiogroup" aria-label="Available flights">
                       {matchingFlights.map((flight) => <button key={flight.id} type="button" role="radio" aria-checked={selectedFlightId === flight.id} className={selectedFlightId === flight.id ? "selected" : ""} onClick={() => setSelectedFlightId(flight.id)}>
@@ -529,7 +638,7 @@ export default function ItineraryEditor({ onBack }: { onBack: () => void }) {
 
                   {addFlow === "activities" && <>
                     <div className="inline-add-head"><button className="inline-back" onClick={() => setAddFlow("type")} aria-label="Back to item types">‹</button><h4>Activity</h4><button onClick={() => setAddingAfter(null)}>Cancel</button></div>
-                    <label className="activity-search"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input value={activitySearch} onChange={(event) => setActivitySearch(event.target.value)} placeholder="Search Tokyo activities" /></label>
+                    <label className="activity-search"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" /></svg><input value={activitySearch} onChange={(event) => setActivitySearch(event.target.value)} placeholder="Search Tokyo activities" /></label>
                     <h5>Recommended for Tokyo</h5>
                     <div className="activity-results">
                       {recommendedActivities.map((activity) => <button key={activity.title} onClick={() => addRecommendedActivity(activity.title, activity.meta, activity.price)}><span className="result-plus">+</span><strong>{activity.title}</strong><small>{activity.meta}</small><b>{activity.price}</b></button>)}
@@ -581,8 +690,8 @@ export default function ItineraryEditor({ onBack }: { onBack: () => void }) {
                   {!feasResult
                     ? "Please check content"
                     : hardErrors.length > 0
-                    ? "Fix critical issues"
-                    : "Score below 70"}
+                      ? "Fix critical issues"
+                      : "Score below 70"}
                 </strong>
               )}
             </div>
@@ -619,7 +728,7 @@ export default function ItineraryEditor({ onBack }: { onBack: () => void }) {
             <StatusToggle tone="pass" count={feasResult ? Math.max(0, 11 - hardErrors.length - softWarnings.length) : 0} label="Passed" expanded={expandedFeasibility === "passed"} onClick={() => setExpandedFeasibility(expandedFeasibility === "passed" ? null : "passed")} />
             {expandedFeasibility === "passed" && <ul className="passed-details"><li><Icon name="check" size={15} />Daily schedule has a clear start and end</li><li><Icon name="check" size={15} />All stops have pricing</li><li><Icon name="check" size={15} />Accommodation is included</li><li><Icon name="check" size={15} />Required package photos are uploaded</li></ul>}
           </Panel>
-          <Panel title="Pricing & earnings" className="pricing-panel"><span>Total package price</span><strong>${packagePrice.toLocaleString()}</strong><hr/><span>Your commission (20%)</span><strong className="commission">${Math.round(packagePrice * .2).toLocaleString()}</strong><small>Est. 5–8 bookings/month</small><button onClick={() => { const next = window.prompt("Set total package price", String(packagePrice)); if (next && Number(next) > 0) setPackagePrice(Number(next)); }}>Adjust pricing</button></Panel>
+          <Panel title="Pricing & earnings" className="pricing-panel"><span>Total package price</span><strong>${packagePrice.toLocaleString()}</strong><hr /><span>Your commission (20%)</span><strong className="commission">${Math.round(packagePrice * .2).toLocaleString()}</strong><small>Est. 5–8 bookings/month</small><button onClick={() => { const next = window.prompt("Set total package price", String(packagePrice)); if (next && Number(next) > 0) setPackagePrice(Number(next)); }}>Adjust pricing</button></Panel>
           <Panel title="Route map" className="route-panel"><RouteMap /></Panel>
           <Panel title="Hotel tiers" className="hotel-panel">{[{ name: "Shibuya Excel Hotel Tokyu", meta: "Standard · $720 total" }, { name: "Park Hyatt Tokyo", meta: "Premium · $1,680 total" }, { name: "9h Capsule Hotel", meta: "Budget · $270 total" }].map((hotel) => <button key={hotel.name} aria-pressed={selectedHotel === hotel.name} className={selectedHotel === hotel.name ? "selected" : ""} onClick={() => setSelectedHotel(hotel.name)}><strong>{hotel.name}</strong><span>{hotel.meta}</span></button>)}<button className="add-tier" onClick={() => showNotice("Hotel tier editor opened")}><Icon name="plus" size={14} /> Add tier</button></Panel>
         </aside>
