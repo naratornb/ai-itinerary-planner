@@ -71,7 +71,7 @@ export default function RegisterPage() {
               </span>
             </div>
             <div>
-              <h2 className="text-xl font-bold text-text-primary font-display">Account created!</h2>
+              <h2 className="text-xl font-bold text-text-primary">Account created!</h2>
               <p className="text-sm text-text-secondary mt-2 leading-relaxed">
                 Your account for{" "}
                 <span className="font-semibold text-text-primary">{email}</span> is ready. You can sign in now.

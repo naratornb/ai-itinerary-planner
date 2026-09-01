@@ -1,0 +1,33 @@
+info:
+  name: me
+  type: http
+  seq: 4
+
+http:
+  method: GET
+  url: "{{host-api}}/auth/me"
+  headers:
+    - name: accept
+      value: application/json
+  auth:
+    type: bearer
+    token: "{{api-access-token}}"
+
+runtime:
+  assertions:
+    - expression: res.status
+      operator: eq
+      value: "200"
+  scripts:
+    - type: tests
+      code: |-
+        test("returns the authenticated user's profile", function() {
+          expect(res.body.user_id).to.equal(bru.getVar("user-id"));
+          expect(res.body.email).to.be.a("string").and.not.be.empty;
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

@@ -47,7 +47,7 @@ UPDATE public.profiles SET role = 'customer',
 UPDATE public.profiles SET avatar_url = 'https://i.pravatar.cc/150?u=' || id::text
   WHERE avatar_url IS NULL AND id::text LIKE 'a0000000-%';
 
-INSERT INTO public.influencer_profiles (user_id, bio, social_handle, follower_count, specialty, verified) VALUES
+INSERT INTO public.influencer_profiles (user_id, bio, instagram_handle, follower_count, specialty, verified) VALUES
   ('a0000000-0000-0000-0000-000000000001', 'Tokyo-based creator sharing food-first city guides across Asia.', '@mia.eats.world', 482000, 'food & culture', TRUE),
   ('a0000000-0000-0000-0000-000000000002', 'Adventure filmmaker chasing mountains, fjords and powder.', '@leo.outside', 213000, 'adventure', TRUE),
   ('a0000000-0000-0000-0000-000000000003', 'Budget-luxe European city breaks and hidden-gem itineraries.', '@aria.wanders', 96000, 'city breaks', FALSE);
@@ -149,7 +149,7 @@ INSERT INTO public.package_days (package_id, day_number, title, summary) VALUES
   ('b0000000-0000-0000-0000-000000000003', 2, 'Galleries & food walk', 'Musée d''Orsay in the morning, evening patisserie and wine walk in Le Marais.');
 
 -- ---------- approvals ----------
-INSERT INTO public.package_approvals (package_id, admin_id, action, rejection_reason, actioned_at) VALUES
+INSERT INTO public.package_approvals (package_id, reviewer_id, decision, rejection_reason, reviewed_at) VALUES
   ('b0000000-0000-0000-0000-000000000001', 'a0000000-0000-0000-0000-000000000004', 'approved', NULL, now() - interval '26 days'),
   ('b0000000-0000-0000-0000-000000000002', 'a0000000-0000-0000-0000-000000000004', 'approved', NULL, now() - interval '19 days'),
   ('b0000000-0000-0000-0000-000000000003', 'a0000000-0000-0000-0000-000000000004', 'approved', NULL, now() - interval '11 days'),
@@ -158,15 +158,15 @@ INSERT INTO public.package_approvals (package_id, admin_id, action, rejection_re
   ('b0000000-0000-0000-0000-000000000007', 'a0000000-0000-0000-0000-000000000004', 'rejected', 'Pricing does not cover listed inclusions; itinerary missing arrival-day logistics. Please revise and resubmit.', now() - interval '5 days');
 
 -- ---------- AI suggestions ----------
-INSERT INTO public.ai_suggestions (package_id, suggestion_type, prompt_context, suggestion_content, accepted) VALUES
-  ('b0000000-0000-0000-0000-000000000001', 'activity', 'User asked for one more evening option in Tokyo',
-   '{"name": "Golden Gai bar-hopping night", "day": 4, "est_price_aud": 95, "reason": "High-rated nightlife pick that fits the food & culture theme"}', TRUE),
-  ('b0000000-0000-0000-0000-000000000004', 'itinerary', 'Balance relaxation vs activity across 10 days',
-   '{"summary": "Alternate spa/yoga days with day trips; keep days 5 and 9 unplanned", "changes": [{"day": 5, "action": "free day"}, {"day": 9, "action": "free day"}]}', NULL),
-  ('b0000000-0000-0000-0000-000000000006', 'feasibility', 'Check pacing of 5-day NYC itinerary',
-   '{"verdict": "tight", "issues": ["Day 2 has 11h of scheduled activities", "No buffer before JFK departure"], "suggestion": "Move observation deck to day 3 morning"}', FALSE),
-  ('b0000000-0000-0000-0000-000000000008', 'destination', 'Altitude concerns for Cusco arrivals',
-   '{"advice": "Schedule nothing strenuous for the first 36 hours; add coca-tea welcome and gentle city walk only", "confidence": 0.9}', TRUE);
+INSERT INTO public.ai_suggestions (package_id, prompt, suggestion_text, status) VALUES
+  ('b0000000-0000-0000-0000-000000000001', 'User asked for one more evening option in Tokyo',
+   'Add a Golden Gai bar-hopping night on day 4 (~$95 AUD) — a high-rated nightlife pick that fits the food & culture theme.', 'accepted'),
+  ('b0000000-0000-0000-0000-000000000004', 'Balance relaxation vs activity across 10 days',
+   'Alternate spa/yoga days with day trips; keep days 5 and 9 unplanned as free days.', 'pending'),
+  ('b0000000-0000-0000-0000-000000000006', 'Check pacing of 5-day NYC itinerary',
+   'Pacing is tight: day 2 has 11h of scheduled activities and there is no buffer before the JFK departure. Move the observation deck to day 3 morning.', 'dismissed'),
+  ('b0000000-0000-0000-0000-000000000008', 'Altitude concerns for Cusco arrivals',
+   'Schedule nothing strenuous for the first 36 hours; add a coca-tea welcome and a gentle city walk only.', 'accepted');
 
 -- ---------- reviews (live packages only, unique per customer) ----------
 INSERT INTO public.package_reviews (package_id, customer_id, rating, comment) VALUES

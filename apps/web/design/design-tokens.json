@@ -1,0 +1,53 @@
+{
+  "color": {
+    "brand": { "$value": "#D40119", "$type": "color", "$description": "Structural brand field", "$extensions": { "anydesign": { "confidence": "high" } } },
+    "action": { "$value": "#0072EA", "$type": "color", "$description": "Primary action and focus", "$extensions": { "anydesign": { "confidence": "high" } } },
+    "action-hover": { "$value": "#005DC7", "$type": "color", "$description": "Primary action hover", "$extensions": { "anydesign": { "confidence": "high" } } },
+    "surface": { "$value": "#FFFFFF", "$type": "color", "$description": "Base and elevated surface", "$extensions": { "anydesign": { "confidence": "high" } } },
+    "surface-subtle": { "$value": "#F5F5F5", "$type": "color", "$description": "Quiet secondary surface", "$extensions": { "anydesign": { "confidence": "high" } } },
+    "text": {
+      "primary": { "$value": "#212121", "$type": "color", "$description": "Primary text", "$extensions": { "anydesign": { "confidence": "high" } } },
+      "secondary": { "$value": "#616161", "$type": "color", "$description": "Supporting text", "$extensions": { "anydesign": { "confidence": "high" } } },
+      "disabled": { "$value": "#9E9E9E", "$type": "color", "$description": "Disabled text", "$extensions": { "anydesign": { "confidence": "high" } } }
+    },
+    "border": { "$value": "#E0E0E0", "$type": "color", "$description": "Default boundary", "$extensions": { "anydesign": { "confidence": "high" } } },
+    "success": { "$value": "#14804A", "$type": "color", "$description": "Positive state", "$extensions": { "anydesign": { "confidence": "high" } } },
+    "warning": { "$value": "#A45B00", "$type": "color", "$description": "Caution state", "$extensions": { "anydesign": { "confidence": "high" } } }
+  },
+  "typography": {
+    "font-family": {
+      "display": { "$value": "Roboto, sans-serif", "$type": "fontFamily", "$extensions": { "anydesign": { "confidence": "high" } } },
+      "body": { "$value": "Roboto, sans-serif", "$type": "fontFamily", "$extensions": { "anydesign": { "confidence": "high" } } }
+    },
+    "font-size": {
+      "display": { "$value": "44px", "$type": "dimension", "$extensions": { "anydesign": { "confidence": "high" } } },
+      "headline": { "$value": "32px", "$type": "dimension", "$extensions": { "anydesign": { "confidence": "high" } } },
+      "body": { "$value": "16px", "$type": "dimension", "$extensions": { "anydesign": { "confidence": "high" } } },
+      "label": { "$value": "14px", "$type": "dimension", "$extensions": { "anydesign": { "confidence": "high" } } }
+    }
+  },
+  "spacing": {
+    "1": { "$value": "4px", "$type": "dimension" },
+    "2": { "$value": "8px", "$type": "dimension" },
+    "3": { "$value": "12px", "$type": "dimension" },
+    "4": { "$value": "16px", "$type": "dimension" },
+    "6": { "$value": "24px", "$type": "dimension" },
+    "8": { "$value": "32px", "$type": "dimension" },
+    "12": { "$value": "48px", "$type": "dimension" },
+    "16": { "$value": "64px", "$type": "dimension" }
+  },
+  "radius": {
+    "sm": { "$value": "8px", "$type": "dimension", "$extensions": { "anydesign": { "confidence": "high" } } },
+    "md": { "$value": "12px", "$type": "dimension", "$extensions": { "anydesign": { "confidence": "high" } } },
+    "lg": { "$value": "16px", "$type": "dimension", "$extensions": { "anydesign": { "confidence": "high" } } },
+    "pill": { "$value": "999px", "$type": "dimension", "$extensions": { "anydesign": { "confidence": "high" } } }
+  },
+  "$extensions": {
+    "anydesign": {
+      "source": "repository root",
+      "captured_at": "2026-08-13",
+      "method": "source CSS and design documentation inspection",
+      "spec": "W3C Design Tokens Community Group 2025.10"
+    }
+  }
+}

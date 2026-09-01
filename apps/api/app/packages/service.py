@@ -8,12 +8,24 @@ from requests import RequestException
 
 from app import core
 from app.core import _admin_headers
-from app.marketplace.router import _DETAIL_SELECT
 
 logger = logging.getLogger(__name__)
 
 # Every PostgREST call in the packages feature lives in this module, so tests
 # only have to stub `app.packages.service.requests`.
+
+# Nested PostgREST embed for the marketplace detail page. Ordering is
+# done by PostgREST (order= params), not in Python. influencer_profiles
+# hangs off profiles, not the package, hence the nesting.
+_DETAIL_SELECT = (
+    "*,"
+    "creator:profiles!creator_id(full_name,avatar_url,"
+    "influencer_profiles(bio,instagram_handle,tiktok_handle,follower_count,verified)),"
+    "package_media(*),package_days(*),"
+    "package_flights(*,flights(*)),"
+    "package_hotels(*,hotels(*)),"
+    "package_activities(*,activities(*))"
+)
 
 _SUMMARY_SELECT = (
     "package_id,title,destination_country,destination_city,duration_days,"
