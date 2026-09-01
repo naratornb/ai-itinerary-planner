@@ -30,9 +30,6 @@ const SLOT_HOURS: Record<string, number> = {
 const SLOT_ADVISORY_RATIO = 0.75; // e.g. 3 hrs in a 4-hr slot triggers a soft warning
 // R5 per-activity: flag single activities that are unusually long
 const LONG_ACTIVITY_HOURS = 4;
-// R2 minimum transfer buffers (minutes) after a flight lands
-const MIN_DOMESTIC_TRANSFER_MIN = 60;
-const MIN_INTL_TRANSFER_MIN = 120;
 
 /** Convert "HH:MM" to total minutes from midnight. */
 function toMinutes(time: string): number {
@@ -48,34 +45,17 @@ function runCodeChecks(days: any[]): { hard: CodeIssue[]; soft: CodeIssue[] } {
     const acts: any[] = day.activities || [];
     const dayLabel = `Day ${day.day_number}`;
 
-    // ── R2 – Transfer Time: minimum buffer from flight arrival to first activity ─
-    for (const flight of (day.flights || []) as any[]) {
-      if (!flight.arrival_time) continue;
-      const arrivalMin = toMinutes(flight.arrival_time);
-      const isIntl = (flight.flight_type ?? "") === "international";
-      const minGap = isIntl ? MIN_INTL_TRANSFER_MIN : MIN_DOMESTIC_TRANSFER_MIN;
-
-      // Find the first activity that starts after the flight arrives
-      const activitiesAfterFlight = acts
-        .filter((a: any) => a.start_time && toMinutes(a.start_time) > arrivalMin)
-        .sort((a: any, b: any) => toMinutes(a.start_time) - toMinutes(b.start_time));
-
-      if (activitiesAfterFlight.length > 0) {
-        const first = activitiesAfterFlight[0];
-        const gapMin = toMinutes(first.start_time) - arrivalMin;
-        if (gapMin < minGap) {
-          hard.push({
-            error_code: "SHORT_TRANSFER",
-            rule: "R2 – Transfer Time",
-            severity: "error",
-            field: `${dayLabel} – ${flight.flight_type ?? "flight"} arrival`,
-            field_value: `${gapMin} min available, ${minGap} min required`,
-            affected_item: first.activity_name,
-            message: `Only ${gapMin} min between ${isIntl ? "international" : "domestic"} flight arrival (${flight.arrival_time}) and "${first.activity_name}" (${first.start_time}). ${isIntl ? "International" : "Domestic"} arrivals need at least ${minGap} min for baggage, customs, and transfer.`,
-            action: `Delay "${first.activity_name}" to start no earlier than ${Math.floor((arrivalMin + minGap) / 60).toString().padStart(2, "0")}:${((arrivalMin + minGap) % 60).toString().padStart(2, "0")}.`,
-          });
-        }
-      }
+    if (acts.length === 0) {
+      hard.push({
+        error_code: "EMPTY_DAY",
+        rule: "R9 – Completeness",
+        severity: "error",
+        field: dayLabel,
+        field_value: "0 activities",
+        affected_item: dayLabel,
+        message: `${dayLabel} has no activities scheduled. Every day must have at least one activity.`,
+        action: `Add at least one activity to ${dayLabel}.`,
+      });
     }
 
     // ── Hoist slot totals so both R5 and R7 can share them ──────────────────
@@ -194,16 +174,17 @@ function runCodeChecks(days: any[]): { hard: CodeIssue[]; soft: CodeIssue[] } {
   return { hard, soft };
 }
 
-// ─── AI prompt (R3, R4, R6, R8, R10, R11 only) ────────────────────────────────
-// Only contextual rules that require real-world knowledge are sent to the model.
+// ─── AI prompt (R2, R3, R4, R6, R8, R10, R11, R12) ────────────────────────────
+// Contextual rules that require real-world and airport knowledge are sent to the model.
 
 function buildSystemPrompt(): string {
   return `You are a travel itinerary advisor for the Marketplace.
-Evaluate the package ONLY against the 7 contextual rules listed below.
+Evaluate the package ONLY against the contextual rules listed below.
 Be strict and consistent: the same input must always produce the same output.
 Return empty arrays when no issues are found — never invent problems.
 
 === CONTEXTUAL RULES ===
+- R2 (Airport Landing Transfer Buffer): When a flight arrives, identify the specific airport from the flight line or destination city (e.g. Tokyo Narita NRT vs Tokyo Haneda HND, JFK, CDG, LHR, SYD, etc.). Determine what would normally and realistically be the buffer time (in minutes) required after landing in THAT specific airport (accounting for international immigration/customs vs domestic, baggage claim, airport layout, and typical train/taxi/transfer transit time from that airport into the city center or first activity venue). Compare the flight arrival time with the start time of the first activity on that day. If the gap is less than the airport's required buffer time, flag as a hard error with error_code "SHORT_TRANSFER", rule "R2 – Transfer Time", stating the specific airport, the realistic buffer needed in minutes, and the calculated earliest feasible start time.
 - R3 (Opening Hours): Flag activities at venues commonly known to close early or have restricted hours (e.g. shrines close at dusk, some attractions close by 17:00).
 - R4 (Day Closure): Flag venues known to close on specific weekdays (e.g. many Japanese museums close Mondays).
 - R6 (Route Efficiency): Flag days where the sequence of activities requires excessive back-and-forth travel across the city.
@@ -218,7 +199,7 @@ Return ONLY a valid JSON object — no markdown, no explanation:
   "hard_errors": [
     {
       "error_code": "<SNAKE_CASE>",
-      "rule": "<R# \u2013 Rule Name>",
+      "rule": "<R# – Rule Name>",
       "severity": "error",
       "field": "<day/slot reference>",
       "field_value": "<relevant value>",
@@ -230,7 +211,7 @@ Return ONLY a valid JSON object — no markdown, no explanation:
   "soft_warnings": [
     {
       "error_code": "<SNAKE_CASE>",
-      "rule": "<R# \u2013 Rule Name>",
+      "rule": "<R# – Rule Name>",
       "severity": "warning",
       "field": "<day/slot reference>",
       "field_value": "<relevant value>",
@@ -242,7 +223,7 @@ Return ONLY a valid JSON object — no markdown, no explanation:
   "scores": {
     "grammar_score": <0.0-1.0, rate quality of activity descriptions>,
     "completeness_score": <0.0-1.0, rate how complete the itinerary feels>,
-    "feasibility_score": <0.0-1.0, based only on the 7 contextual rules above>,
+    "feasibility_score": <0.0-1.0, based only on the contextual rules above>,
     "illegal_act": <true only if an activity is clearly illegal or unethical, else false>
   },
   "summary": "<one sentence overview of the contextual check>"
@@ -264,6 +245,10 @@ function buildUserPrompt(pkg: any, days: any[]): string {
 
   for (const day of days) {
     lines.push(`  Day ${day.day_number}:`);
+    for (const flight of day.flights || []) {
+      const flightType = flight.flight_type ? ` (${flight.flight_type})` : "";
+      lines.push(`    [FLIGHT ARRIVAL @${flight.arrival_time}] ${flight.title}${flightType}`);
+    }
     for (const act of day.activities || []) {
       const desc = act.description ? ` | desc: ${act.description.slice(0, 60)}` : "";
       const startTime = act.start_time ? ` @${act.start_time}` : "";
@@ -450,12 +435,9 @@ export async function POST(req: NextRequest) {
     const systemPrompt = buildSystemPrompt();
     const userPrompt = buildUserPrompt(pkg, days);
 
-    //console.log("\n========== [AI VALIDATE] SENDING TO GEMINI ==========");
-    //console.log("--- SYSTEM PROMPT ---");
-    //console.log(systemPrompt);
-    //console.log("--- USER PROMPT ---");
-    //console.log(userPrompt);
-    //console.log("====================================================\n");
+    console.log("\n========== [AI VALIDATE] PROMPT SENT TO GEMINI ==========");
+    console.log(userPrompt);
+    console.log("=========================================================\n");
 
     const res = await fetch(GEMINI_URL, {
       method: "POST",
@@ -472,17 +454,17 @@ export async function POST(req: NextRequest) {
     });
 
     if (!res.ok) {
-      //console.warn(`Gemini API returned ${res.status}. Skipping AI contextual checks.`);
+      console.warn(`Gemini API returned ${res.status}. Skipping AI contextual checks.`);
     } else {
       try {
         const data = await res.json();
         const raw = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
         aiResult = JSON.parse(raw.replace(/```json|```/g, "").trim());
-        //console.log("\n========== [AI VALIDATE] GEMINI RESPONSE ==========");
-        //console.log(JSON.stringify(aiResult, null, 2));
-        //console.log("====================================================\n");
+        console.log("\n========== [AI VALIDATE] GEMINI RESPONSE ==========");
+        console.log(JSON.stringify(aiResult, null, 2));
+        console.log("===================================================\n");
       } catch {
-        //console.warn("Failed to parse Gemini response — AI checks skipped.");
+        console.warn("Failed to parse Gemini response — AI checks skipped.");
       }
     }
 
@@ -522,6 +504,7 @@ export async function POST(req: NextRequest) {
         (isFeasible ? "All checks passed." : "Issues found — review critical errors."),
       quality_score: qualityScore,
       can_publish: qualityScore >= 70 && isFeasible,
+      ai_response: aiResult,
     });
   } catch (err: any) {
     console.warn("Validation handler error:", err.message);

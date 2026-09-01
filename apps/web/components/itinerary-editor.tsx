@@ -9,7 +9,8 @@ type IconName = "plane" | "star" | "hotel" | "plus" | "alert" | "check" | "clock
 
 type TimelineItem = {
   id: number;
-  day_index: number;   // 0-based index of the day this item belongs to
+  dayIndex?: number;      // which day tab this belongs to (AI-generated items)
+  sourceId?: string;      // inventory id from Supabase — proves provenance
   time: string;
   type: string;
   title: string;
@@ -23,6 +24,26 @@ type TimelineItem = {
   duration?: string;
   notes?: string;
   photo?: string;
+};
+
+export type EditorDay = {
+  day: number;
+  count: number;
+  title: string;
+  meta: string;
+};
+
+export type EditorItem = Omit<TimelineItem, "status"> & {
+  status?: "critical" | "pass";
+};
+
+export type EditorState = {
+  packageTitle?: string;
+  days?: EditorDay[];
+  story?: string;
+  items?: (TimelineItem | EditorItem)[];
+  selectedHotel?: string;
+  packagePrice?: number;
 };
 
 type FeasibilityIssue = {
@@ -45,6 +66,7 @@ type FeasibilityResult = {
   summary: string;
   quality_score?: number;
   can_publish?: boolean;
+  ai_response?: any;
 };
 
 function timeToSlot(time: string): string {
@@ -73,16 +95,28 @@ const MIN_TRANSFER_GAP_MIN = 15; // minutes — minimum breathing room between c
 const LONG_ACTIVITY_MIN = 240;   // minutes — 4 hours
 
 const INITIAL_DAYS = [
-  { day: 1, count: 5, title: "Arrival & Shibuya Evening", meta: "Story · 3 photos" },
-  { day: 2, count: 3, title: "Traditional Tokyo", meta: "Culture · 4 stops" },
-  { day: 3, count: 1, title: "Mt. Fuji Day Trip", meta: "Nature · Full day" },
+  { day: 1, count: 4, title: "Arrival & Shibuya Evening", meta: "Story · 3 photos" },
+  { day: 2, count: 4, title: "Traditional Tokyo & Food Tour", meta: "Culture · 4 stops" },
+  { day: 3, count: 3, title: "Mt. Fuji Excursion & Departure", meta: "Nature & Flight · 3 stops" },
 ];
 
 const INITIAL_ITEMS: TimelineItem[] = annotateItems([
-  { id: 1, day_index: 0, time: "14:30", type: "FLIGHT", title: "International arrival at Tokyo Narita", price: "$850", icon: "plane" as IconName, status: "pass", duration: "75" },
-  { id: 2, day_index: 0, time: "14:40", type: "ACTIVITY", title: "Shibuya Crossing Quick Visit", price: "$180", icon: "star" as IconName, status: "pass", category: "Activity", address: "Shibuya Crossing, Tokyo", duration: "30", notes: "See the crossing from street level, then head upstairs for the city view.", photo: "https://images.unsplash.com/photo-1542051841857-5f90071e7989?w=240&h=180&fit=crop" },
-  { id: 3, day_index: 0, time: "17:30", type: "ACTIVITY", title: "Tokyo Tower Observatory visit", price: "$20", icon: "star" as IconName, status: "pass", category: "Attraction", address: "4 Chome-2-8 Shibakoen, Minato City, Tokyo", duration: "90", notes: "Arrive before sunset for daytime and evening views." },
-  { id: 4, day_index: 0, time: "19:30", type: "HOTEL", title: "Shibuya Excel Hotel Tokyu (2 nights)", price: "$720", icon: "hotel" as IconName, status: "pass" },
+  // Day 1
+  { id: 1, dayIndex: 0, time: "14:30", type: "FLIGHT", title: "International arrival at Tokyo Narita", price: "$850", icon: "plane" as IconName, status: "pass", duration: "75" },
+  { id: 2, dayIndex: 0, time: "17:00", type: "ACTIVITY", title: "Shibuya Crossing Quick Visit", price: "$180", icon: "star" as IconName, status: "pass", category: "Activity", address: "Shibuya Crossing, Tokyo", duration: "45", notes: "See the crossing from street level, then head upstairs for the city view.", photo: "https://images.unsplash.com/photo-1542051841857-5f90071e7989?w=240&h=180&fit=crop" },
+  { id: 3, dayIndex: 0, time: "18:30", type: "ACTIVITY", title: "Tokyo Tower Observatory visit", price: "$20", icon: "star" as IconName, status: "pass", category: "Attraction", address: "4 Chome-2-8 Shibakoen, Minato City, Tokyo", duration: "90", notes: "Arrive before sunset for daytime and evening views." },
+  { id: 4, dayIndex: 0, time: "20:30", type: "HOTEL", title: "Shibuya Excel Hotel Tokyu (2 nights)", price: "$720", icon: "hotel" as IconName, status: "pass" },
+
+  // Day 2
+  { id: 5, dayIndex: 1, time: "09:30", type: "ACTIVITY", title: "Senso-ji Temple & Asakusa Walking Tour", price: "$25", icon: "star" as IconName, status: "pass", category: "Attraction", address: "2 Chome-3-1 Asakusa, Taito City, Tokyo", duration: "90", notes: "Explore Tokyo's oldest Buddhist temple and stroll along Nakamise-dori shopping street.", photo: "https://images.unsplash.com/photo-1570077188670-e3a8d69ac5ff?w=240&h=180&fit=crop" },
+  { id: 6, dayIndex: 1, time: "12:00", type: "ACTIVITY", title: "Tsukiji Outer Market Street Food Tasting", price: "$45", icon: "star" as IconName, status: "pass", category: "Restaurant", address: "4 Chome-16-2 Tsukiji, Chuo City, Tokyo", duration: "75", notes: "Sample fresh sashimi, tamagoyaki, and grilled seafood skewers from local stalls." },
+  { id: 7, dayIndex: 1, time: "14:30", type: "ACTIVITY", title: "Meiji Jingu Shrine & Harajuku Culture Walk", price: "$15", icon: "star" as IconName, status: "pass", category: "Activity", address: "1-1 Yoyogikamizonocho, Shibuya City, Tokyo", duration: "90", notes: "Peaceful stroll through forested shrine grounds followed by vibrant Takeshita Street." },
+  { id: 8, dayIndex: 1, time: "18:00", type: "ACTIVITY", title: "Omoide Yokocho Retro Izakaya Dinner", price: "$55", icon: "star" as IconName, status: "pass", category: "Restaurant", address: "1 Chome-2 Nishishinjuku, Shinjuku City, Tokyo", duration: "90", notes: "Authentic yakitori skewers and craft drinks down Shinjuku's atmospheric lantern-lit alleyways." },
+
+  // Day 3
+  { id: 9, dayIndex: 2, time: "08:30", type: "ACTIVITY", title: "Mt. Fuji 5th Station & Lake Kawaguchiko Excursion", price: "$120", icon: "star" as IconName, status: "pass", category: "Activity", address: "Fujikawaguchiko, Minamitsuru District, Yamanashi", duration: "180", notes: "Scenic journey to Mt. Fuji with panoramic lakeside views and iconic photo stops.", photo: "https://images.unsplash.com/photo-1490806843957-31f4c9a91c65?w=240&h=180&fit=crop" },
+  { id: 10, dayIndex: 2, time: "13:00", type: "ACTIVITY", title: "Traditional Hoto Noodle Lunch & Sengen Shrine", price: "$30", icon: "star" as IconName, status: "pass", category: "Restaurant", address: "Arakura, Fujiyoshida, Yamanashi", duration: "60", notes: "Warm up with hearty Yamanashi flat udon noodles in rich miso broth with mountain vegetables." },
+  { id: 11, dayIndex: 2, time: "19:00", type: "FLIGHT", title: "Return flight from Tokyo Haneda (HND)", price: "$850", icon: "plane" as IconName, status: "pass", duration: "120", notes: "Evening departure back home from Haneda International Terminal." },
 ]);
 
 const AVAILABLE_FLIGHTS = [
@@ -154,7 +188,7 @@ function annotateItems(raw: TimelineItem[]): TimelineItem[] {
 
     // 2 & 3. Gap vs next item — only compare within the same day
     const next = raw[i + 1];
-    if (next && next.day_index === item.day_index) {
+    if (next && next.dayIndex === item.dayIndex) {
       const nextStartMin = toMinutes(next.time);
       const gapMin = nextStartMin - endMin;
 
@@ -196,14 +230,16 @@ function Panel({ title, children, className = "" }: { title: string; children: R
   return <section className={`editor-panel ${className}`}><h2>{title}</h2>{children}</section>;
 }
 
-function StatusToggle({ tone, count, label, expanded, onClick }: { tone: "critical" | "warning" | "pass"; count: number; label: string; expanded: boolean; onClick: () => void }) {
-  return <button className="status-toggle" aria-expanded={expanded} onClick={onClick}><span className={`${tone}-icon`}><Icon name={tone === "pass" ? "check" : "alert"} size={16} /></span><strong>{count}</strong><span>{label}</span><span className="status-chevron"><Icon name="chevron" size={17} /></span></button>;
+function StatusToggle({ tone, count, label, expanded, onClick }: { tone: "critical" | "warning" | "pass"; count?: number; label: string; expanded: boolean; onClick: () => void }) {
+  return <button className="status-toggle" aria-expanded={expanded} onClick={onClick}><span className={`${tone}-icon`}><Icon name={tone === "pass" ? "check" : "alert"} size={16} /></span>{count !== undefined && <strong>{count}</strong>}<span>{label}</span><span className="status-chevron"><Icon name="chevron" size={17} /></span></button>;
 }
 
-export default function ItineraryEditor({ onBack }: { onBack: () => void }) {
+export default function ItineraryEditor({ onBack, initialState }: { onBack: () => void; initialState?: EditorState | null }) {
   const nextItemId = useRef(1000);
-  const [packageTitle, setPackageTitle] = useState("Tokyo Food & Culture Experience");
-  const [titleDraft, setTitleDraft] = useState("Tokyo Food & Culture Experience");
+  // initialState is the AI result. Absent means manual build, so fall back
+  // to the demo defaults.
+  const [packageTitle, setPackageTitle] = useState(initialState?.packageTitle ?? "Tokyo Food & Culture Experience");
+  const [titleDraft, setTitleDraft] = useState(initialState?.packageTitle ?? "Tokyo Food & Culture Experience");
   const [editingTitle, setEditingTitle] = useState(false);
   const [destination] = useState("Tokyo");
   const [country] = useState("Japan");
@@ -212,14 +248,24 @@ export default function ItineraryEditor({ onBack }: { onBack: () => void }) {
   const [feasResult, setFeasResult] = useState<FeasibilityResult | null>(null);
   const [feasLoading, setFeasLoading] = useState(false);
   const [activeDay, setActiveDay] = useState(0);
-  const [days, setDays] = useState(INITIAL_DAYS);
-  const [story, setStory] = useState("");
-  const [items, setItems] = useState(INITIAL_ITEMS);
+  const [days, setDays] = useState(initialState?.days ?? INITIAL_DAYS);
+  const [story, setStory] = useState(initialState?.story ?? "");
+  const [items, setItems] = useState<TimelineItem[]>(
+    initialState?.items
+      ? annotateItems(
+        initialState.items.map((it) => ({
+          ...it,
+          dayIndex: it.dayIndex ?? 0,
+          status: "pass" as const,
+        }))
+      )
+      : INITIAL_ITEMS,
+  );
   const [saved, setSaved] = useState(false);
   const [published, setPublished] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
-  const [selectedHotel, setSelectedHotel] = useState("Shibuya Excel Hotel Tokyu");
-  const [packagePrice, setPackagePrice] = useState(1928);
+  const [selectedHotel, setSelectedHotel] = useState(initialState?.selectedHotel || "Shibuya Excel Hotel Tokyu");
+  const [packagePrice, setPackagePrice] = useState(initialState?.packagePrice ?? 1928);
   const [photos, setPhotos] = useState([
     { src: "https://images.unsplash.com/photo-1519501025264-65ba15a82390?w=720&h=720&fit=crop", alt: "Shibuya crossing at night" },
     { src: "https://images.unsplash.com/photo-1569718212165-3a8278d5f624?w=720&h=720&fit=crop", alt: "A bowl of Tokyo ramen" },
@@ -257,7 +303,7 @@ export default function ItineraryEditor({ onBack }: { onBack: () => void }) {
           day_number: day.day,
           // Flights on this day — used by R2 transfer-time check in route.ts
           flights: items
-            .filter((item) => item.day_index === dayIndex)
+            .filter((item) => (item.dayIndex ?? 0) === dayIndex)
             .filter((item) => item.type === "FLIGHT")
             .map((item) => ({
               arrival_time: item.time,
@@ -267,7 +313,7 @@ export default function ItineraryEditor({ onBack }: { onBack: () => void }) {
               title: item.title,
             })),
           activities: items
-            .filter((item) => item.day_index === dayIndex)
+            .filter((item) => (item.dayIndex ?? 0) === dayIndex)
             .filter((item) => item.type !== "FLIGHT" && item.type !== "HOTEL")
             .map((item) => ({
               activity_name: item.title,
@@ -293,7 +339,9 @@ export default function ItineraryEditor({ onBack }: { onBack: () => void }) {
         body: JSON.stringify(buildValidationPayload()),
       });
       if (res.ok) {
-        setFeasResult(await res.json());
+        const data = await res.json();
+        console.log("=== [AI VALIDATE CLIENT RESPONSE] ===", data);
+        setFeasResult(data);
       }
     } catch (err) {
       console.error("Failed to run feasibility check:", err);
@@ -363,10 +411,10 @@ export default function ItineraryEditor({ onBack }: { onBack: () => void }) {
     showNotice("Stop updated");
   };
 
-  const insertItem = (after: number, item: Omit<TimelineItem, "id" | "day_index">) => {
+  const insertItem = (after: number, item: Omit<TimelineItem, "id" | "dayIndex">) => {
     const next = [...items];
     nextItemId.current += 1;
-    next.splice(after + 1, 0, { ...item, id: nextItemId.current, day_index: activeDay });
+    next.splice(after + 1, 0, { ...item, id: nextItemId.current, dayIndex: activeDay });
     setItems(annotateItems(next));
     setAddingAfter(null);
     setAddFlow("type");
@@ -498,12 +546,24 @@ export default function ItineraryEditor({ onBack }: { onBack: () => void }) {
 
   const hardErrors = feasResult?.hard_errors ?? [];
   const softWarnings = feasResult?.soft_warnings ?? [];
+  const hasEmptyDay = Array.from({ length: days.length }).some((_, i) => !items.some((it) => (it.dayIndex ?? 0) === i));
+  const displayScore = hasEmptyDay ? 0 : feasResult?.quality_score;
+
   const isReadyToPublish = Boolean(
     feasResult &&
-    (feasResult.quality_score ?? 0) >= 70 &&
+    (displayScore ?? 0) >= 70 &&
     hardErrors.length === 0 &&
     feasResult.is_feasible
   );
+
+  // Items carry dayIndex only when they came from the AI. Manual/demo items
+  // have none, so show everything in that case (preserves old behaviour).
+  // Pair each item with its ORIGINAL index — delete, drag and insert all
+  // index into the full items[] array.
+  const hasDayTags = items.some((item) => item.dayIndex !== undefined);
+  const visibleItems = items
+    .map((item, index) => ({ item, index }))
+    .filter(({ item }) => !hasDayTags || (item.dayIndex ?? 0) === activeDay);
 
   return (
     <main className="itinerary-editor">
@@ -550,7 +610,7 @@ export default function ItineraryEditor({ onBack }: { onBack: () => void }) {
           <section className="timeline-section">
             <h3>Timeline</h3>
             <div className="timeline-list">
-              {items.filter((item) => item.day_index === activeDay).map((item, index) => <div key={item.id} className={`timeline-group ${addingAfter === index ? "adding" : ""} ${dropTarget?.index === index ? `drop-${dropTarget.position}` : ""}`} onDragOver={(event) => { event.preventDefault(); if (draggedItemId === item.id) return; const rect = event.currentTarget.getBoundingClientRect(); setDropTarget({ index, position: event.clientY < rect.top + rect.height / 2 ? "before" : "after" }); }} onDrop={(event) => { event.preventDefault(); dropItem(); endDrag(); }}>
+              {visibleItems.map(({ item, index }) => <div key={item.id} className={`timeline-group ${addingAfter === index ? "adding" : ""} ${dropTarget?.index === index ? `drop-${dropTarget.position}` : ""}`} onDragOver={(event) => { event.preventDefault(); if (draggedItemId === item.id) return; const rect = event.currentTarget.getBoundingClientRect(); setDropTarget({ index, position: event.clientY < rect.top + rect.height / 2 ? "before" : "after" }); }} onDrop={(event) => { event.preventDefault(); dropItem(); endDrag(); }}>
                 <article className={`timeline-item ${item.status} ${draggedItemId === item.id ? "dragging" : ""} ${item.type !== "FLIGHT" && item.type !== "HOTEL" ? "editable" : ""} ${editingItem?.id === item.id ? "expanded" : ""}`} onClick={(event) => { if (item.type === "FLIGHT" || item.type === "HOTEL" || (event.target as HTMLElement).closest("button")) return; startEditingItem(item); }} onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && item.type !== "FLIGHT" && item.type !== "HOTEL" && !(event.target as HTMLElement).closest("button")) { event.preventDefault(); startEditingItem(item); } }} tabIndex={item.type !== "FLIGHT" && item.type !== "HOTEL" ? 0 : undefined} role={item.type !== "FLIGHT" && item.type !== "HOTEL" ? "button" : undefined} aria-expanded={item.type !== "FLIGHT" && item.type !== "HOTEL" ? editingItem?.id === item.id : undefined}>
                   <button className="drag-handle" draggable aria-label={`Move ${item.title}. Use drag and drop, or the up and down arrow keys.`} onDragStart={(event) => { setEditingItem(null); setDraggedItemId(item.id); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", String(item.id)); }} onDragEnd={endDrag} onKeyDown={(event) => { if (event.key === "ArrowUp") { event.preventDefault(); moveItem(index, index - 1); } if (event.key === "ArrowDown") { event.preventDefault(); moveItem(index, index + 1); } }}><span /><span /><span /><span /><span /><span /></button>
                   <div className="item-time"><Icon name={item.icon} /><strong>{item.time}</strong></div>
@@ -668,9 +728,9 @@ export default function ItineraryEditor({ onBack }: { onBack: () => void }) {
 
         <aside className="editor-sidebar">
           <Panel title="Package quality" className="quality-panel">
-            <div className="quality-score"><strong>{feasResult?.quality_score !== undefined ? feasResult.quality_score : "(-)"}</strong><span>/100</span></div>
-            <div className="score-track" role="meter" aria-label={feasResult?.quality_score !== undefined ? `Package quality score, ${feasResult.quality_score} out of 100. Minimum score to publish is 70.` : "Package quality score not yet checked. Minimum score to publish is 70."} aria-valuemin={0} aria-valuemax={100} aria-valuenow={feasResult?.quality_score ?? 0}>
-              <span className="score-fill" style={{ width: feasResult?.quality_score !== undefined ? `${Math.min(100, Math.max(0, feasResult.quality_score))}%` : "0%" }} />
+            <div className="quality-score"><strong>{displayScore !== undefined ? displayScore : "(-)"}</strong><span>/100</span></div>
+            <div className="score-track" role="meter" aria-label={displayScore !== undefined ? `Package quality score, ${displayScore} out of 100. Minimum score to publish is 70.` : "Package quality score not yet checked. Minimum score to publish is 70."} aria-valuemin={0} aria-valuemax={100} aria-valuenow={displayScore ?? 0}>
+              <span className="score-fill" style={{ width: displayScore !== undefined ? `${Math.min(100, Math.max(0, displayScore))}%` : "0%" }} />
               <i aria-hidden="true" />
               <span className="score-threshold" aria-label="Minimum publish score is 70"><small>Minimum publish score:</small><strong>70</strong></span>
             </div>
@@ -725,7 +785,7 @@ export default function ItineraryEditor({ onBack }: { onBack: () => void }) {
               ))}
               {softWarnings.length === 0 && <p style={{ padding: "8px", fontSize: "0.85rem", color: "#6b7280" }}>No suggestions.</p>}
             </div>}
-            <StatusToggle tone="pass" count={feasResult ? Math.max(0, 11 - hardErrors.length - softWarnings.length) : 0} label="Passed" expanded={expandedFeasibility === "passed"} onClick={() => setExpandedFeasibility(expandedFeasibility === "passed" ? null : "passed")} />
+            <StatusToggle tone="pass" label="Passed" expanded={expandedFeasibility === "passed"} onClick={() => setExpandedFeasibility(expandedFeasibility === "passed" ? null : "passed")} />
             {expandedFeasibility === "passed" && <ul className="passed-details"><li><Icon name="check" size={15} />Daily schedule has a clear start and end</li><li><Icon name="check" size={15} />All stops have pricing</li><li><Icon name="check" size={15} />Accommodation is included</li><li><Icon name="check" size={15} />Required package photos are uploaded</li></ul>}
           </Panel>
           <Panel title="Pricing & earnings" className="pricing-panel"><span>Total package price</span><strong>${packagePrice.toLocaleString()}</strong><hr /><span>Your commission (20%)</span><strong className="commission">${Math.round(packagePrice * .2).toLocaleString()}</strong><small>Est. 5–8 bookings/month</small><button onClick={() => { const next = window.prompt("Set total package price", String(packagePrice)); if (next && Number(next) > 0) setPackagePrice(Number(next)); }}>Adjust pricing</button></Panel>
