@@ -147,6 +147,7 @@ DETAIL_ROW = {
             "hotel_id": "h1",
             "check_in_date": "2026-03-01",
             "check_out_date": "2026-03-04",
+            "nights": 3,
             "hotels": {
                 "hotel_name": "Shibuya Inn",
                 "star_rating": 4,
@@ -393,6 +394,13 @@ def test_get_detail(fake):
     assert body["flights"][0]["origin_iata"] == "SYD"
     assert body["latest_approval"] is None
     assert body["cover_image_url"] == "https://img/1.jpg"
+    assert body["pricing"] == {
+        "flights_total": 1200,
+        "hotels_total": 600,  # 200/night × 3 nights
+        "activities_total": 90,
+        "components_total": 1890,
+        "base_price_aud": 2999,
+    }
     call = fake.find("GET", "travel_packages")[0]
     assert call["headers"]["Authorization"] == USER_HEADERS["Authorization"]
     assert call["params"]["creator_id"] == "eq." + UID

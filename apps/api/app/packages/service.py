@@ -11,8 +11,8 @@ from app.core import _admin_headers
 
 logger = logging.getLogger(__name__)
 
-# Every PostgREST call in the packages feature lives in this module, so tests
-# only have to stub `app.packages.service.requests`.
+# Every PostgREST call for package rows lives in this module (including the
+# public marketplace detail), so tests only stub `app.packages.service.requests`.
 
 # Nested PostgREST embed for the marketplace detail page. Ordering is
 # done by PostgREST (order= params), not in Python. influencer_profiles
@@ -106,6 +106,14 @@ def list_packages(headers, uid, page, per_page, status, sort):
     return rows, meta
 
 
+_DETAIL_ORDER_PARAMS = {
+    "package_media.order": "is_cover.desc,sort_order.asc",
+    "package_days.order": "day_number.asc",
+    "package_flights.order": "day_number.asc,sequence_order.asc",
+    "package_activities.order": "day_number.asc,sequence_order.asc",
+}
+
+
 def get_package_detail(package_id, headers, uid):
     response = _call(
         "get",
@@ -114,12 +122,28 @@ def get_package_detail(package_id, headers, uid):
             "package_id": f"eq.{package_id}",
             "creator_id": f"eq.{uid}",
             "select": _DETAIL_SELECT,
-            "package_media.order": "is_cover.desc,sort_order.asc",
-            "package_days.order": "day_number.asc",
-            "package_flights.order": "day_number.asc,sequence_order.asc",
-            "package_activities.order": "day_number.asc,sequence_order.asc",
+            **_DETAIL_ORDER_PARAMS,
         },
         headers=headers,
+    )
+    rows = response.json()
+    return _to_detail(rows[0]) if rows else None
+
+
+def get_public_package_detail(package_id):
+    """Anon-key detail lookup; RLS limits visibility to live packages."""
+    response = _call(
+        "get",
+        "travel_packages",
+        params={
+            "package_id": f"eq.{package_id}",
+            "select": _DETAIL_SELECT,
+            **_DETAIL_ORDER_PARAMS,
+        },
+        headers={
+            "apikey": core.SUPABASE_ANON_KEY,
+            "Authorization": f"Bearer {core.SUPABASE_ANON_KEY}",
+        },
     )
     rows = response.json()
     return _to_detail(rows[0]) if rows else None
@@ -145,6 +169,7 @@ def _to_detail(row):
         }
         for i, pf in enumerate(row.pop("package_flights", []) or [])
     ]
+    package_hotels = row.pop("package_hotels", []) or []
     row["hotels"] = [
         {
             "hotel_id": ph.get("hotel_id"),
@@ -158,7 +183,7 @@ def _to_detail(row):
             "price_per_night_aud": (ph.get("hotels") or {}).get("price_per_night_aud"),
             "room_type": (ph.get("hotels") or {}).get("room_type"),
         }
-        for i, ph in enumerate(row.pop("package_hotels", []) or [])
+        for i, ph in enumerate(package_hotels)
     ]
     row["activities"] = [
         {
@@ -174,6 +199,23 @@ def _to_detail(row):
         }
         for i, pa in enumerate(row.pop("package_activities", []) or [])
     ]
+    # Informational breakdown from catalog prices; null prices count as 0.
+    # base_price_aud stays the creator-set display price — the API asserts
+    # nothing about which total is "the" price.
+    flights_total = sum(f["price_aud"] or 0 for f in row["flights"])
+    hotels_total = sum(
+        ((ph.get("hotels") or {}).get("price_per_night_aud") or 0)
+        * (ph.get("nights") or 0)
+        for ph in package_hotels
+    )
+    activities_total = sum(a["price_aud"] or 0 for a in row["activities"])
+    row["pricing"] = {
+        "flights_total": flights_total,
+        "hotels_total": hotels_total,
+        "activities_total": activities_total,
+        "components_total": flights_total + hotels_total + activities_total,
+        "base_price_aud": row.get("base_price_aud"),
+    }
     row["cover_image_url"] = _cover_url(row["media"])
     # ponytail: approvals RLS is admin-only, wire when the approvals feature lands.
     row["latest_approval"] = None

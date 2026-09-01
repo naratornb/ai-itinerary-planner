@@ -1,0 +1,186 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Public Package Detail Request",
+    "quality_profile": "showcase",
+    "column_fit": "spread",
+    "viewBox": [
+      1080,
+      480
+    ]
+  },
+  "participants": [
+    {
+      "id": "client",
+      "type": "external",
+      "label": "Client",
+      "sublabel": "web / Bruno"
+    },
+    {
+      "id": "router",
+      "type": "backend",
+      "label": "Marketplace Router",
+      "sublabel": "FastAPI",
+      "brand": "fastapi"
+    },
+    {
+      "id": "pkgsvc",
+      "type": "backend",
+      "label": "Packages Service",
+      "sublabel": "detail lookup"
+    },
+    {
+      "id": "postgrest",
+      "type": "cloud",
+      "label": "Supabase PostgREST",
+      "sublabel": "/rest/v1",
+      "brand": "supabase"
+    },
+    {
+      "id": "db",
+      "type": "database",
+      "label": "Postgres",
+      "sublabel": "RLS enforced",
+      "brand": "postgresql"
+    }
+  ],
+  "segments": [
+    {
+      "from": 152,
+      "to": 200,
+      "label": "Request"
+    },
+    {
+      "from": 212,
+      "to": 318,
+      "label": "Anon fetch under RLS"
+    },
+    {
+      "from": 328,
+      "to": 412,
+      "label": "Respond"
+    }
+  ],
+  "messages": [
+    {
+      "from": "client",
+      "to": "router",
+      "y": 160,
+      "label": "GET /marketplace/packages/{id}",
+      "variant": "emphasis"
+    },
+    {
+      "from": "router",
+      "to": "pkgsvc",
+      "y": 188,
+      "label": "get_public_package_detail(id)",
+      "note": "500 first if anon credentials are missing"
+    },
+    {
+      "from": "pkgsvc",
+      "to": "postgrest",
+      "y": 222,
+      "label": "GET travel_packages, anon key + embed select",
+      "variant": "security"
+    },
+    {
+      "from": "postgrest",
+      "to": "db",
+      "y": 250,
+      "label": "query with anon-role RLS"
+    },
+    {
+      "from": "db",
+      "to": "postgrest",
+      "y": 278,
+      "label": "live rows only",
+      "variant": "return",
+      "note": "drafts filtered out, so they look nonexistent"
+    },
+    {
+      "from": "postgrest",
+      "to": "pkgsvc",
+      "y": 306,
+      "label": "row + nested embeds",
+      "variant": "return"
+    },
+    {
+      "from": "pkgsvc",
+      "to": "router",
+      "y": 338,
+      "label": "TravelPackageDetail or None",
+      "variant": "return",
+      "note": "_to_detail flattens media, days, flights, hotels, activities"
+    },
+    {
+      "from": "router",
+      "to": "client",
+      "y": 367,
+      "label": "404 PACKAGE_NOT_FOUND when None",
+      "variant": "dashed"
+    },
+    {
+      "from": "router",
+      "to": "client",
+      "y": 396,
+      "label": "200 TravelPackageDetail",
+      "variant": "return"
+    }
+  ],
+  "activations": [
+    {
+      "participant": "router",
+      "from": 154,
+      "to": 404,
+      "type": "backend"
+    },
+    {
+      "participant": "pkgsvc",
+      "from": 180,
+      "to": 346,
+      "type": "backend"
+    },
+    {
+      "participant": "postgrest",
+      "from": 214,
+      "to": 314,
+      "type": "cloud"
+    },
+    {
+      "participant": "db",
+      "from": 242,
+      "to": 286,
+      "type": "database"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Public By Design",
+      "items": [
+        "No user auth on this route",
+        "The Supabase anon key is the caller identity",
+        "Row Level Security is the only visibility gate"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Drafts Stay Hidden",
+      "items": [
+        "RLS returns only live packages to the anon role",
+        "A draft id and a bogus id both yield 404",
+        "Existence of unpublished work never leaks"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "One Query, Full Detail",
+      "items": [
+        "PostgREST embeds media, days, flights, hotels, activities",
+        "_to_detail flattens junction rows into flat detail shapes",
+        "Response is validated against TravelPackageDetail"
+      ]
+    }
+  ]
+}

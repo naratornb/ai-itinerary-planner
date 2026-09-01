@@ -264,12 +264,15 @@ components:
           example: "10-Day Bali Escape: Culture, Surf & Cuisine"
         destination_country:
           type: string
+          nullable: true
           example: "Indonesia"
         destination_city:
           type: string
+          nullable: true
           example: "Bali"
         duration_days:
           type: integer
+          nullable: true
           example: 10
         base_price_aud:
           type: integer
@@ -303,6 +306,7 @@ components:
           properties:
             description:
               type: string
+              nullable: true
             max_group_size:
               type: integer
               nullable: true
@@ -337,6 +341,35 @@ components:
             latest_approval:
               $ref: '#/components/schemas/ApprovalRecord'
               nullable: true
+            pricing:
+              $ref: '#/components/schemas/Pricing'
+              nullable: true
+
+    Pricing:
+      type: object
+      description: |
+        Informational price breakdown computed from the package's itinerary
+        components (null component prices and null hotel nights count as 0).
+        `base_price_aud` is the
+        creator-set display price and may differ from `components_total`; the
+        API asserts nothing about which is authoritative.
+      properties:
+        flights_total:
+          type: integer
+          description: Sum of flight prices in whole AUD.
+        hotels_total:
+          type: integer
+          description: Sum of price-per-night × nights across hotels, whole AUD.
+        activities_total:
+          type: integer
+          description: Sum of activity prices in whole AUD.
+        components_total:
+          type: integer
+          description: flights_total + hotels_total + activities_total.
+        base_price_aud:
+          type: integer
+          nullable: true
+          description: The package's creator-set display price, repeated for convenience.
 
     PackageStatus:
       type: string
@@ -787,12 +820,15 @@ components:
           example: "10-Day Bali Escape: Culture, Surf & Cuisine"
         destination_country:
           type: string
+          nullable: true
           example: "Indonesia"
         destination_city:
           type: string
+          nullable: true
           example: "Bali"
         duration_days:
           type: integer
+          nullable: true
           example: 10
         base_price_aud:
           type: integer
