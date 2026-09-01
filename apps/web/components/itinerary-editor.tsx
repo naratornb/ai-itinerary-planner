@@ -93,6 +93,14 @@ export default function ItineraryEditor({ onBack }: { onBack: () => void }) {
     { src: "https://images.unsplash.com/photo-1569718212165-3a8278d5f624?w=720&h=720&fit=crop", alt: "A bowl of Tokyo ramen" },
     { src: "https://images.unsplash.com/photo-1532236204992-f5e85c024202?w=720&h=720&fit=crop", alt: "Tokyo Tower illuminated at dusk" },
   ]);
+  const toSafeImageSrc = (value: string) => {
+    try {
+      const url = new URL(value, window.location.origin);
+      return ["https:", "http:", "blob:"].includes(url.protocol) ? url.href : "";
+    } catch {
+      return "";
+    }
+  };
   const [notice, setNotice] = useState("");
   const [pendingDeleteDay, setPendingDeleteDay] = useState<number | null>(null);
   const [addingAfter, setAddingAfter] = useState<number | null>(null);
@@ -319,7 +327,7 @@ export default function ItineraryEditor({ onBack }: { onBack: () => void }) {
           <section className="story-section">
             <div className="section-label"><h3>Tell your story</h3><span>3 uploaded</span></div>
             <div className="photo-grid">
-              {photos.map((photo) => <img key={photo.src} src={photo.src} alt={photo.alt} />)}
+              {photos.map((photo) => <img key={photo.src} src={toSafeImageSrc(photo.src)} alt={photo.alt} />)}
               <label className="photo-add"><input type="file" accept="image/png,image/jpeg" onChange={(event) => { const file = event.target.files?.[0]; if (!file) return; setPhotos([...photos, { src: URL.createObjectURL(file), alt: file.name }]); showNotice("Photo uploaded"); }} /><Icon name="plus" size={30} /><span>Add photo</span><small>JPG or PNG</small></label>
             </div>
           </section>
