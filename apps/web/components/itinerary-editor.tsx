@@ -102,6 +102,7 @@ export default function ItineraryEditor({ onBack }: { onBack: () => void }) {
     }
   };
   const [notice, setNotice] = useState("");
+  const [isGeneratingStory, setIsGeneratingStory] = useState(false);
   const [pendingDeleteDay, setPendingDeleteDay] = useState<number | null>(null);
   const [addingAfter, setAddingAfter] = useState<number | null>(null);
   const [draggedItemId, setDraggedItemId] = useState<number | null>(null);
@@ -129,6 +130,43 @@ export default function ItineraryEditor({ onBack }: { onBack: () => void }) {
   const showNotice = (message: string) => {
     setNotice(message);
     window.setTimeout(() => setNotice(""), 2400);
+  };
+
+  const generateContent = async () => {
+    if (isGeneratingStory) return;
+    setIsGeneratingStory(true);
+    try {
+      const activityNames = items
+        .filter((item) => item.type !== "FLIGHT" && item.type !== "HOTEL")
+        .map((item) => (item.notes ? `${item.title} (${item.notes})` : item.title));
+
+      const res = await fetch("/api/ai/generate-content", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          packageTitle,
+          destination: "Tokyo, Japan",
+          selectedHotel,
+          dayNumber: activeDay + 1,
+          dayTitle: days[activeDay]?.title || `Day ${activeDay + 1}`,
+          items: activityNames,
+          vibe: days[activeDay]?.meta || "Culture & Culinary exploration",
+        }),
+      });
+
+      const data = await res.json();
+      if (data.listing) {
+        setStory(data.listing);
+        showNotice("Story generated with Gemini AI!");
+      } else if (data.error) {
+        showNotice(data.error);
+      }
+    } catch (err) {
+      console.error("Failed to generate story:", err);
+      showNotice("Failed to connect to AI generator");
+    } finally {
+      setIsGeneratingStory(false);
+    }
   };
 
   const savePackageTitle = () => {
@@ -333,7 +371,20 @@ export default function ItineraryEditor({ onBack }: { onBack: () => void }) {
           </section>
 
           <section className="story-copy">
-            <div className="section-label"><h3>Your story</h3><button className="ai-button" onClick={() => setStory("Start in the electric heart of Tokyo, then slow down over a steaming bowl of ramen before watching the city glow from Tokyo Tower.")}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m12 3 1.2 3.8L17 8l-3.8 1.2L12 13l-1.2-3.8L7 8l3.8-1.2zM18 14l.8 2.2L21 17l-2.2.8L18 20l-.8-2.2L15 17l2.2-.8z" /></svg> AI write for me</button></div>
+            <div className="section-label">
+              <h3>Your story</h3>
+              <button
+                className="ai-button"
+                disabled={isGeneratingStory}
+                onClick={generateContent}
+                aria-label="Generate story with AI"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="m12 3 1.2 3.8L17 8l-3.8 1.2L12 13l-1.2-3.8L7 8l3.8-1.2zM18 14l.8 2.2L21 17l-2.2.8L18 20l-.8-2.2L15 17l2.2-.8z" />
+                </svg>
+                {isGeneratingStory ? "Generating story…" : "AI write for me"}
+              </button>
+            </div>
             <textarea value={story} onChange={(event) => setStory(event.target.value)} placeholder="Share your insider tips and personal recommendations…" aria-label="Your story" />
           </section>
 
