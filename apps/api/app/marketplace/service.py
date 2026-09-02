@@ -10,7 +10,8 @@ from app.packages.service import UpstreamError, _cover_url
 logger = logging.getLogger(__name__)
 
 # Every PostgREST call for the marketplace listing/search lives here, so tests
-# only have to stub `app.marketplace.service.requests`.
+# only have to stub `app.marketplace.service.requests`. The detail endpoint
+# reuses app.packages.service (stub that module's requests instead).
 
 _LIST_SELECT = (
     "package_id,title,destination_country,destination_city,duration_days,"
