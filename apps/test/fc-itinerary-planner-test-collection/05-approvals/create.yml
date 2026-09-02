@@ -1,0 +1,83 @@
+info:
+  name: create
+  type: http
+  seq: 3
+
+http:
+  method: POST
+  url: "{{host-api}}/packages"
+  headers:
+    - name: content-type
+      value: application/json
+    - name: accept
+      value: application/json
+  auth:
+    type: bearer
+    token: "{{access-token}}"
+  body:
+    type: json
+    data: |-
+      {
+        "title": "Smoke Test",
+        "description": "Automated smoke test draft package.",
+        "destination_country": "Japan",
+        "destination_city": "Tokyo",
+        "duration_days": 5,
+        "base_price_aud": 2500,
+        "max_group_size": 4,
+        "tags": ["smoke"],
+        "flights": [
+          {
+            "origin_iata": "SYD",
+            "destination_iata": "HND",
+            "airline": "QF",
+            "flight_number": "QF25",
+            "departure_datetime": "2026-06-01T09:00:00+00:00",
+            "arrival_datetime": "2026-06-01T18:00:00+00:00",
+            "cabin_class": "economy",
+            "price_aud": 1200
+          }
+        ],
+        "hotels": [
+          {
+            "hotel_name": "Smoke Inn",
+            "star_rating": 4,
+            "city": "Tokyo",
+            "check_in_date": "2026-06-01",
+            "check_out_date": "2026-06-04",
+            "price_per_night_aud": 200,
+            "room_type": "double"
+          }
+        ],
+        "activities": [
+          {
+            "activity_name": "Smoke Tour",
+            "activity_date": "2026-06-02",
+            "city": "Tokyo",
+            "duration_hours": 3,
+            "price_aud": 90,
+            "booking_required": true
+          }
+        ]
+      }
+
+runtime:
+  assertions:
+    - expression: res.status
+      operator: eq
+      value: "201"
+  scripts:
+    - type: tests
+      code: |-
+        test("creates a draft package for the approval flow", function() {
+          expect(res.body.status).to.equal("draft");
+        });
+    - type: after-response
+      code: |-
+        bru.setVar("approvals-package-id", res.body.package_id);
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

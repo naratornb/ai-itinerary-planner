@@ -1,0 +1,34 @@
+info:
+  name: list
+  type: http
+  seq: 4
+
+http:
+  method: GET
+  url: "{{host-api}}/ai/suggestions/{{ai-package-id}}"
+  headers:
+    - name: accept
+      value: application/json
+  auth:
+    type: bearer
+    token: "{{access-token}}"
+
+runtime:
+  assertions:
+    - expression: res.status
+      operator: eq
+      value: "200"
+  scripts:
+    - type: tests
+      code: |-
+        test("lists both suggestions for the draft", function() {
+          expect(res.body.data).to.be.an("array");
+          expect(res.body.data.length).to.be.at.least(2);
+          expect(res.body.meta).to.be.an("object");
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

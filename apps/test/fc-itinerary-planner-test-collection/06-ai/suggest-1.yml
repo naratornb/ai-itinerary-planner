@@ -1,0 +1,45 @@
+info:
+  name: suggest-1
+  type: http
+  seq: 2
+
+http:
+  method: POST
+  url: "{{host-api}}/ai/suggest"
+  headers:
+    - name: content-type
+      value: application/json
+    - name: accept
+      value: application/json
+  auth:
+    type: bearer
+    token: "{{access-token}}"
+  body:
+    type: json
+    data: |-
+      {
+        "package_id": "{{ai-package-id}}",
+        "prompt": "Suggest a three day food itinerary for Tokyo."
+      }
+
+runtime:
+  assertions:
+    - expression: res.status
+      operator: eq
+      value: "201"
+  scripts:
+    - type: tests
+      code: |-
+        test("returns a pending suggestion with text", function() {
+          expect(res.body.status).to.equal("pending");
+          expect(res.body.suggestion_text).to.be.a("string").and.not.be.empty;
+        });
+    - type: after-response
+      code: |-
+        bru.setVar("suggestion-1-id", res.body.suggestion_id);
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

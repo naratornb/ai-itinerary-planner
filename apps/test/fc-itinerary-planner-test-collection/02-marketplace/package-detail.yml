@@ -24,6 +24,17 @@ runtime:
             expect(res.body[key]).to.be.an("array");
           });
         });
+        test("pricing breakdown is present and consistent", function() {
+          var p = res.body.pricing;
+          expect(p).to.be.an("object");
+          ["flights_total", "hotels_total", "activities_total", "components_total"].forEach(function(key) {
+            expect(p[key]).to.be.a("number");
+          });
+          expect(p.components_total).to.equal(p.flights_total + p.hotels_total + p.activities_total);
+          // Seeded package has priced components; 0 here means the sums broke
+          expect(p.hotels_total).to.be.greaterThan(0);
+          expect(p.components_total).to.be.greaterThan(0);
+        });
 settings:
   encodeUrl: true
   timeout: 0

@@ -6,15 +6,22 @@
 
 -- ─────────────────────────────────────────────
 -- 1. search_tsv — weighted document per package.
---    All inputs are IMMUTABLE (to_tsvector with an explicit
---    regconfig, array_to_string on text[]), so the column can
---    be GENERATED ... STORED.
+--    Generated columns require IMMUTABLE expressions.
+--    to_tsvector with an explicit regconfig qualifies, but
+--    array_to_string(text[], text) is only STABLE in Postgres,
+--    so it goes through an explicitly IMMUTABLE wrapper (safe:
+--    its output depends only on its inputs for text[]).
 -- ─────────────────────────────────────────────
+CREATE FUNCTION public.immutable_array_to_string(arr TEXT[], sep TEXT)
+RETURNS TEXT
+LANGUAGE sql IMMUTABLE PARALLEL SAFE
+AS $$ SELECT array_to_string(arr, sep) $$;
+
 ALTER TABLE public.travel_packages ADD COLUMN search_tsv tsvector
   GENERATED ALWAYS AS (
     setweight(to_tsvector('english', coalesce(title, '')), 'A') ||
     setweight(to_tsvector('english', coalesce(destination_city, '')), 'B') ||
-    setweight(to_tsvector('english', coalesce(array_to_string(tags, ' '), '')), 'B') ||
+    setweight(to_tsvector('english', coalesce(public.immutable_array_to_string(tags, ' '), '')), 'B') ||
     setweight(to_tsvector('english', coalesce(description, '')), 'C')
   ) STORED;
 
