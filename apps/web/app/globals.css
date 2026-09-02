@@ -453,13 +453,15 @@ button:focus-visible, textarea:focus-visible { outline: 3px solid var(--fc-focus
 .quality-score strong { color: var(--fc-success); font-size: 32px; line-height: 1; font-variant-numeric: tabular-nums; }
 .quality-score span { color: var(--fc-secondary); font-size: 14px; line-height: 20px; }
 .score-track { position: relative; height: 8px; margin-top: 20px; border-radius: 999px; background: var(--fc-border); }
-.score-fill { display: block; width: 78%; height: 100%; border-radius: inherit; background: var(--fc-success); }
+.score-fill { display: block; width: 0%; height: 100%; border-radius: inherit; background: var(--fc-success); transition: width 300ms ease-out; }
 .score-track > i { position: absolute; left: 70%; top: -4px; width: 2px; height: 16px; border: 2px solid #fff; background: var(--fc-ink); box-sizing: content-box; }
 .score-threshold { position: absolute; left: 70%; top: 17px; width: max-content; transform: translateX(-50%); display: flex; align-items: baseline; gap: 4px; color: var(--fc-secondary); font-size: 12px; line-height: 16px; white-space: nowrap; }
 .score-threshold strong { color: var(--fc-ink); font-size: 13px; line-height: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
-.score-threshold small { font-size: 12px; line-height: 16px; }
-.quality-meta { margin-top: 42px; padding-top: 16px; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; border-top: 1px solid var(--fc-border); color: var(--fc-secondary); font-size: 12px; line-height: 16px; }
+.quality-meta { margin-top: 42px; padding-top: 16px; display: flex; flex-direction: row; justify-content: space-between; align-items: center; gap: 8px; border-top: 1px solid var(--fc-border); color: var(--fc-secondary); font-size: 12px; line-height: 16px; }
 .quality-meta strong { display: inline-flex; align-items: center; gap: 6px; color: var(--fc-success); font-size: 14px; line-height: 20px; white-space: nowrap; }
+.quality-meta strong.warning { color: var(--fc-warning); }
+.quality-meta strong.warning svg { color: var(--fc-warning); }
+.check-content-button { min-height: 36px; padding: 0 14px; font-size: 13px; }
 .status-panel .status-toggle { width: 100%; min-height: 64px; padding: 0 16px; display: grid; grid-template-columns: 24px 26px 1fr 24px; align-items: center; gap: 9px; border: 0; border-bottom: 1px solid var(--fc-border); background: #fff; color: var(--fc-secondary); font-size: 15px; line-height: 22px; text-align: left; cursor: pointer; }
 .status-panel .status-toggle strong { color: var(--fc-ink); font-size: 16px; line-height: 22px; font-weight: 700; }
 .status-panel .status-toggle > span:nth-child(3) { color: var(--fc-ink); font-size: 15px; line-height: 22px; font-weight: 650; }
