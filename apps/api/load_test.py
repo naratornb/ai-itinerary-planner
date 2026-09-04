@@ -7,7 +7,7 @@ from ai.llm_provider import call_llm
 load_dotenv(".env")
 
 
-def test_one_request(request_id):
+def one_request(request_id):
     start = time.perf_counter()
 
     try:
@@ -48,7 +48,7 @@ def run_test(concurrency):
 
     with ThreadPoolExecutor(max_workers=concurrency) as executor:
         futures = [
-            executor.submit(test_one_request, i + 1)
+            executor.submit(one_request, i + 1)
             for i in range(concurrency)
         ]
 
