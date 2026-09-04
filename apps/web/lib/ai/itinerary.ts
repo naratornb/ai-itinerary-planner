@@ -43,6 +43,7 @@ export type EngineActivity = {
   activity_id: string; activity_name: string; category: string;
   start_time: string; duration_hours: number;
   price_aud: number; rating: number; notes: string;
+  address?: string;          // district + city; blank when inventory has none
 };
 
 export type EngineDay = {
@@ -196,6 +197,7 @@ export function mapItineraryToEditor(res: ItineraryResponse): EditorState {
         price: money(act.price_aud),
         category: act.category,
         duration: String(Math.round((act.duration_hours || 1) * 60)),
+        address: act.address ?? "",
         notes: act.notes,
         sourceId: act.activity_id,          // AC-xxx-nnn — traceable to the DB
       });

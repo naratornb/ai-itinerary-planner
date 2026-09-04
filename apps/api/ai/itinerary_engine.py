@@ -44,6 +44,7 @@ Those are calculated deterministically by this file.
 import json
 import os
 import re
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -72,7 +73,10 @@ DEFAULT_DURATION_DAYS = 5
 DEFAULT_ORIGIN = "Sydney"
 DEFAULT_TRAVEL_YEAR = 2026
 
-LLM_MAX_TOKENS = 5000
+# Four-line activity notes make the JSON several times larger than it
+# was. 5000 truncated mid-object, which surfaced as repeated parse
+# failures and a silent fallback.
+LLM_MAX_TOKENS = 16000
 
 # Estimated costs are deterministic and NOT supplied by Gemini.
 MEAL_COST_PER_PERSON_PER_DAY = 60.0
@@ -569,11 +573,23 @@ def _load_inventory():
     """
     Load and normalize Supabase inventory.
     """
-
+    t0 = time.perf_counter()
     flights = _fetch_all("flights")
-    hotels = _fetch_all("hotels")
-    activities = _fetch_all("activities")
+    t1 = time.perf_counter()
 
+    hotels = _fetch_all("hotels")
+    t2 = time.perf_counter()
+
+    activities = _fetch_all("activities")
+    t3 = time.perf_counter()
+
+    print(
+        f"[timing] supabase "
+        f"flights={t1-t0:.1f}s "
+        f"hotels={t2-t1:.1f}s "
+        f"activities={t3-t2:.1f}s "
+        f"total={t3-t0:.1f}s"
+    )
     # ------------------------------------------------------------
     # Flights
     # ------------------------------------------------------------
@@ -1069,9 +1085,14 @@ def query_inventory(params: dict) -> dict:
         # Send enough options for the LLM to fill every day. A flat cap of
         # MAX_ACTIVITIES starves long trips: 8 options across 11 days forces
         # roughly one activity per day.
-        per_city_cap = max(
-            MAX_ACTIVITIES,
-            duration_days * 3 // max(1, len(destinations)),
+        # 3/day made the prompt large enough that Gemini exceeded the 60s
+        # per-attempt timeout. 2/day, hard-capped, still fills every day.
+        per_city_cap = min(
+            16,
+            max(
+                MAX_ACTIVITIES,
+                duration_days * 2 // max(1, len(destinations)),
+            ),
         )
 
         activity_options[city] = combined.head(
@@ -1193,6 +1214,24 @@ These are normalized internally to:
 "Tokyo"
 
 Do not invent flights if the relevant inventory section is empty.
+
+ACTIVITY NOTES:
+Every activity note must contain exactly these four lines, in this order,
+separated by newline characters:
+
+What you'll see: ...
+What to bring: ...
+What to eat: ...
+Good to know: ...
+
+Keep each line to one sentence. Base them on the activity name, category
+and city. Write general, sensible travel guidance - do not state specific
+opening hours, prices or street addresses that are not in the inventory.
+
+ACTIVITY ADDRESS:
+Copy the address field from the inventory record exactly. Never write an
+address that is not in the inventory. If a record has no address, leave the
+field as an empty string.
 
 ============================================================
 OUTBOUND FLIGHTS
@@ -1327,7 +1366,8 @@ Return exactly:
           "duration_hours": 2,
           "price_aud": 0,
           "rating": 0,
-          "notes": "<short practical note>"
+          "address": "<copy verbatim from the inventory record>",
+          "notes": "What you'll see: <one sentence>\\nWhat to bring: <one sentence>\\nWhat to eat: <one sentence>\\nGood to know: <one sentence>"
         }}
       ]
     }}
@@ -1689,6 +1729,64 @@ REQUIRED_KEYS = {
     "budget_breakdown",
     "validation",
 }
+
+
+# ── Post-processing: overwrite model output with inventory values ────────────
+
+def _enrich_from_inventory(itinerary: dict, inventory: dict) -> dict:
+    """
+    Replace every factual activity field with the value from the inventory
+    record of the same activity_id.
+
+    The prompt already tells the model to copy these verbatim, but an
+    instruction is not a guarantee. Overwriting them here makes fabricated
+    prices, ratings, durations and addresses structurally impossible, which
+    is the same reason the pipeline uses retrieval rather than a bare LLM
+    call. Prose fields the model is meant to write - notes, day titles,
+    descriptions - are left untouched.
+    """
+    lookup = {}
+    for records in (inventory.get("activity_options") or {}).values():
+        for rec in records:
+            aid = rec.get("activity_id")
+            if aid:
+                lookup[str(aid)] = rec
+
+    if not lookup:
+        return itinerary
+
+    unknown = []
+
+    for day in itinerary.get("days", []) or []:
+        for act in day.get("activities", []) or []:
+            rec = lookup.get(str(act.get("activity_id", "")))
+
+            if rec is None:
+                # Not in the inventory we sent - the model invented it.
+                unknown.append(act.get("activity_id"))
+                continue
+
+            act["activity_name"] = rec.get("activity_name", act.get("activity_name"))
+            act["category"]      = rec.get("category",      act.get("category"))
+            act["address"]       = rec.get("address", "") or ""
+            act["price_aud"]     = rec.get("price_aud",     act.get("price_aud"))
+            act["rating"]        = rec.get("rating",        act.get("rating"))
+            act["duration_hours"] = rec.get(
+                "duration_hours", act.get("duration_hours")
+            )
+
+    if unknown:
+        print(
+            f"      [inventory] dropped {len(unknown)} activity id(s) not in "
+            f"inventory: {unknown[:5]}"
+        )
+        for day in itinerary.get("days", []) or []:
+            day["activities"] = [
+                a for a in (day.get("activities") or [])
+                if str(a.get("activity_id", "")) in lookup
+            ]
+
+    return itinerary
 
 
 def validate_itinerary(
@@ -2507,6 +2605,7 @@ def generate_itinerary(
     origin_city: str = DEFAULT_ORIGIN,
     verbose: bool = False,
 ) -> dict:
+    t_all_start = time.perf_counter()
 
     # ================================================================
     # 1. PARSE
@@ -2559,9 +2658,14 @@ def generate_itinerary(
             "\n[2/6] Querying inventory..."
         )
 
+ 
+    t_inv_start = time.perf_counter()
+
     inventory = query_inventory(
         params
     )
+
+    t_inv = time.perf_counter() - t_inv_start
 
     # ================================================================
     # 3. PROMPT
@@ -2573,10 +2677,14 @@ def generate_itinerary(
             "\n[3/6] Building AI prompt..."
         )
 
+    t_prompt_start = time.perf_counter()
+
     user_prompt = build_ai_prompt(
         params,
         inventory,
     )
+
+    t_prompt = time.perf_counter() - t_prompt_start
 
     if verbose:
 
@@ -2600,11 +2708,14 @@ def generate_itinerary(
 
     parse_guidance = ""
 
+    t_llm_start = time.perf_counter()
+    raw = ""
+
     for attempt in range(
         1,
         MAX_LLM_ATTEMPTS + 1,
     ):
-
+       
         if verbose:
 
             print(
@@ -2615,11 +2726,15 @@ def generate_itinerary(
 
         try:
 
+            attempt_llm_start = time.perf_counter()
             raw = call_llm(
                 SYSTEM_PROMPT,
                 user_prompt
                 + parse_guidance,
             )
+             
+            t_llm = time.perf_counter() - attempt_llm_start
+
 
         except Exception as exc:
 
@@ -2627,18 +2742,30 @@ def generate_itinerary(
                 str(exc)
             )
 
-            if verbose:
-
-                print(
-                    "      ✗ Gemini request failed:"
-                )
-
-                print(
-                    f"        {failure_reason}"
-                )
+            # Always logged, not just when verbose: a silent fallback to the
+            # draft itinerary looks like success and hides the real cause.
+            print(
+                f"      [llm] attempt {attempt}/{MAX_LLM_ATTEMPTS} "
+                f"failed: {failure_reason}"
+            )
 
             # Retry temporary failures.
             if attempt < MAX_LLM_ATTEMPTS:
+
+                # Back off first. Retrying instantly against a per-minute
+                # quota just earns another rejection.
+                is_rate_limit = (
+                    "429" in failure_reason
+                    or "rate limit" in failure_reason.lower()
+                    or "quota" in failure_reason.lower()
+                )
+
+                delay = 20 * attempt if is_rate_limit else 2 * attempt
+
+                print(f"      [llm] waiting {delay}s before retry")
+
+                time.sleep(delay)
+
                 continue
 
             break
@@ -2649,11 +2776,19 @@ def generate_itinerary(
                 f"      response_length="
                 f"{len(raw)} chars"
             )
+       
+        
 
         try:
 
+            t_parse_start = time.perf_counter()
             itinerary = parse_llm_response(
                 raw
+            )
+            t_parse = time.perf_counter() - t_parse_start
+            # Inventory wins over the model on every factual field.
+            itinerary = _enrich_from_inventory(
+                itinerary, inventory
             )
 
             if verbose:
@@ -2670,16 +2805,16 @@ def generate_itinerary(
                 f"Invalid JSON: {exc}"
             )
 
-            if verbose:
-
-                print(
-                    f"      ✗ {failure_reason}"
-                )
+            # Always logged. Truncation from the output-token cap shows up
+            # here, and the length says whether that is what happened.
+            print(
+                f"      [llm] attempt {attempt}/{MAX_LLM_ATTEMPTS} "
+                f"bad JSON ({len(raw)} chars): {exc}"
+            )
 
             if attempt < MAX_LLM_ATTEMPTS:
 
                 parse_guidance = """
-
 IMPORTANT:
 Your previous response was invalid JSON.
 
@@ -2691,6 +2826,29 @@ Do not truncate the response.
 Do not add comments.
 Do not add text before or after the JSON.
 """
+
+                continue
+
+            break
+
+
+    # ================================================================
+    # TIMING
+    # ================================================================
+
+    t_llm = time.perf_counter() - t_llm_start
+    t_all = time.perf_counter() - t_all_start
+
+    print(
+        f"[timing] "
+        f"inventory={t_inv:.1f}s "
+        f"prompt={t_prompt:.1f}s "
+        f"llm={t_llm:.1f}s "
+        f"parse={t_parse:.1f}s "
+        f"total={t_all:.1f}s "
+        f"out_chars={len(raw)} "
+        f"attempts={attempt}"
+    )
 
     # ================================================================
     # 5. FALLBACK

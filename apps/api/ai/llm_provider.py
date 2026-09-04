@@ -80,6 +80,10 @@ def _call_gemini(
         "generationConfig": {
             "temperature": LLM_TEMPERATURE,
             "maxOutputTokens": max_tokens,
+            # Thinking is on by default in 2.5 Flash and its tokens count
+            # against maxOutputTokens. For a fixed JSON schema it adds
+            #  latency and cost without improving the output.
+            "thinkingConfig": {"thinkingBudget": 0},
         },
     }
 
@@ -121,6 +125,14 @@ def _call_gemini(
             f"Gemini returned no candidates: {data}"
         )
 
+
+    cand = data["candidates"][0]
+    if cand.get("finishReason") == "MAX_TOKENS" and "parts" not in cand.get("content", {}):
+        raise RuntimeError(
+            f"Gemini hit maxOutputTokens ({max_tokens}) before producing any text. "
+            f"Raise max_tokens or disable thinking."
+            )
+    
     try:
         text = (
             candidates[0]
