@@ -2,9 +2,9 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from dotenv import load_dotenv
-load_dotenv(".env")
-
 from ai.llm_provider import call_llm
+
+load_dotenv(".env")
 
 
 def test_one_request(request_id):

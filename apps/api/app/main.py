@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
@@ -8,21 +9,25 @@ from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import FileResponse
 from starlette.exceptions import HTTPException
 
-from app.auth.router import router as auth_router
-from app.approvals.router import router as approvals_router
 from app.ai.router import router as ai_router
+from app.approvals.router import router as approvals_router
+from app.auth.router import router as auth_router
 from app.core import _err
 from app.marketplace.router import router as marketplace_router
 from app.media.router import router as media_router
 from app.packages.router import router as packages_router
 from app.users.router import router as users_router
-from routes.ai_routes import router as ai_router
-from dotenv import load_dotenv
+
+# Your AI itinerary router
+from routes.ai_routes import router as itinerary_ai_router
+
+
 OPENAPI_SPEC = Path(__file__).resolve().parents[1] / "openapi.yaml"
 
-
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+
 app = FastAPI()
+
 app.add_middleware(
     CORSMiddleware,
     # localhost dev + Vercel previews/production
@@ -46,11 +51,18 @@ def openapi_spec():
 def docs_ui():
     # Renders the canonical contract (openapi.yaml), unlike /docs
     # which documents the live FastAPI routes.
-    return get_swagger_ui_html(openapi_url="/openapi.yaml", title="API contract")
+    return get_swagger_ui_html(
+        openapi_url="/openapi.yaml",
+        title="API contract",
+    )
 
 
 # Every error response shares the ErrorResponse shape from openapi.yaml.
-_STATUS_CODES = {401: "UNAUTHORIZED", 403: "FORBIDDEN", 404: "NOT_FOUND"}
+_STATUS_CODES = {
+    401: "UNAUTHORIZED",
+    403: "FORBIDDEN",
+    404: "NOT_FOUND",
+}
 
 
 @app.exception_handler(RequestValidationError)
@@ -73,6 +85,7 @@ def http_exception_handler(_request: Request, exc: HTTPException):
     )
 
 
+# Develop routers
 app.include_router(auth_router, tags=["auth"])
 app.include_router(approvals_router, tags=["approvals"])
 app.include_router(ai_router, tags=["ai"])
@@ -80,4 +93,6 @@ app.include_router(marketplace_router, tags=["marketplace"])
 app.include_router(media_router, tags=["media"])
 app.include_router(packages_router, tags=["packages"])
 app.include_router(users_router, tags=["users"])
-app.include_router(ai_router)
+
+# Your itinerary AI route
+app.include_router(itinerary_ai_router)
