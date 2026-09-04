@@ -2,6 +2,27 @@
 
 import { useState, useEffect } from "react";
 import type { WizardSelection } from "../lib/ai/itinerary";
+import { useRouter } from "next/navigation";
+import type { Session } from "@supabase/supabase-js";
+
+import {
+  fetchOwnPackages,
+  formatDashboardStats,
+  formatCreatorPackage,
+  resolveCreatorProfile,
+  signInWithEmail,
+  type CreatorPackage,
+} from "../lib/creator-api";
+
+import {
+  fetchMarketplacePackages,
+  searchMarketplacePackages,
+  uniqueDestinationSuggestions,
+  type MarketplacePackageSummary,
+} from "../lib/marketplace-api";
+
+import { supabase } from "../lib/supabase/client";
+
 const creatorBannerImg = "/creator-banner.png";
 
 
@@ -175,6 +196,53 @@ const Chevron = () => (
 // ─── Top Nav ───────────────────────────────────────────────────────────────────
 export function TopNav({ screen, onNav }: { screen: Screen; onNav: (s: Screen) => void }) {
   const isMarketplace = screen === "marketplace";
+  const [marketplaceSession, setMarketplaceSession] = useState<Session | null>(null);
+  const [accountOpen, setAccountOpen] = useState(false);
+  const [marketplaceProfile, setMarketplaceProfile] = useState({
+    displayName: "Creator",
+    email: "",
+    initials: "C",
+    avatarUrl: null as string | null,
+  });
+
+  useEffect(() => {
+    let mounted = true;
+    const syncSession = async (session: Session | null) => {
+      if (!mounted) return;
+      setMarketplaceSession(session);
+      if (!session) {
+        setMarketplaceProfile({ displayName: "Creator", email: "", initials: "C", avatarUrl: null });
+        return;
+      }
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("full_name,avatar_url")
+        .eq("id", session.user.id)
+        .maybeSingle();
+      if (!mounted) return;
+      setMarketplaceProfile({
+        ...resolveCreatorProfile(profile, session.user.user_metadata, session.user.email ?? ""),
+        email: session.user.email ?? "",
+      });
+    };
+    void supabase.auth.getSession().then(({ data }) => syncSession(data.session));
+    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+      void syncSession(session);
+    });
+    return () => {
+      mounted = false;
+      data.subscription.unsubscribe();
+    };
+  }, []);
+
+  const handleMarketplaceAccount = async () => {
+    if (marketplaceSession) {
+      await supabase.auth.signOut();
+      setAccountOpen(false);
+      return;
+    }
+    onNav("login");
+  };
 
   return (
     <header style={{
@@ -216,39 +284,93 @@ export function TopNav({ screen, onNav }: { screen: Screen; onNav: (s: Screen) =
               <Chevron />
             </MarketplaceControl>
 
-            {/* Sign in — white pill with globe gradient icon */}
-            <button onClick={() => onNav("login")} style={{
-              display: "inline-flex", alignItems: "center", gap: 6,
-              height: 40, padding: "0 12px 0 4px",
-              border: 0, borderRadius: 9999,
-              background: "#fff", color: "#212121",
-              font: "500 14px/20px var(--fc-font-body)",
-              cursor: "pointer", flexShrink: 0,
-            }}>
-              {/* Globe gradient icon matching FC site */}
-              <span style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 32, height: 32 }}>
-                <svg width="30" height="30" viewBox="0 0 30 30" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <defs>
-                    <linearGradient id="globeGrad" x1="0" y1="0" x2="1" y2="1">
-                      <stop offset="0%" stopColor="#4FC3F7"/>
-                      <stop offset="40%" stopColor="#1565C0"/>
-                      <stop offset="100%" stopColor="#6A1B9A"/>
-                    </linearGradient>
-                  </defs>
-                  <circle cx="15" cy="15" r="14" fill="url(#globeGrad)"/>
-                  {/* Globe lines */}
-                  <ellipse cx="15" cy="15" rx="5.5" ry="14" stroke="rgba(255,255,255,0.5)" strokeWidth="1" fill="none"/>
-                  <line x1="1" y1="15" x2="29" y2="15" stroke="rgba(255,255,255,0.5)" strokeWidth="1"/>
-                  <line x1="3" y1="9" x2="27" y2="9" stroke="rgba(255,255,255,0.35)" strokeWidth="1"/>
-                  <line x1="3" y1="21" x2="27" y2="21" stroke="rgba(255,255,255,0.35)" strokeWidth="1"/>
-                  <circle cx="15" cy="15" r="14" stroke="rgba(255,255,255,0.2)" strokeWidth="0.5" fill="none"/>
-                </svg>
-              </span>
-              Sign in
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#212121" strokeWidth="2.5">
-                <polyline points="6 9 12 15 18 9"/>
-              </svg>
-            </button>
+            <div style={{ position: "relative" }}>
+              <button
+                onClick={() => marketplaceSession ? setAccountOpen((open) => !open) : onNav("login")}
+                aria-expanded={marketplaceSession ? accountOpen : undefined}
+                aria-label={marketplaceSession ? `Open profile menu for ${marketplaceProfile.displayName}` : "Sign in"}
+                style={{
+                  display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8,
+                  height: 40, padding: marketplaceSession ? "0 12px 0 4px" : "0 20px",
+                  border: 0, borderRadius: 9999,
+                  background: C.white, color: C.ink,
+                  font: "500 14px/20px var(--fc-font-body)",
+                  cursor: "pointer", flexShrink: 0,
+                }}
+              >
+                {marketplaceSession ? (
+                  marketplaceProfile.avatarUrl ? (
+                    <img
+                      src={marketplaceProfile.avatarUrl}
+                      alt=""
+                      style={{ width: 30, height: 30, borderRadius: "50%", objectFit: "cover" }}
+                    />
+                  ) : (
+                    <span aria-hidden="true" style={{
+                      width: 30, height: 30, borderRadius: "50%",
+                      display: "inline-flex", alignItems: "center", justifyContent: "center",
+                      background: "#005B4F", color: C.white, fontSize: 14, fontWeight: 600,
+                    }}>
+                      {marketplaceProfile.initials}
+                    </span>
+                  )
+                ) : (
+                  <span style={{ paddingInline: 8 }}>Sign in</span>
+                )}
+                {marketplaceSession ? <Chevron /> : null}
+              </button>
+
+              {marketplaceSession && accountOpen ? (
+                <div style={{
+                  position: "absolute", top: "calc(100% + 8px)", right: 0,
+                  width: 300, background: C.white, color: C.ink,
+                  borderRadius: C.radiusMd, border: `1px solid ${C.border}`,
+                  boxShadow: C.shadowRaised, overflow: "hidden", zIndex: 200,
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 14, padding: 20 }}>
+                    {marketplaceProfile.avatarUrl ? (
+                      <img
+                        src={marketplaceProfile.avatarUrl}
+                        alt=""
+                        style={{ width: 52, height: 52, borderRadius: "50%", objectFit: "cover", flexShrink: 0 }}
+                      />
+                    ) : (
+                      <span aria-hidden="true" style={{
+                        width: 52, height: 52, borderRadius: "50%", flexShrink: 0,
+                        display: "inline-flex", alignItems: "center", justifyContent: "center",
+                        background: "#005B4F", color: C.white, fontSize: 20, fontWeight: 600,
+                      }}>
+                        {marketplaceProfile.initials}
+                      </span>
+                    )}
+                    <div style={{ minWidth: 0 }}>
+                      <p style={{ margin: "0 0 3px", fontSize: 15, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {marketplaceProfile.displayName}
+                      </p>
+                      <p style={{ margin: 0, fontSize: 13, color: C.secondary, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {marketplaceProfile.email}
+                      </p>
+                    </div>
+                  </div>
+                  <div style={{ borderTop: `1px solid ${C.border}`, borderBottom: `1px solid ${C.border}` }}>
+                    <button onClick={() => { setAccountOpen(false); onNav("dashboard"); }} style={{
+                      width: "100%", padding: "14px 20px", textAlign: "left",
+                      border: 0, background: C.white, color: C.ink,
+                      fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 500, cursor: "pointer",
+                    }}>
+                      Dashboard
+                    </button>
+                  </div>
+                  <button onClick={() => void handleMarketplaceAccount()} style={{
+                    width: "100%", padding: "14px 20px", textAlign: "left",
+                    border: 0, background: C.white, color: "#C8001A",
+                    fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 500, cursor: "pointer",
+                  }}>
+                    Sign out
+                  </button>
+                </div>
+              ) : null}
+            </div>
           </div>
         </div>
 
@@ -334,6 +456,23 @@ export function TopNav({ screen, onNav }: { screen: Screen; onNav: (s: Screen) =
 // ─── Login Screen ──────────────────────────────────────────────────────────────
 export function LoginScreen({ onNav }: { onNav: (s: Screen) => void }) {
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setErrorMessage("");
+    setIsSubmitting(true);
+    try {
+      await signInWithEmail(supabase.auth, email, password);
+      onNav("dashboard");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Unable to sign in. Please try again.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   return (
     <div style={{
@@ -351,7 +490,7 @@ export function LoginScreen({ onNav }: { onNav: (s: Screen) => void }) {
         }}>Become a member or sign in</h1>
 
         {/* Email field — floating label style */}
-        <form onSubmit={(e) => { e.preventDefault(); onNav("marketplace"); }} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <div style={{ position: "relative" }}>
             <label style={{
               position: "absolute", top: -9, left: 12, background: C.white,
@@ -360,6 +499,8 @@ export function LoginScreen({ onNav }: { onNav: (s: Screen) => void }) {
             <input
               type="email" value={email}
               onChange={(e) => setEmail(e.target.value)}
+              autoComplete="email"
+              required
               style={{
                 width: "100%", boxSizing: "border-box",
                 height: 52, padding: "0 14px",
@@ -372,16 +513,51 @@ export function LoginScreen({ onNav }: { onNav: (s: Screen) => void }) {
             />
           </div>
 
+          <div style={{ position: "relative" }}>
+            <label htmlFor="creator-password" style={{
+              position: "absolute", top: -9, left: 12, background: C.white,
+              padding: "0 4px", fontSize: 12, color: C.secondary, lineHeight: 1,
+            }}>Password *</label>
+            <input
+              id="creator-password"
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              autoComplete="current-password"
+              required
+              minLength={8}
+              style={{
+                width: "100%", boxSizing: "border-box",
+                height: 52, padding: "0 14px",
+                fontSize: 16, color: C.ink,
+                border: `1.5px solid ${C.ink}`, borderRadius: 6, outline: "none",
+                fontFamily: "var(--fc-font-body)",
+              }}
+              onFocus={(event) => { event.currentTarget.style.borderColor = C.blue; }}
+              onBlur={(event) => { event.currentTarget.style.borderColor = C.ink; }}
+            />
+          </div>
+
+          {errorMessage ? (
+            <p role="alert" style={{
+              margin: 0, padding: "10px 12px", borderRadius: 6,
+              background: "#FFF1F2", color: "#B42318", fontSize: 14, lineHeight: "20px",
+            }}>
+              {errorMessage}
+            </p>
+          ) : null}
+
           {/* Continue button */}
-          <button type="submit" style={{
+          <button type="submit" disabled={isSubmitting} style={{
             height: 48, background: C.blue, color: C.white,
             fontFamily: "var(--fc-font-body)", fontSize: 15, fontWeight: 500,
-            border: "none", borderRadius: 6, cursor: "pointer",
+            border: "none", borderRadius: 6, cursor: isSubmitting ? "wait" : "pointer",
+            opacity: isSubmitting ? 0.65 : 1,
             transition: "background 140ms",
           }}
             onMouseEnter={(e) => { e.currentTarget.style.background = C.blueDark; }}
             onMouseLeave={(e) => { e.currentTarget.style.background = C.blue; }}
-          >Continue</button>
+          >{isSubmitting ? "Signing in…" : "Sign in"}</button>
         </form>
 
         {/* OR divider */}
@@ -459,21 +635,6 @@ export function LoginScreen({ onNav }: { onNav: (s: Screen) => void }) {
           </div>
         </div>
 
-        {/* Creator sign-in link */}
-        <div style={{ textAlign: "center", marginTop: 24 }}>
-          <button onClick={() => onNav("dashboard")} style={{
-            fontFamily: "var(--fc-font-body)", fontSize: 14, color: C.secondary,
-            background: "none", border: "none", cursor: "pointer", padding: 0,
-          }}
-            onMouseEnter={(e) => { e.currentTarget.style.color = C.ink; }}
-            onMouseLeave={(e) => { e.currentTarget.style.color = C.secondary; }}
-          >
-            Are you a creator?{" "}
-            <span style={{ color: C.blue, textDecoration: "underline", fontWeight: 500 }}>
-              Sign in to your dashboard →
-            </span>
-          </button>
-        </div>
       </div>
 
       {/* Bottom legal */}
@@ -490,58 +651,98 @@ export function LoginScreen({ onNav }: { onNav: (s: Screen) => void }) {
 }
 
 // ─── Marketplace Screen ────────────────────────────────────────────────────────
-const REGION_TABS = ["UK & Europe", "Asia", "USA & Canada", "Africa"];
+const MARKETPLACE_API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-const TOUR_CARDS = [
-  {
-    img: IMG.santorini,
-    save: "SAVE $1,407",
-    exclusive: undefined,
-    title: "Stay & Tour: Athens Discovery + Santorini Escape",
-    date: "18 Feb 2026", nights: 10, country: "Greece",
-    includedValue: "$1,820",
-    inclusions: ["10 nights accommodation", "Flights in Greece included", "Daily breakfast included"],
-    price: "$3,299", priceNote: "From per person twin share",
-    creator: { name: "Sophie Laurent", handle: "@sophietravels", avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=64&h=64&fit=crop&crop=face" },
-  },
-  {
-    img: IMG.bali,
-    save: "SAVE $890",
-    exclusive: "EXCLUSIVE SAVE $799pp",
-    title: "Fly, Stay & Tour: Best of Sri Lanka & Beaches",
-    date: "4 Apr 2026", nights: 15, country: "Sri Lanka",
-    includedValue: "$2,100",
-    inclusions: ["15 nights accommodation", "Return flights to Colombo", "Guided cultural tours"],
-    price: "$4,199", priceNote: "From per person twin share",
-    creator: { name: "Marcus Chen", handle: "@marcuswanders", avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=64&h=64&fit=crop&crop=face" },
-  },
-  {
-    img: IMG.morocco,
-    save: "SAVE $1,240",
-    exclusive: undefined,
-    title: "Fly, Stay & Tour: Casablanca Stay and Morocco Encompassed",
-    date: "21 Nov 2026", nights: 18, country: "Morocco",
-    includedValue: "$2,560",
-    inclusions: ["18 nights accommodation", "Intercity flights included", "Guided desert excursion"],
-    price: "$5,499", priceNote: "From per person twin share",
-    creator: { name: "Aisha Okonkwo", handle: "@aishaexplores", avatar: "https://images.unsplash.com/photo-1531123897727-8f129e1688ce?w=64&h=64&fit=crop&crop=face" },
-  },
-  {
-    img: IMG.tokyo,
-    save: undefined,
-    exclusive: "EXCLUSIVE SAVE $500pp",
-    title: "Ancient Shores & Island Escapes: Dubrovnik to the Greek Islands",
-    date: "11 May 2026", nights: 27, country: "Croatia & Greece",
-    includedValue: "$3,400",
-    inclusions: ["27 nights accommodation", "Flights to Dubrovnik included", "Scenic island cruise"],
-    price: "$7,299", priceNote: "From per person twin share",
-    creator: { name: "Lena Hoffmann", handle: "@lenahoffmann", avatar: "https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=64&h=64&fit=crop&crop=face" },
-  },
-];
+function marketplacePrice(price: number | null) {
+  if (price === null) return "Price on request";
+  return new Intl.NumberFormat("en-AU", {
+    style: "currency", currency: "AUD", maximumFractionDigits: 0,
+  }).format(price);
+}
 
 export function MarketplaceScreen() {
+  const router = useRouter();
   const [search, setSearch] = useState("");
-  const [activeRegion, setActiveRegion] = useState("UK & Europe");
+  const [packages, setPackages] = useState<MarketplacePackageSummary[]>([]);
+  const [allPackages, setAllPackages] = useState<MarketplacePackageSummary[]>([]);
+  const [liveResults, setLiveResults] = useState<MarketplacePackageSummary[]>([]);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const loadPackages = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const data = await fetchMarketplacePackages(fetch, MARKETPLACE_API_URL);
+      setPackages(data);
+      setAllPackages(data);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Unable to load marketplace packages.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    let active = true;
+    void fetchMarketplacePackages(fetch, MARKETPLACE_API_URL)
+      .then((data) => {
+        if (!active) return;
+        setPackages(data);
+        setAllPackages(data);
+      })
+      .catch((loadError: unknown) => {
+        if (active) setError(loadError instanceof Error ? loadError.message : "Unable to load marketplace packages.");
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    const query = search.trim();
+    if (query.length < 2) return;
+    let active = true;
+    const timer = window.setTimeout(async () => {
+      try {
+        const data = await searchMarketplacePackages(fetch, MARKETPLACE_API_URL, query);
+        if (!active) return;
+        setLiveResults(data);
+        setSuggestions(uniqueDestinationSuggestions(data));
+        setShowSuggestions(true);
+      } catch {
+        if (active) setSuggestions([]);
+      }
+    }, 300);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [search]);
+
+  const submitSearch = async (query = search) => {
+    const trimmed = query.trim();
+    setShowSuggestions(false);
+    if (!trimmed) {
+      setPackages(allPackages);
+      return;
+    }
+    if (trimmed.length < 2) {
+      setError("Enter at least 2 characters to search.");
+      return;
+    }
+    setLoading(true);
+    setError("");
+    try {
+      const data = query === search && liveResults.length ? liveResults
+        : await searchMarketplacePackages(fetch, MARKETPLACE_API_URL, trimmed);
+      setPackages(data);
+    } catch (searchError) {
+      setError(searchError instanceof Error ? searchError.message : "Unable to search marketplace packages.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <div style={{ background: C.white, minHeight: "100vh" }}>
@@ -571,7 +772,7 @@ export function MarketplaceScreen() {
           </h1>
 
           {/* Search card */}
-          <div style={{
+          <form onSubmit={(event) => { event.preventDefault(); void submitSearch(); }} style={{
             background: C.white,
             borderRadius: 20,
             padding: "28px 28px 0",
@@ -586,19 +787,66 @@ export function MarketplaceScreen() {
               padding: "0 24px",
               height: 60,
               marginBottom: 20,
+              position: "relative",
             }}>
               <svg width="20" height="20" viewBox="0 0 24 24" fill="#212121" style={{ flexShrink: 0, marginRight: 14, opacity: 0.55 }}>
                 <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
               </svg>
               <input
                 value={search}
-                onChange={(e) => setSearch(e.target.value)}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setSearch(value);
+                  setShowSuggestions(true);
+                  setError("");
+                  if (value.trim().length < 2) {
+                    setSuggestions([]);
+                    setLiveResults([]);
+                    if (!value.trim()) setPackages(allPackages);
+                  }
+                }}
+                onFocus={() => setShowSuggestions(true)}
                 placeholder="All destinations"
+                role="combobox"
+                aria-label="Search destinations"
+                aria-autocomplete="list"
+                aria-expanded={showSuggestions && suggestions.length > 0}
+                aria-controls="marketplace-destination-suggestions"
                 style={{
                   flex: 1, border: "none", outline: "none", background: "transparent",
                   fontFamily: "var(--fc-font-body)", fontSize: 17, color: C.ink,
                 }}
               />
+              {showSuggestions && search.trim().length >= 2 && (
+                <div id="marketplace-destination-suggestions" role="listbox" style={{
+                  position: "absolute", zIndex: 10, top: 66, left: 0, right: 0,
+                  background: C.white, border: `1px solid ${C.border}`,
+                  borderRadius: C.radiusMd, boxShadow: C.shadowRaised, overflow: "hidden",
+                }}>
+                  {suggestions.length > 0 ? suggestions.map((destination) => (
+                    <button
+                      key={destination}
+                      type="button"
+                      role="option"
+                      aria-selected="false"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => { setSearch(destination); void submitSearch(destination); }}
+                      style={{
+                        width: "100%", padding: "12px 18px", border: "none",
+                        borderBottom: `1px solid ${C.border}`, background: C.white,
+                        textAlign: "left", fontFamily: "var(--fc-font-body)",
+                        fontSize: 15, color: C.ink, cursor: "pointer",
+                      }}
+                    >
+                      {destination}
+                    </button>
+                  )) : (
+                    <p style={{ margin: 0, padding: "12px 18px", color: C.secondary, fontSize: 14 }}>
+                      No matching destinations
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Row 2: filters + search button */}
@@ -608,7 +856,7 @@ export function MarketplaceScreen() {
             }}>
               <div style={{ display: "flex", gap: 4 }}>
                 {["All departure dates", "All trip types"].map((label) => (
-                  <button key={label} style={{
+                  <button key={label} type="button" style={{
                     display: "inline-flex", alignItems: "center", gap: 6,
                     background: "none", border: "none", cursor: "pointer",
                     fontFamily: "var(--fc-font-body)", fontSize: 15, fontWeight: 500,
@@ -623,6 +871,7 @@ export function MarketplaceScreen() {
                 ))}
               </div>
               <button
+                type="submit"
                 onMouseEnter={(e) => (e.currentTarget.style.background = C.blueDark)}
                 onMouseLeave={(e) => (e.currentTarget.style.background = C.blue)}
                 style={{
@@ -634,7 +883,7 @@ export function MarketplaceScreen() {
                 Search trips
               </button>
             </div>
-          </div>
+          </form>
         </div>
       </section>
 
@@ -655,46 +904,23 @@ export function MarketplaceScreen() {
           </p>
         </div>
 
-        {/* Region tabs + arrows */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 32 }}>
-          <div style={{ display: "flex", gap: 6 }}>
-            {REGION_TABS.map((r) => {
-              const on = activeRegion === r;
-              return (
-                <button key={r} onClick={() => setActiveRegion(r)} style={{
-                  fontFamily: "var(--fc-font-body)", fontSize: 16, fontWeight: on ? 600 : 400,
-                  color: on ? C.ink : C.secondary,
-                  background: on ? C.subtle : "none",
-                  border: on ? `1px solid ${C.border}` : "1px solid transparent",
-                  borderRadius: 999, padding: "10px 22px",
-                  cursor: "pointer", transition: "all 140ms",
-                }}>
-                  {r}
-                </button>
-              );
-            })}
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <a href="#" style={{ fontFamily: "var(--fc-font-body)", fontSize: 15, color: C.ink, fontWeight: 500, textDecoration: "underline", textUnderlineOffset: 3, marginRight: 4 }}>See all</a>
-            {(["M15 18l-6-6 6-6", "M9 18l6-6-6-6"] as const).map((d, i) => (
-              <button key={i} style={{
-                width: 40, height: 40, borderRadius: "50%",
-                border: `1px solid ${C.border}`, background: C.white,
-                display: "flex", alignItems: "center", justifyContent: "center",
-                cursor: "pointer",
-              }}>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.ink} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d={d}/>
-                </svg>
-              </button>
-            ))}
-          </div>
-        </div>
-
         {/* 4-col tour card grid */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 20, marginBottom: 56 }}>
-          {TOUR_CARDS.map((card) => (
-            <div key={card.title} style={{
+        {loading ? (
+          <p role="status" style={{ color: C.secondary, padding: "48px 0", textAlign: "center" }}>Loading trips…</p>
+        ) : error ? (
+          <div role="alert" style={{ textAlign: "center", padding: "48px 0" }}>
+            <p style={{ color: C.red }}>{error}</p>
+            <BtnSecondary onClick={() => void loadPackages()}>Try again</BtnSecondary>
+          </div>
+        ) : packages.length === 0 ? (
+          <p style={{ color: C.secondary, padding: "48px 0", textAlign: "center" }}>No trips match your search.</p>
+        ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))", gap: 20, marginBottom: 56 }}>
+          {packages.map((card) => {
+            const destination = [card.destination_city, card.destination_country].filter(Boolean).join(", ");
+            const creatorName = card.influencer?.display_name || "Marketplace creator";
+            return (
+            <article key={card.package_id} style={{
               borderRadius: 14, overflow: "hidden",
               border: `1px solid ${C.border}`,
               background: C.white,
@@ -703,30 +929,13 @@ export function MarketplaceScreen() {
             }}>
               {/* Image */}
               <div style={{ position: "relative", aspectRatio: "3/2", overflow: "hidden" }}>
-                <img src={card.img} alt={card.title} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                {card.save && (
-                  <span style={{
-                    position: "absolute", top: 12, left: 12,
-                    background: "#C8001A", color: "#fff",
-                    fontFamily: "var(--fc-font-body)", fontSize: 12, fontWeight: 700,
-                    padding: "5px 10px", borderRadius: 5, letterSpacing: "0.02em",
-                  }}>{card.save}</span>
-                )}
-                {card.exclusive && (
-                  <span style={{
-                    position: "absolute", top: 12, right: 12,
-                    background: "#1A1A1A", color: "#fff",
-                    fontFamily: "var(--fc-font-body)", fontSize: 11, fontWeight: 700,
-                    padding: "5px 10px", borderRadius: 5, letterSpacing: "0.02em",
-                    maxWidth: 120, textAlign: "center", lineHeight: "15px",
-                  }}>{card.exclusive}</span>
-                )}
+                <img src={card.cover_image_url || IMG.hero} alt={card.title} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
               </div>
 
               {/* Body */}
               <div style={{ padding: "18px 18px 20px", flex: 1, display: "flex", flexDirection: "column", gap: 10 }}>
                 <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, color: C.secondary, margin: 0 }}>
-                  {card.date} · {card.nights} nights · {card.country}
+                  {card.duration_days ? `${card.duration_days} days` : "Duration on request"} · {destination || "Destination coming soon"}
                 </p>
                 <p style={{
                   fontFamily: "var(--fc-font-body)", fontSize: 15, fontWeight: 600,
@@ -737,31 +946,15 @@ export function MarketplaceScreen() {
                   {card.title}
                 </p>
 
-                <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 12, marginTop: 2 }}>
-                  <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 700, color: C.secondary, margin: "0 0 8px", textTransform: "uppercase", letterSpacing: "0.04em" }}>
-                    Included value <span style={{ color: C.ink }}>{card.includedValue}</span>
-                  </p>
-                  {card.inclusions.map((inc) => (
-                    <div key={inc} style={{ display: "flex", alignItems: "flex-start", gap: 7, marginBottom: 5 }}>
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill={C.blue} style={{ flexShrink: 0, marginTop: 2 }}>
-                        <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/>
-                      </svg>
-                      <span style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, color: C.secondary, lineHeight: "20px" }}>{inc}</span>
-                    </div>
-                  ))}
-                </div>
-
                 {/* Creator info */}
                 <div style={{
                   display: "flex", alignItems: "center", gap: 10,
                   padding: "12px 0", borderTop: `1px solid ${C.border}`, marginTop: 6,
                 }}>
-                  <img src={card.creator.avatar} alt={card.creator.name} style={{
-                    width: 34, height: 34, borderRadius: "50%", objectFit: "cover", flexShrink: 0,
-                  }} />
+                  <span aria-hidden="true" style={{ width: 34, height: 34, borderRadius: "50%", background: C.subtle, display: "grid", placeItems: "center", fontWeight: 700 }}>{creatorName.charAt(0).toUpperCase()}</span>
                   <div>
-                    <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 600, color: C.ink, margin: 0, lineHeight: "20px" }}>{card.creator.name}</p>
-                    <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, color: C.secondary, margin: 0, lineHeight: "18px" }}>{card.creator.handle}</p>
+                    <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 600, color: C.ink, margin: 0, lineHeight: "20px" }}>{creatorName}</p>
+                    {card.influencer?.instagram_handle && <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, color: C.secondary, margin: 0, lineHeight: "18px" }}>{card.influencer.instagram_handle}</p>}
                   </div>
                   <span style={{
                     marginLeft: "auto", background: "#EEF5FF", color: C.blue,
@@ -771,17 +964,15 @@ export function MarketplaceScreen() {
                 </div>
 
                 <div style={{ paddingTop: 6 }}>
-                  <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 12, color: C.secondary, margin: "0 0 3px" }}>{card.priceNote}</p>
-                  <p style={{ fontFamily: "var(--fc-font-display)", fontSize: 24, fontWeight: 700, color: C.ink, margin: 0, letterSpacing: "-0.01em" }}>{card.price}</p>
+                  <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 12, color: C.secondary, margin: "0 0 3px" }}>From per person</p>
+                  <p style={{ fontFamily: "var(--fc-font-display)", fontSize: 24, fontWeight: 700, color: C.ink, margin: "0 0 14px", letterSpacing: "-0.01em" }}>{marketplacePrice(card.base_price_aud)}</p>
+                  <BtnPrimary full onClick={() => router.push(`/marketplace/packages/${card.package_id}`)}>View trip</BtnPrimary>
                 </div>
               </div>
-            </div>
-          ))}
+            </article>
+          )})}
         </div>
-
-        <div style={{ textAlign: "center" }}>
-          <BtnSecondary>Load more trips</BtnSecondary>
-        </div>
+        )}
       </div>
 
       {/* Creator Program Banner */}
@@ -894,39 +1085,88 @@ export function MarketplaceScreen() {
 }
 
 // ─── Dashboard Screen ──────────────────────────────────────────────────────────
-const PACKAGES = [
-  { name: "Tokyo Food & Culture Experience",   duration: "7 days / 6 nights",  updated: "2 days ago",  status: "Approved",     statusColor: C.success,   statusBg: "#ECFDF5", views: 285,  bookings: 12, revenue: "$42,800", commission: "$8,568",  rowAction: "Manage" },
-  { name: "Iceland Northern Lights Adventure", duration: "5 days / 4 nights",  updated: "1 week ago",  status: "Approved",     statusColor: C.success,   statusBg: "#ECFDF5", views: 210,  bookings: 8,  revenue: "$31,200", commission: "$6,240",  rowAction: "Manage" },
-  { name: "Bali Wellness & Beach Retreat",     duration: "10 days / 9 nights", updated: "3 hours ago", status: "Under review", statusColor: C.warning,   statusBg: "#FFF8EC", views: null, bookings: null, revenue: null, commission: null, rowAction: "View" },
-  { name: "Morocco Desert & Medinas",          duration: "6 days / 5 nights",  updated: "5 days ago",  status: "Draft",        statusColor: C.secondary, statusBg: C.subtle,  views: null, bookings: null, revenue: null, commission: null, rowAction: "Continue editing" },
-];
-
-const STATS = [
-  { label: "Packages", value: "4", sub: "Current — 2 active" },
-  { label: "Bookings", value: "20", sub: "This quarter" },
-  { label: "Booking value", value: "$74.0k", sub: "This quarter" },
-  { label: "Your commission", value: "$14.8k", sub: "This quarter" },
-];
-
 export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void }) {
+  const router = useRouter();
+  const [packages, setPackages] = useState<CreatorPackage[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [activeTab, setActiveTab] = useState("All");
   const [hovRow, setHovRow] = useState<string | null>(null);
   const [searchQ, setSearchQ] = useState("");
   const tabs = ["All", "Approved", "Under review", "Drafts"];
 
-  const filtered = activeTab === "All"
-    ? PACKAGES
-    : PACKAGES.filter((p) => p.status === activeTab || (activeTab === "Drafts" && p.status === "Draft"));
+  const loadPackages = async () => {
+    setIsLoading(true);
+    setLoadError("");
+    const { data } = await supabase.auth.getSession();
+    const accessToken = data.session?.access_token;
+    if (!accessToken) {
+      router.replace("/login");
+      return;
+    }
+    try {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      setPackages(await fetchOwnPackages(fetch, apiUrl, accessToken));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to load your packages.";
+      setLoadError(message);
+      if (message.includes("sign in again")) router.replace("/login");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    void supabase.auth.getSession().then(async ({ data }) => {
+      const accessToken = data.session?.access_token;
+      if (!accessToken) {
+        router.replace("/login");
+        return;
+      }
+      try {
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+        const result = await fetchOwnPackages(fetch, apiUrl, accessToken);
+        if (!cancelled) setPackages(result);
+      } catch (error) {
+        if (cancelled) return;
+        const message = error instanceof Error ? error.message : "Unable to load your packages.";
+        setLoadError(message);
+        if (message.includes("sign in again")) router.replace("/login");
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [router]);
+
+  const dashboardPackages = packages.map(formatCreatorPackage);
+  const normalizedSearch = searchQ.trim().toLowerCase();
+  const filtered = dashboardPackages.filter((pkg) => {
+    const matchesTab = activeTab === "All"
+      || pkg.status === activeTab
+      || (activeTab === "Drafts" && pkg.status === "Draft");
+    const matchesSearch = !normalizedSearch
+      || pkg.name.toLowerCase().includes(normalizedSearch)
+      || pkg.destination.toLowerCase().includes(normalizedSearch);
+    return matchesTab && matchesSearch;
+  });
+
+  const stats = formatDashboardStats({
+    packageCount: packages.length,
+    bookingCount: null,
+    commissionRate: null,
+    commissionAud: null,
+  });
 
   const cols = {
-    grid: "minmax(0,1.8fr) 140px 88px 96px 128px 128px 140px",
+    grid: "minmax(0,1.8fr) minmax(140px,1fr) 100px 120px 140px 150px",
     headers: [
       { h: "Package",        align: "left"  },
-      { h: "Status",         align: "left"  },
-      { h: "Views",          align: "right" },
-      { h: "Bookings",       align: "right" },
-      { h: "Booking value",  align: "right" },
-      { h: "Commission",     align: "right" },
+      { h: "Destination",    align: "left"  },
+      { h: "Duration",       align: "right" },
+      { h: "Price",          align: "center" },
+      { h: "Status",         align: "center" },
       { h: "Actions",        align: "right" },
     ],
   };
@@ -955,7 +1195,7 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
 
         {/* Stats cards */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 16, marginBottom: 28 }}>
-          {STATS.map(({ label, value, sub }) => (
+          {stats.map(({ label, value, sub }) => (
             <div key={label} style={{
               background: C.white,
               borderTop: `1px solid ${C.border}`,
@@ -1040,16 +1280,41 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
               <p key={h} style={{
                 fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 400,
                 color: C.secondary, margin: 0,
-                textAlign: align as "left" | "right",
+                textAlign: align as "left" | "center" | "right",
               }}>{h}</p>
             ))}
           </div>
 
+          {isLoading ? (
+            <p role="status" style={{ margin: 0, padding: "36px 28px", color: C.secondary, textAlign: "center" }}>
+              Loading your packages…
+            </p>
+          ) : loadError ? (
+            <div role="alert" style={{ padding: "32px 28px", textAlign: "center" }}>
+              <p style={{ margin: "0 0 14px", color: "#B42318" }}>{loadError}</p>
+              <BtnSecondary onClick={() => void loadPackages()}>Try again</BtnSecondary>
+            </div>
+          ) : filtered.length === 0 ? (
+            <div style={{ padding: "44px 28px", textAlign: "center" }}>
+              <p style={{ margin: "0 0 6px", color: C.ink, fontWeight: 600 }}>
+                {packages.length === 0 ? "No packages yet" : "No packages match your filters"}
+              </p>
+              <p style={{ margin: 0, color: C.secondary, fontSize: 14 }}>
+                {packages.length === 0 ? "Create your first package to get started." : "Try a different search or status."}
+              </p>
+            </div>
+          ) : null}
+
           {/* Rows */}
           {filtered.map((pkg, i) => {
             const hov = hovRow === pkg.name;
+            const statusStyle = pkg.statusKey === "live" || pkg.statusKey === "approved"
+              ? { color: C.success, background: C.successBg }
+              : pkg.statusKey === "pending_review"
+                ? { color: C.warning, background: C.warningBg }
+                : { color: C.secondary, background: C.subtle };
             return (
-              <div key={pkg.name}
+              <div key={pkg.id}
                 style={{
                   display: "grid", gridTemplateColumns: cols.grid,
                   padding: "22px 28px", alignItems: "center",
@@ -1079,31 +1344,29 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
                       <path d="M5 12h14M12 5l7 7-7 7"/>
                     </svg>
                   </div>
-                  <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, color: C.secondary, margin: 0 }}>
-                    {pkg.duration}<span style={{ margin: "0 6px", opacity: 0.35 }}>·</span>Updated {pkg.updated}
-                  </p>
                 </div>
 
+                <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, color: C.secondary, margin: 0 }}>
+                  {pkg.destination}
+                </p>
+
+                <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, color: C.ink, margin: 0, textAlign: "right" }}>
+                  {pkg.duration}
+                </p>
+
+                <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, color: C.ink, margin: 0, textAlign: "center", fontVariantNumeric: "tabular-nums" }}>
+                  {pkg.price}
+                </p>
+
                 {/* Status badge */}
-                <div>
+                <div style={{ textAlign: "center" }}>
                   <span style={{
                     fontFamily: "var(--fc-font-body)", fontSize: 13, fontWeight: 500,
-                    color: pkg.statusColor, background: pkg.statusBg,
+                    color: statusStyle.color, background: statusStyle.background,
                     padding: "5px 12px", borderRadius: C.radiusPill,
                     display: "inline-block", whiteSpace: "nowrap",
                   }}>{pkg.status}</span>
                 </div>
-
-                {/* Numeric cells */}
-                {[pkg.views, pkg.bookings, pkg.revenue, pkg.commission].map((val, j) => (
-                  <p key={j} style={{
-                    fontFamily: "var(--fc-font-body)", fontSize: 15,
-                    fontWeight: 400,
-                    color: val != null ? C.ink : C.disabled,
-                    margin: 0, textAlign: "right",
-                    fontVariantNumeric: "tabular-nums",
-                  }}>{val ?? "—"}</p>
-                ))}
 
                 {/* Row action */}
                 <div style={{ textAlign: "right" }}>
@@ -1138,7 +1401,35 @@ export function CreatorNav({ activeItem, onItem, onNav }: {
   onNav: (s: Screen) => void;
 }) {
   const [profileOpen, setProfileOpen] = useState(false);
+  const [creatorProfile, setCreatorProfile] = useState({
+    displayName: "Creator",
+    initials: "C",
+    avatarUrl: null as string | null,
+  });
   const CONTAINER = "min(calc(100% - 80px), 1200px)";
+
+  useEffect(() => {
+    let cancelled = false;
+    void supabase.auth.getSession().then(async ({ data }) => {
+      const user = data.session?.user;
+      if (!user) return;
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("full_name,avatar_url")
+        .eq("id", user.id)
+        .maybeSingle();
+      if (!cancelled) {
+        setCreatorProfile(resolveCreatorProfile(profile, user.user_metadata, user.email ?? ""));
+      }
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  const handleLogOut = async () => {
+    await supabase.auth.signOut();
+    setProfileOpen(false);
+    onNav("login");
+  };
 
   return (
     <div style={{ position: "sticky", top: 0, zIndex: 100 }}>
@@ -1172,7 +1463,11 @@ export function CreatorNav({ activeItem, onItem, onNav }: {
 
             {/* Profile pill */}
             <div style={{ position: "relative" }}>
-              <button onClick={() => setProfileOpen((o) => !o)} style={{
+              <button
+                onClick={() => setProfileOpen((o) => !o)}
+                aria-expanded={profileOpen}
+                aria-label={`Open profile menu for ${creatorProfile.displayName}`}
+                style={{
                 display: "inline-flex", alignItems: "center", gap: 8,
                 height: 40, padding: "0 12px 0 4px",
                 border: 0, borderRadius: 9999,
@@ -1180,12 +1475,24 @@ export function CreatorNav({ activeItem, onItem, onNav }: {
                 fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 500,
                 cursor: "pointer", flexShrink: 0,
               }}>
-                <img
-                  src="https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=64&h=64&fit=crop&crop=face"
-                  alt="Profile"
-                  style={{ width: 28, height: 28, borderRadius: "50%", objectFit: "cover", margin: "0 2px" }}
-                />
-                Sophie L.
+                {creatorProfile.avatarUrl ? (
+                  <img
+                    src={creatorProfile.avatarUrl}
+                    alt=""
+                    style={{ width: 28, height: 28, borderRadius: "50%", objectFit: "cover", margin: "0 2px" }}
+                  />
+                ) : (
+                  <span aria-hidden="true" style={{
+                    width: 28, height: 28, borderRadius: "50%", margin: "0 2px",
+                    display: "inline-flex", alignItems: "center", justifyContent: "center",
+                    background: C.subtle, color: C.ink, fontSize: 12, fontWeight: 700,
+                  }}>
+                    {creatorProfile.initials}
+                  </span>
+                )}
+                <span style={{ maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {creatorProfile.displayName}
+                </span>
                 <Chevron />
               </button>
 
@@ -1200,7 +1507,7 @@ export function CreatorNav({ activeItem, onItem, onNav }: {
                   {[
                     { label: "View Travel Marketplace", action: () => { onNav("marketplace"); setProfileOpen(false); } },
                     { label: "Account settings",   action: () => setProfileOpen(false) },
-                    { label: "Log out",            action: () => { onNav("login"); setProfileOpen(false); } },
+                    { label: "Log out",            action: handleLogOut },
                   ].map(({ label, action }) => (
                     <button key={label} onClick={action} style={{
                       display: "block", width: "100%", textAlign: "left",

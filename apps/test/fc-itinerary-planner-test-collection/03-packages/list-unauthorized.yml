@@ -1,0 +1,29 @@
+info:
+  name: list-unauthorized
+  type: http
+  seq: 7
+
+http:
+  method: GET
+  url: "{{host-api}}/packages"
+  headers:
+    - name: accept
+      value: application/json
+
+runtime:
+  assertions:
+    - expression: res.status
+      operator: eq
+      value: "401"
+  scripts:
+    - type: tests
+      code: |-
+        test("request without a token is unauthorized", function() {
+          expect(res.body.error_code).to.equal("UNAUTHORIZED");
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

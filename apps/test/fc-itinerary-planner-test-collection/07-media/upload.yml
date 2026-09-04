@@ -1,0 +1,54 @@
+info:
+  name: upload
+  type: http
+  seq: 2
+
+http:
+  method: POST
+  url: "{{host-api}}/media/upload"
+  headers:
+    - name: accept
+      value: application/json
+  auth:
+    type: bearer
+    token: "{{access-token}}"
+  body:
+    type: multipart-form
+    data:
+      - name: package_id
+        type: text
+        value: "{{media-package-id}}"
+      - name: file
+        type: file
+        value:
+          - assets/pixel.png
+        contentType: image/png
+      - name: is_cover
+        type: text
+        value: "true"
+      - name: sort_order
+        type: text
+        value: "0"
+
+runtime:
+  assertions:
+    - expression: res.status
+      operator: eq
+      value: "201"
+  scripts:
+    - type: tests
+      code: |-
+        test("uploads an image for the draft", function() {
+          expect(res.body.media_type).to.equal("image");
+          expect(res.body.package_id).to.equal(bru.getVar("media-package-id"));
+          expect(res.body.url).to.be.a("string").and.not.be.empty;
+        });
+    - type: after-response
+      code: |-
+        bru.setVar("media-id", res.body.media_id);
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

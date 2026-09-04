@@ -1,6 +1,8 @@
 "use client";
 
+import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
+import { formatHotelStarRating, HOTEL_OPTIONS } from "./hotel-catalog";
 import RouteMap from "./route-map";
 import type { EditorState } from "../lib/ai/itinerary";
 
@@ -115,7 +117,16 @@ export default function ItineraryEditor({ onBack, initialState }: { onBack: () =
     { src: "https://images.unsplash.com/photo-1569718212165-3a8278d5f624?w=720&h=720&fit=crop", alt: "A bowl of Tokyo ramen" },
     { src: "https://images.unsplash.com/photo-1532236204992-f5e85c024202?w=720&h=720&fit=crop", alt: "Tokyo Tower illuminated at dusk" },
   ]);
+  const toSafeImageSrc = (value: string) => {
+    try {
+      const url = new URL(value, window.location.origin);
+      return ["https:", "http:", "blob:"].includes(url.protocol) ? url.href : "";
+    } catch {
+      return "";
+    }
+  };
   const [notice, setNotice] = useState("");
+  const [isGeneratingStory, setIsGeneratingStory] = useState(false);
   const [pendingDeleteDay, setPendingDeleteDay] = useState<number | null>(null);
   const [addingAfter, setAddingAfter] = useState<number | null>(null);
   const [draggedItemId, setDraggedItemId] = useState<number | null>(null);
@@ -127,7 +138,8 @@ export default function ItineraryEditor({ onBack, initialState }: { onBack: () =
   const [activityDraft, setActivityDraft] = useState({ title: "", price: "", address: "", startTime: "12:00", duration: "30", notes: "" });
   const [flightSearch, setFlightSearch] = useState("");
   const [selectedFlightId, setSelectedFlightId] = useState<string | null>(null);
-  const [hotelDraft, setHotelDraft] = useState({ name: "", address: "", checkIn: "15:00", checkOut: "11:00", room: "Standard room", price: "", notes: "" });
+  const [selectedHotelOptionId, setSelectedHotelOptionId] = useState<string | null>(null);
+  const [hotelNotes, setHotelNotes] = useState("");
   const [creatorDraft, setCreatorDraft] = useState({ title: "", category: "Activity", address: "", time: "12:00", duration: "60", price: "", reason: "" });
 
   useEffect(() => {
@@ -142,6 +154,43 @@ export default function ItineraryEditor({ onBack, initialState }: { onBack: () =
   const showNotice = (message: string) => {
     setNotice(message);
     window.setTimeout(() => setNotice(""), 2400);
+  };
+
+  const generateContent = async () => {
+    if (isGeneratingStory) return;
+    setIsGeneratingStory(true);
+    try {
+      const activityNames = items
+        .filter((item) => item.type !== "FLIGHT" && item.type !== "HOTEL")
+        .map((item) => (item.notes ? `${item.title} (${item.notes})` : item.title));
+
+      const res = await fetch("/api/ai/generate-content", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          packageTitle,
+          destination: "Tokyo, Japan",
+          selectedHotel,
+          dayNumber: activeDay + 1,
+          dayTitle: days[activeDay]?.title || `Day ${activeDay + 1}`,
+          items: activityNames,
+          vibe: days[activeDay]?.meta || "Culture & Culinary exploration",
+        }),
+      });
+
+      const data = await res.json();
+      if (data.listing) {
+        setStory(data.listing);
+        showNotice("Story generated with Gemini AI!");
+      } else if (data.error) {
+        showNotice(data.error);
+      }
+    } catch (err) {
+      console.error("Failed to generate story:", err);
+      showNotice("Failed to connect to AI generator");
+    } finally {
+      setIsGeneratingStory(false);
+    }
   };
 
   const savePackageTitle = () => {
@@ -259,18 +308,22 @@ export default function ItineraryEditor({ onBack, initialState }: { onBack: () =
   const matchingFlights = AVAILABLE_FLIGHTS.filter((flight) =>
     [flight.airline, flight.number, flight.from, flight.to].join(" ").toLowerCase().includes(flightSearch.trim().toLowerCase()),
   );
+  const selectedHotelOption = HOTEL_OPTIONS.find(({ id }) => id === selectedHotelOptionId);
 
   const createHotel = () => {
-    if (addingAfter === null || !hotelDraft.name.trim()) return;
+    if (addingAfter === null || !selectedHotelOption) return;
     insertItem(addingAfter, {
-      time: hotelDraft.checkIn,
+      time: selectedHotelOption.checkIn,
       type: "HOTEL",
-      title: hotelDraft.name.trim(),
-      price: hotelDraft.price.trim() ? `$${hotelDraft.price.trim()}` : "$0",
+      title: selectedHotelOption.name,
+      price: `$${selectedHotelOption.price.toLocaleString("en-US")}`,
       icon: "hotel",
       status: "pass",
+      address: selectedHotelOption.address,
+      notes: hotelNotes.trim(),
     });
-    setHotelDraft({ name: "", address: "", checkIn: "15:00", checkOut: "11:00", room: "Standard room", price: "", notes: "" });
+    setSelectedHotelOptionId(null);
+    setHotelNotes("");
   };
 
   const createCreatorPick = () => {
@@ -345,13 +398,26 @@ export default function ItineraryEditor({ onBack, initialState }: { onBack: () =
           <section className="story-section">
             <div className="section-label"><h3>Tell your story</h3><span>3 uploaded</span></div>
             <div className="photo-grid">
-              {photos.map((photo) => <img key={photo.src} src={photo.src} alt={photo.alt} />)}
+              {photos.map((photo) => <img key={photo.src} src={toSafeImageSrc(photo.src)} alt={photo.alt} />)}
               <label className="photo-add"><input type="file" accept="image/png,image/jpeg" onChange={(event) => { const file = event.target.files?.[0]; if (!file) return; setPhotos([...photos, { src: URL.createObjectURL(file), alt: file.name }]); showNotice("Photo uploaded"); }} /><Icon name="plus" size={30} /><span>Add photo</span><small>JPG or PNG</small></label>
             </div>
           </section>
 
           <section className="story-copy">
-            <div className="section-label"><h3>Your story</h3><button className="ai-button" onClick={() => setStory("Start in the electric heart of Tokyo, then slow down over a steaming bowl of ramen before watching the city glow from Tokyo Tower.")}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m12 3 1.2 3.8L17 8l-3.8 1.2L12 13l-1.2-3.8L7 8l3.8-1.2zM18 14l.8 2.2L21 17l-2.2.8L18 20l-.8-2.2L15 17l2.2-.8z" /></svg> AI write for me</button></div>
+            <div className="section-label">
+              <h3>Your story</h3>
+              <button
+                className="ai-button"
+                disabled={isGeneratingStory}
+                onClick={generateContent}
+                aria-label="Generate story with AI"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="m12 3 1.2 3.8L17 8l-3.8 1.2L12 13l-1.2-3.8L7 8l3.8-1.2zM18 14l.8 2.2L21 17l-2.2.8L18 20l-.8-2.2L15 17l2.2-.8z" />
+                </svg>
+                {isGeneratingStory ? "Generating story…" : "AI write for me"}
+              </button>
+            </div>
             <textarea value={story} onChange={(event) => setStory(event.target.value)} placeholder="Share your insider tips and personal recommendations…" aria-label="Your story" />
           </section>
 
@@ -410,16 +476,24 @@ export default function ItineraryEditor({ onBack, initialState }: { onBack: () =
 
                   {addFlow === "hotel" && <>
                     <div className="inline-add-head"><button className="inline-back" onClick={() => setAddFlow("type")} aria-label="Back to item types">‹</button><h4>Add hotel</h4><button onClick={() => setAddingAfter(null)}>Cancel</button></div>
-                    <div className="activity-form">
-                      <label className="full"><span>Hotel name</span><input value={hotelDraft.name} onChange={(event) => setHotelDraft({ ...hotelDraft, name: event.target.value })} placeholder="Shibuya Excel Hotel Tokyu" /></label>
-                      <label className="full"><span>Address</span><input value={hotelDraft.address} onChange={(event) => setHotelDraft({ ...hotelDraft, address: event.target.value })} /></label>
-                      <label><span>Check-in</span><input type="time" value={hotelDraft.checkIn} onChange={(event) => setHotelDraft({ ...hotelDraft, checkIn: event.target.value })} /></label>
-                      <label><span>Check-out</span><input type="time" value={hotelDraft.checkOut} onChange={(event) => setHotelDraft({ ...hotelDraft, checkOut: event.target.value })} /></label>
-                      <label><span>Price</span><div className="price-input"><b>$</b><input inputMode="decimal" value={hotelDraft.price} onChange={(event) => setHotelDraft({ ...hotelDraft, price: event.target.value.replace(/[^0-9.]/g, "") })} /></div></label>
-                      <label className="full"><span>Room type</span><select value={hotelDraft.room} onChange={(event) => setHotelDraft({ ...hotelDraft, room: event.target.value })}><option>Standard room</option><option>Deluxe room</option><option>Suite</option><option>Shared room</option></select></label>
-                      <label className="full"><span>Notes</span><textarea value={hotelDraft.notes} onChange={(event) => setHotelDraft({ ...hotelDraft, notes: event.target.value })} placeholder="Add check-in or booking details" /></label>
+                    <p className="database-note">Choose a hotel from the fixed Marketplace options.</p>
+                    <div className="hotel-choice-grid" role="radiogroup" aria-label="Available hotels">
+                      {HOTEL_OPTIONS.map((hotel) => <button key={hotel.id} type="button" role="radio" aria-checked={selectedHotelOptionId === hotel.id} className={`hotel-choice-card${selectedHotelOptionId === hotel.id ? " selected" : ""}`} onClick={() => setSelectedHotelOptionId(hotel.id)}>
+                        <span className="hotel-choice-image"><Image src={hotel.image} alt={hotel.imageAlt} fill sizes="(max-width: 720px) 100vw, 33vw" /></span>
+                        <span className="hotel-choice-copy"><strong>{hotel.name}</strong><span className="hotel-star-rating">{formatHotelStarRating(hotel.starRating)}</span><small>{hotel.area}</small><span>{hotel.room}</span><b>${hotel.price.toLocaleString("en-US")} total</b></span>
+                        <span className="hotel-choice-check" aria-hidden="true">{selectedHotelOptionId === hotel.id ? <Icon name="check" size={20} /> : ""}</span>
+                      </button>)}
                     </div>
-                    <div className="activity-form-actions"><button className="publish-button" disabled={!hotelDraft.name.trim()} onClick={createHotel}>Add hotel</button></div>
+                    {selectedHotelOption && <div className="activity-form hotel-fixed-details">
+                      <label className="full"><span>Hotel name</span><input value={selectedHotelOption.name} readOnly /></label>
+                      <label className="full"><span>Address</span><input value={selectedHotelOption.address} readOnly /></label>
+                      <label><span>Check-in</span><input value={selectedHotelOption.checkIn} readOnly /></label>
+                      <label><span>Check-out</span><input value={selectedHotelOption.checkOut} readOnly /></label>
+                      <label><span>Price</span><div className="price-input"><b>$</b><input value={selectedHotelOption.price.toLocaleString("en-US")} readOnly /></div></label>
+                      <label className="full"><span>Room type</span><input value={selectedHotelOption.room} readOnly /></label>
+                      <label className="full"><span>Notes</span><textarea value={hotelNotes} onChange={(event) => setHotelNotes(event.target.value)} placeholder="Add check-in or booking details" /></label>
+                    </div>}
+                    <div className="activity-form-actions"><button className="publish-button" disabled={!selectedHotelOption} onClick={createHotel}>Add hotel</button></div>
                   </>}
 
                   {addFlow === "creator" && <>

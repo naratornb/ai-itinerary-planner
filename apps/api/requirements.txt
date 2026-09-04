@@ -1,7 +1,10 @@
 fastapi==0.115.12
 requests==2.33.0
 python-dotenv==1.2.2
+
 supabase==2.31.0
 pandas==2.2.3
 rank-bm25==0.2.2
 nltk==3.9.1
+python-multipart==0.0.20
+
