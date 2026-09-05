@@ -8,10 +8,15 @@ import { APP_ROUTES } from "../../../lib/routes";
 
 export default function PackageEditorPage() {
   const router = useRouter();
-  const { setWizardStep } = useDemoState();
+  const { setWizardStep, generatedItinerary } = useDemoState();
 
-  return <ItineraryEditor onBack={() => {
-    setWizardStep(3);
-    router.push(APP_ROUTES.wizard);
-  }} />;
+  return (
+    <ItineraryEditor
+      initialState={generatedItinerary}
+      onBack={() => {
+        setWizardStep(3);
+        router.push(APP_ROUTES.wizard);
+      }}
+    />
+  );
 }
