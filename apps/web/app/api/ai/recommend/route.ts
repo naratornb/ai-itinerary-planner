@@ -40,6 +40,19 @@ export async function POST(request: NextRequest) {
       signal: controller.signal,
     });
 
+    // A 404 here means the configured API has no /ai/recommend route — a
+    // gateway misconfiguration, not "your trip was not found". Relaying it
+    // verbatim makes the two indistinguishable.
+    if (upstream.status === 404) {
+      return NextResponse.json(
+        {
+          error: "endpoint_unavailable",
+          detail: `${NEXT_PUBLIC_API_URL} has no /ai/recommend route. Point NEXT_PUBLIC_API_URL at an API that serves it.`,
+        },
+        { status: 502 },
+      );
+    }
+
     const data = await upstream.json();
     return NextResponse.json(data, { status: upstream.status });
   } catch (error) {
