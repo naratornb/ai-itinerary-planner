@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from urllib import request as urlrequest, error as urlerror
 
 # ── Configuration ──────────────────────────────────────────────────────────────
-GEMINI_MODEL    = os.environ.get("GEMINI_MODEL",    "gemini-2.5-flash")
+GEMINI_MODEL    = os.environ.get("GEMINI_MODEL",    "gemini-3.6-flash")
 ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6")
 LLM_TEMPERATURE = float(os.environ.get("LLM_TEMPERATURE", "0.1"))
 
@@ -80,10 +80,9 @@ def _call_gemini(
         "generationConfig": {
             "temperature": LLM_TEMPERATURE,
             "maxOutputTokens": max_tokens,
-            # Thinking is on by default in 2.5 Flash and its tokens count
-            # against maxOutputTokens. For a fixed JSON schema it adds
-            #  latency and cost without improving the output.
-            "thinkingConfig": {"thinkingBudget": 0},
+            # No thinkingConfig: it was tuned for 2.5 Flash, and the models
+            # used since reject it with HTTP 400 "invalid argument" on every
+            # call. Re-add only against a model that accepts it.
         },
     }
 

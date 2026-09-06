@@ -71,3 +71,57 @@ def test_query_is_stripped_before_reaching_the_engine():
         client.post("/ai/recommend", json={"query": f"  {QUERY}  "})
 
     engine.assert_called_once_with(QUERY, origin_city="Sydney")
+
+
+def test_error_responses_carry_an_error_id_for_log_correlation():
+    """The client gets no internal detail, so it needs a handle into the logs."""
+    with patch("app.ai.router.generate_itinerary", side_effect=Exception("boom")):
+        response = client.post("/ai/recommend", json={"query": QUERY})
+
+    details = response.json()["details"]
+    assert len(details["error_id"]) == 8
+    assert "boom" not in response.text
+
+
+def test_summarize_llm_error_keeps_the_provider_explanation():
+    """A bare status code is unactionable: HTTP 400 is only useful with the body."""
+    from app.ai.engine import summarize_llm_error
+
+    detailed = summarize_llm_error(
+        'Gemini HTTP 400: {"error":{"message":"Request contains an invalid argument."}}'
+    )
+    assert "400" in detailed
+    assert "invalid argument" in detailed
+
+    # 503/429 stay short — the status alone already says what to do.
+    assert summarize_llm_error("Gemini HTTP 503: upstream") == (
+        "Gemini temporarily unavailable (HTTP 503)."
+    )
+    assert summarize_llm_error("Gemini HTTP 429: slow down") == (
+        "Gemini rate limit reached (HTTP 429)."
+    )
+
+
+def test_exhausted_llm_attempts_fall_back_instead_of_raising():
+    """Every LLM attempt failing must degrade to the deterministic itinerary.
+
+    Regression: the [timing] print referenced t_parse, which is only bound on a
+    successful parse. All-attempts-failed raised UnboundLocalError, masking the
+    real provider error and skipping the fallback entirely.
+    """
+    from app.ai import engine
+
+    fallback = {"days": [], "bookable": False, "source": "fallback"}
+
+    # Patch the two heavy seams either side of the LLM loop so the test
+    # exercises the failure path itself, not Supabase or prompt building.
+    with (
+        patch.object(engine, "query_inventory", return_value={}),
+        patch.object(engine, "build_ai_prompt", return_value="prompt"),
+        patch.object(engine, "call_llm", side_effect=RuntimeError("Gemini HTTP 400: nope")),
+        patch.object(engine, "build_fallback_itinerary", return_value=fallback) as fb,
+    ):
+        result = engine.generate_itinerary("4 day culture trip to Tokyo", origin_city="Sydney")
+
+    assert result == fallback
+    fb.assert_called_once()
