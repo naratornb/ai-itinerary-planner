@@ -1,18 +1,24 @@
+import logging
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, Query
 
 from app.ai import service
+from app.ai.engine import generate_itinerary
 from app.ai.schemas import (
     AISuggestion,
     AISuggestionAcceptRequest,
     AISuggestionAcceptResponse,
     AISuggestionListResponse,
     AISuggestRequest,
+    Itinerary,
+    RecommendRequest,
 )
 from app.core import _err, require_user_ctx
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
 
 SuggestionStatus = Literal["pending", "accepted", "dismissed"]
 
@@ -84,6 +90,23 @@ def accept_suggestion(
     if outcome == "already_resolved":
         return _resolved(result)
     return result
+
+
+@router.post("/ai/recommend", response_model=Itinerary)
+def recommend(payload: RecommendRequest):
+    """Plain `def` on purpose: generate_itinerary() blocks on Supabase and
+    Gemini, so FastAPI runs it in a threadpool instead of the event loop."""
+    try:
+        return generate_itinerary(payload.query, origin_city=payload.origin_city)
+    except EnvironmentError:
+        logger.exception("Itinerary engine is misconfigured")
+        return _err(500, "CONFIG_ERROR", "AI service is not configured.")
+    except Exception as exc:  # noqa: BLE001 — engine raises bare Exception
+        # Upstream detail goes to logs only — never to the client.
+        logger.exception("Itinerary generation failed")
+        if "429" in str(exc) or "quota" in str(exc).lower():
+            return _err(429, "RATE_LIMITED", "AI provider quota exceeded.")
+        return _err(502, "LLM_FAILURE", "AI provider request failed.")
 
 
 @router.patch("/ai/suggestions/{suggestion_id}/dismiss", response_model=AISuggestion)

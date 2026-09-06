@@ -4,11 +4,14 @@ import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
 import { formatHotelStarRating, HOTEL_OPTIONS } from "./hotel-catalog";
 import RouteMap from "./route-map";
+import type { EditorState } from "../lib/ai/itinerary";
 
 type IconName = "plane" | "star" | "hotel" | "plus" | "alert" | "check" | "clock" | "chevron";
 
 type TimelineItem = {
   id: number;
+  dayIndex?: number;      // which day tab this belongs to (AI-generated items)
+  sourceId?: string;      // inventory id from Supabase — proves provenance
   time: string;
   type: string;
   title: string;
@@ -74,20 +77,41 @@ function StatusToggle({ tone, count, label, expanded, onClick }: { tone: "critic
   return <button className="status-toggle" aria-expanded={expanded} onClick={onClick}><span className={`${tone}-icon`}><Icon name={tone === "pass" ? "check" : "alert"} size={16} /></span><strong>{count}</strong><span>{label}</span><span className="status-chevron"><Icon name="chevron" size={17} /></span></button>;
 }
 
-export default function ItineraryEditor({ onBack }: { onBack: () => void }) {
+export default function ItineraryEditor({ onBack, initialState }: { onBack: () => void; initialState?: EditorState | null }) {
   const nextItemId = useRef(1000);
+  // initialState is the AI result. Absent means manual build, so fall back
+  // to the demo defaults.
   const [packageTitle, setPackageTitle] = useState("Tokyo Food & Culture Experience");
   const [titleDraft, setTitleDraft] = useState("Tokyo Food & Culture Experience");
   const [editingTitle, setEditingTitle] = useState(false);
   const [activeDay, setActiveDay] = useState(0);
   const [days, setDays] = useState(INITIAL_DAYS);
   const [story, setStory] = useState("");
-  const [items, setItems] = useState(INITIAL_ITEMS);
+  const [items, setItems] = useState<TimelineItem[]>(INITIAL_ITEMS);
   const [saved, setSaved] = useState(false);
   const [published, setPublished] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [selectedHotel, setSelectedHotel] = useState("Shibuya Excel Hotel Tokyu");
   const [packagePrice, setPackagePrice] = useState(1928);
+
+  // initialState comes from sessionStorage, which does not exist on the
+  // server. Reading it during the first render makes the server and client
+  // produce different text, which is the hydration mismatch. Apply it after
+  // mount instead; the ref stops a re-render from wiping the user's edits.
+  const appliedInitialState = useRef(false);
+
+  useEffect(() => {
+    if (appliedInitialState.current || !initialState) return;
+    appliedInitialState.current = true;
+
+    setPackageTitle(initialState.packageTitle);
+    setTitleDraft(initialState.packageTitle);
+    setDays(initialState.days);
+    setItems(initialState.items as TimelineItem[]);
+    setStory(initialState.story);
+    setSelectedHotel(initialState.selectedHotel);
+    setPackagePrice(initialState.packagePrice);
+  }, [initialState]);
   const [photos, setPhotos] = useState([
     { src: "https://images.unsplash.com/photo-1519501025264-65ba15a82390?w=720&h=720&fit=crop", alt: "Shibuya crossing at night" },
     { src: "https://images.unsplash.com/photo-1569718212165-3a8278d5f624?w=720&h=720&fit=crop", alt: "A bowl of Tokyo ramen" },
@@ -335,6 +359,15 @@ export default function ItineraryEditor({ onBack }: { onBack: () => void }) {
     showNotice(`Day ${indexToDelete + 1} deleted`);
   };
 
+  // Items carry dayIndex only when they came from the AI. Manual/demo items
+  // have none, so show everything in that case (preserves old behaviour).
+  // Pair each item with its ORIGINAL index — delete, drag and insert all
+  // index into the full items[] array.
+  const hasDayTags = items.some((item) => item.dayIndex !== undefined);
+  const visibleItems = items
+    .map((item, index) => ({ item, index }))
+    .filter(({ item }) => !hasDayTags || (item.dayIndex ?? 0) === activeDay);
+
   return (
     <main className="itinerary-editor">
       <header className="editor-topbar">
@@ -355,7 +388,7 @@ export default function ItineraryEditor({ onBack }: { onBack: () => void }) {
           </div>)}
           <button className="add-day" onClick={() => { const nextDay = days.length + 1; setDays([...days, { day: nextDay, count: 0, title: "Untitled day", meta: "Add your first stop" }]); setActiveDay(days.length); showNotice("A new day was added"); }}><Icon name="plus" size={24} /><span>Add Day</span></button>
         </div>
-        <div className="trip-length"><strong>3 days</strong><span>2 nights</span></div>
+        <div className="trip-length"><strong>{days.length} days</strong><span>{Math.max(0, days.length - 1)} nights</span></div>
       </nav>
 
       <div className="editor-shell">
@@ -391,7 +424,7 @@ export default function ItineraryEditor({ onBack }: { onBack: () => void }) {
           <section className="timeline-section">
             <h3>Timeline</h3>
             <div className="timeline-list">
-              {items.map((item, index) => <div key={item.id} className={`timeline-group ${addingAfter === index ? "adding" : ""} ${dropTarget?.index === index ? `drop-${dropTarget.position}` : ""}`} onDragOver={(event) => { event.preventDefault(); if (draggedItemId === item.id) return; const rect = event.currentTarget.getBoundingClientRect(); setDropTarget({ index, position: event.clientY < rect.top + rect.height / 2 ? "before" : "after" }); }} onDrop={(event) => { event.preventDefault(); dropItem(); endDrag(); }}>
+              {visibleItems.map(({ item, index }) => <div key={item.id} className={`timeline-group ${addingAfter === index ? "adding" : ""} ${dropTarget?.index === index ? `drop-${dropTarget.position}` : ""}`} onDragOver={(event) => { event.preventDefault(); if (draggedItemId === item.id) return; const rect = event.currentTarget.getBoundingClientRect(); setDropTarget({ index, position: event.clientY < rect.top + rect.height / 2 ? "before" : "after" }); }} onDrop={(event) => { event.preventDefault(); dropItem(); endDrag(); }}>
                 <article className={`timeline-item ${item.status} ${draggedItemId === item.id ? "dragging" : ""} ${item.type !== "FLIGHT" && item.type !== "HOTEL" ? "editable" : ""} ${editingItem?.id === item.id ? "expanded" : ""}`} onClick={(event) => { if (item.type === "FLIGHT" || item.type === "HOTEL" || (event.target as HTMLElement).closest("button")) return; startEditingItem(item); }} onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && item.type !== "FLIGHT" && item.type !== "HOTEL" && !(event.target as HTMLElement).closest("button")) { event.preventDefault(); startEditingItem(item); } }} tabIndex={item.type !== "FLIGHT" && item.type !== "HOTEL" ? 0 : undefined} role={item.type !== "FLIGHT" && item.type !== "HOTEL" ? "button" : undefined} aria-expanded={item.type !== "FLIGHT" && item.type !== "HOTEL" ? editingItem?.id === item.id : undefined}>
                   <button className="drag-handle" draggable aria-label={`Move ${item.title}. Use drag and drop, or the up and down arrow keys.`} onDragStart={(event) => { setEditingItem(null); setDraggedItemId(item.id); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", String(item.id)); }} onDragEnd={endDrag} onKeyDown={(event) => { if (event.key === "ArrowUp") { event.preventDefault(); moveItem(index, index - 1); } if (event.key === "ArrowDown") { event.preventDefault(); moveItem(index, index + 1); } }}><span /><span /><span /><span /><span /><span /></button>
                   <div className="item-time"><Icon name={item.icon} /><strong>{item.time}</strong></div>
@@ -547,7 +580,7 @@ export default function ItineraryEditor({ onBack }: { onBack: () => void }) {
           </div>
         </section>
       </div>}
-      {previewOpen && <div className="preview-backdrop" role="presentation" onMouseDown={() => setPreviewOpen(false)}><section className="preview-dialog" role="dialog" aria-modal="true" aria-labelledby="preview-title" onMouseDown={(event) => event.stopPropagation()}><button className="preview-close" onClick={() => setPreviewOpen(false)} aria-label="Close preview"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg></button><span>Traveller preview</span><h2 id="preview-title">{packageTitle}</h2><p>{story || "Your itinerary story will appear here. Add a personal introduction before publishing."}</p><div><strong>{days.length} days / 2 nights</strong><strong>${packagePrice.toLocaleString()}</strong></div><button className="publish-button" onClick={() => { setPreviewOpen(false); setPublished(true); showNotice("Package ready to publish"); }}>Continue to publish</button></section></div>}
+      {previewOpen && <div className="preview-backdrop" role="presentation" onMouseDown={() => setPreviewOpen(false)}><section className="preview-dialog" role="dialog" aria-modal="true" aria-labelledby="preview-title" onMouseDown={(event) => event.stopPropagation()}><button className="preview-close" onClick={() => setPreviewOpen(false)} aria-label="Close preview"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg></button><span>Traveller preview</span><h2 id="preview-title">{packageTitle}</h2><p>{story || "Your itinerary story will appear here. Add a personal introduction before publishing."}</p><div><strong>{days.length} days / {Math.max(0, days.length - 1)} nights</strong><strong>${packagePrice.toLocaleString()}</strong></div><button className="publish-button" onClick={() => { setPreviewOpen(false); setPublished(true); showNotice("Package ready to publish"); }}>Continue to publish</button></section></div>}
     </main>
   );
 }

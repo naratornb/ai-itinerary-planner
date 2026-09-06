@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import type { WizardSelection } from "../lib/ai/itinerary";
 import { useRouter } from "next/navigation";
 import type { Session } from "@supabase/supabase-js";
 
@@ -12,13 +13,16 @@ import {
   signInWithEmail,
   type CreatorPackage,
 } from "../lib/creator-api";
+
 import {
   fetchMarketplacePackages,
   searchMarketplacePackages,
   uniqueDestinationSuggestions,
   type MarketplacePackageSummary,
 } from "../lib/marketplace-api";
+
 import { supabase } from "../lib/supabase/client";
+
 const creatorBannerImg = "/creator-banner.png";
 
 
@@ -1744,7 +1748,7 @@ const VIBES = [
   { id: "scenic",     label: "Scenic",           desc: "Beautiful views, nature, and photo-worthy spots",      img: "https://images.unsplash.com/photo-1626948688703-0136bc0a90da?w=600&h=320&fit=crop" },
 ];
 
-export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequestId = 0, hasBuilt = false }: { onNav: (s: Screen) => void; initialStep?: number; requestedStep?: number; stepRequestId?: number; hasBuilt?: boolean }) {
+export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequestId = 0, hasBuilt = false, onBuild }: { onNav: (s: Screen) => void; initialStep?: number; requestedStep?: number; stepRequestId?: number; hasBuilt?: boolean; onBuild?: (selection: WizardSelection) => Promise<void> }) {
   const [step, setStep] = useState(initialStep);
   const [selected, setSelected] = useState<string | null>(null);
   const [dest, setDest] = useState("");
@@ -1764,23 +1768,16 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
     setStep(requestedStep);
   }, [requestedStep, stepRequestId]);
 
+  // Creeps toward 90% while the request is in flight; the real response
+  // drives it to 100. Never completes on its own.
   useEffect(() => {
     if (!isLoading) return;
     setProgress(0);
     const interval = setInterval(() => {
-      setProgress((p) => {
-        if (p >= 100) { clearInterval(interval); return 100; }
-        return p + (p < 60 ? 1.2 : p < 85 ? 0.6 : 0.3);
-      });
+      setProgress((p) => (p >= 90 ? 90 : p + (p < 60 ? 1.2 : 0.4)));
     }, 60);
     return () => clearInterval(interval);
   }, [isLoading]);
-
-  useEffect(() => {
-    if (!isLoading || progress < 100) return;
-    const timeout = window.setTimeout(() => onNav("editor"), 500);
-    return () => window.clearTimeout(timeout);
-  }, [isLoading, progress, onNav]);
 
   const canContinue = step === 0 ? (selected !== null || dest.trim().length > 0) : step === 1 ? vibes.length > 0 : step === 2 ? duration !== null : step === 3 ? season !== null : true;
   const filteredDestinations = DESTINATIONS.filter((destination) => {
@@ -1801,7 +1798,7 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
     season,
   });
   const setupHasChanged = lastBuiltSetup !== null && currentSetup !== lastBuiltSetup;
-  const continueWizard = () => {
+  const continueWizard = async () => {
     if (step === 3) {
       if (hasBuilt && !setupHasChanged) {
         onNav("editor");
@@ -1810,6 +1807,23 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
       setLastBuiltSetup(currentSetup);
       setProgress(0);
       setStep(4);
+
+      if (!onBuild) { onNav("editor"); return; }   // no handler: old behaviour
+
+      try {
+        await onBuild({
+          destination: selected ?? dest.trim(),
+          vibes,
+          duration,
+          customDurationDays,
+          season,
+          groupSize: 2,
+        });
+        setProgress(100);                          // onBuild navigates on success
+      } catch {
+        setProgress(0);
+        setStep(3);                                // drop back so they can retry
+      }
       return;
     }
     setStep((currentStep) => currentStep + 1);
