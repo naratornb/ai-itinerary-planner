@@ -2584,9 +2584,9 @@ def summarize_llm_error(
                 "(HTTP 429)."
             )
 
-        return (
-            f"Gemini HTTP error {code}."
-        )
+        # Every other code (400 above all) is only actionable with Gemini's
+        # own explanation, so keep it instead of reporting a bare status.
+        return f"Gemini HTTP error {code}: {text[:300]}"
 
     first_line = text.splitlines()[0]
 
@@ -2707,6 +2707,11 @@ def generate_itinerary(
 
     t_llm_start = time.perf_counter()
     raw = ""
+    # Only assigned on a successful parse, but the [timing] print below runs
+    # unconditionally. Left unbound, every-attempt-failed raised
+    # UnboundLocalError, which masked the real LLM error and skipped the
+    # deterministic fallback further down.
+    t_parse = 0.0
 
     for attempt in range(
         1,

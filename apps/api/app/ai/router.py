@@ -1,5 +1,6 @@
 import logging
 from typing import Literal, Optional
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Query
 
@@ -99,14 +100,26 @@ def recommend(payload: RecommendRequest):
     try:
         return generate_itinerary(payload.query, origin_city=payload.origin_city)
     except EnvironmentError:
-        logger.exception("Itinerary engine is misconfigured")
-        return _err(500, "CONFIG_ERROR", "AI service is not configured.")
+        error_id = uuid4().hex[:8]
+        logger.exception("Itinerary engine is misconfigured [error_id=%s]", error_id)
+        return _err(
+            500, "CONFIG_ERROR", "AI service is not configured.", {"error_id": error_id}
+        )
     except Exception as exc:  # noqa: BLE001 — engine raises bare Exception
-        # Upstream detail goes to logs only — never to the client.
-        logger.exception("Itinerary generation failed")
+        # The exception text can carry provider payloads, so it goes to the
+        # logs only. error_id is the client's handle for finding that line.
+        error_id = uuid4().hex[:8]
+        logger.exception("Itinerary generation failed [error_id=%s]", error_id)
         if "429" in str(exc) or "quota" in str(exc).lower():
-            return _err(429, "RATE_LIMITED", "AI provider quota exceeded.")
-        return _err(502, "LLM_FAILURE", "AI provider request failed.")
+            return _err(
+                429,
+                "RATE_LIMITED",
+                "AI provider quota exceeded.",
+                {"error_id": error_id},
+            )
+        return _err(
+            502, "LLM_FAILURE", "AI provider request failed.", {"error_id": error_id}
+        )
 
 
 @router.patch("/ai/suggestions/{suggestion_id}/dismiss", response_model=AISuggestion)
