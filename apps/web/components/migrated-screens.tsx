@@ -7,7 +7,6 @@ import type { Session } from "@supabase/supabase-js";
 import {
   createPackage,
   fetchOwnPackages,
-  formatDashboardStats,
   formatCreatorPackage,
   resolveCreatorProfile,
   signInWithEmail,
@@ -1149,12 +1148,12 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
     return matchesTab && matchesSearch;
   });
 
-  const stats = formatDashboardStats({
-    packageCount: packages.length,
-    bookingCount: null,
-    commissionRate: null,
-    commissionAud: null,
-  });
+  const stats = [
+    { label: "Packages", value: String(packages.length), sub: "All your packages" },
+    { label: "Live", value: String(packages.filter((p) => p.status === "live").length), sub: "Published & bookable" },
+    { label: "Approved", value: String(packages.filter((p) => p.status === "approved").length), sub: "Ready to publish" },
+    { label: "Drafts", value: String(packages.filter((p) => p.status === "draft").length), sub: "Still in progress" },
+  ];
 
   const cols = {
     grid: "minmax(0,1.8fr) minmax(140px,1fr) 100px 120px 140px 150px",
