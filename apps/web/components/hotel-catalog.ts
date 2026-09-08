@@ -1,3 +1,10 @@
+export type HotelRoomOption = {
+  id: string;
+  name: string;
+  price: number;
+  description: string;
+};
+
 export type HotelOption = {
   id: string;
   name: string;
@@ -10,6 +17,7 @@ export type HotelOption = {
   starRating: number;
   image: string;
   imageAlt: string;
+  rooms: readonly HotelRoomOption[];
 };
 
 export const HOTEL_OPTIONS: readonly HotelOption[] = [
@@ -25,6 +33,11 @@ export const HOTEL_OPTIONS: readonly HotelOption[] = [
     starRating: 4,
     image: "/hotels/shibuya-excel.jpg",
     imageAlt: "Hotel pool and terrace in warm evening light",
+    rooms: [
+      { id: "shibuya-excel-standard", name: "Standard room", price: 720, description: "1 double bed, city view" },
+      { id: "shibuya-excel-twin", name: "Twin room", price: 840, description: "2 single beds, city view" },
+      { id: "shibuya-excel-deluxe", name: "Deluxe room", price: 980, description: "1 king bed, higher floor" },
+    ],
   },
   {
     id: "park-hyatt",
@@ -38,6 +51,11 @@ export const HOTEL_OPTIONS: readonly HotelOption[] = [
     starRating: 5,
     image: "/hotels/park-hyatt.jpg",
     imageAlt: "Guest room at Park Hyatt Tokyo",
+    rooms: [
+      { id: "park-hyatt-deluxe", name: "Deluxe room", price: 1680, description: "1 king bed, park view" },
+      { id: "park-hyatt-twin-deluxe", name: "Twin Deluxe room", price: 1820, description: "2 queen beds, park view" },
+      { id: "park-hyatt-suite", name: "Park Suite", price: 2450, description: "1 king bed, separate living area" },
+    ],
   },
   {
     id: "9h-capsule",
@@ -51,6 +69,11 @@ export const HOTEL_OPTIONS: readonly HotelOption[] = [
     starRating: 2,
     image: "/hotels/9h-capsule.jpg",
     imageAlt: "Compact shared sleeping room with bunk beds",
+    rooms: [
+      { id: "9h-capsule-shared", name: "Shared room", price: 270, description: "Mixed capsule pod, shared floor" },
+      { id: "9h-capsule-private", name: "Private pod", price: 340, description: "Single occupancy capsule pod" },
+      { id: "9h-capsule-twin", name: "Twin pod", price: 410, description: "2 adjoining capsule pods" },
+    ],
   },
 ];
 

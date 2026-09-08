@@ -23,6 +23,59 @@ export type CreatorPackage = {
   cover_image_url?: string | null;
 };
 
+export type CreatorHotelDetail = {
+  hotel_id: string | null;
+  hotel_name: string | null;
+  star_rating: number | null;
+  city: string | null;
+  address: string | null;
+  check_in_date: string | null;
+  check_out_date: string | null;
+  price_per_night_aud: number | null;
+  room_type: string | null;
+};
+
+export type CreatorFlightDetail = {
+  flight_id: string | null;
+  airline: string | null;
+  flight_number: string | null;
+  origin_iata: string | null;
+  destination_iata: string | null;
+  departure_datetime: string | null;
+  arrival_datetime: string | null;
+  cabin_class: string | null;
+  price_aud: number | null;
+};
+
+export type CreatorActivityDetail = {
+  activity_id: string | null;
+  sequence_order: number | null;
+  activity_name: string | null;
+  activity_date: string | null;
+  city: string | null;
+  duration_hours: number | null;
+  price_aud: number | null;
+  description: string | null;
+  booking_required: boolean | null;
+};
+
+export type CreatorPackageDay = {
+  id: string | null;
+  day_number: number | null;
+  title: string | null;
+  summary: string | null;
+};
+
+export type CreatorPackageDetail = {
+  package_id: string;
+  title: string;
+  duration_days: number;
+  flights: CreatorFlightDetail[];
+  hotels: CreatorHotelDetail[];
+  activities: CreatorActivityDetail[];
+  days: CreatorPackageDay[];
+};
+
 type ProfileRow = {
   full_name?: string | null;
   avatar_url?: string | null;
@@ -169,4 +222,49 @@ export async function fetchOwnPackages(
 
   const payload = (await response.json()) as PackageListResponse;
   return payload.data;
+}
+
+export type CreatePackageInput = {
+  title: string;
+  description: string;
+  destination_country: string;
+  destination_city: string;
+  duration_days: number;
+  base_price_aud: number;
+  max_group_size?: number | null;
+};
+
+export async function createPackage(
+  fetcher: typeof fetch,
+  apiUrl: string,
+  accessToken: string,
+  input: CreatePackageInput,
+) {
+  const response = await fetcher(`${apiUrl.replace(/\/$/, "")}/packages`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify(input),
+  });
+  if (response.status === 401) throw new Error("Your session expired. Please sign in again.");
+  if (!response.ok) throw new Error("Unable to create this package. Please try again.");
+  return response.json() as Promise<{ package_id: string }>;
+}
+
+export async function fetchOwnPackage(
+  fetcher: typeof fetch,
+  apiUrl: string,
+  accessToken: string,
+  packageId: string,
+) {
+  const response = await fetcher(
+    `${apiUrl.replace(/\/$/, "")}/packages/${encodeURIComponent(packageId)}`,
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+  );
+  if (response.status === 401) throw new Error("Your session expired. Please sign in again.");
+  if (response.status === 404) throw new Error("Package not found.");
+  if (!response.ok) throw new Error("Unable to load this package. Please try again.");
+  return response.json() as Promise<CreatorPackageDetail>;
 }

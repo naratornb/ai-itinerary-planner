@@ -1,18 +1,32 @@
 "use client";
 
-import { useEffect } from "react";
-import { CircleMarker, MapContainer, Polyline, Popup, TileLayer, useMap } from "react-leaflet";
+import { useEffect, useMemo } from "react";
+import L from "leaflet";
+import { MapContainer, Marker, Polyline, Popup, TileLayer, useMap } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 
-const NARITA: [number, number] = [35.7719, 140.3929];
-const SHIBUYA: [number, number] = [35.6595, 139.7005];
+export type RouteStop = { label: string; time?: string; coordinate: [number, number] };
 
-function FitRoute() {
+const DEFAULT_CENTER: [number, number] = [35.6812, 139.7671];
+const ROUTE_PIN_COLORS = 5;
+
+function numberIcon(n: number, colorIndex: number) {
+  return L.divIcon({
+    className: "route-pin-icon",
+    html: `<span class="route-pin route-pin-${colorIndex % ROUTE_PIN_COLORS}">${n}</span>`,
+    iconSize: [26, 26],
+    iconAnchor: [13, 13],
+  });
+}
+
+function FitRoute({ coordinates }: { coordinates: [number, number][] }) {
   const map = useMap();
   useEffect(() => {
     const fit = () => {
       map.invalidateSize({ animate: false });
-      map.fitBounds([NARITA, SHIBUYA], { padding: [28, 28], animate: false });
+      if (coordinates.length === 0) return;
+      if (coordinates.length === 1) { map.setView(coordinates[0], 13, { animate: false }); return; }
+      map.fitBounds(coordinates, { padding: [28, 28], animate: false });
     };
     const container = map.getContainer();
     const observer = new ResizeObserver(() => window.requestAnimationFrame(fit));
@@ -23,21 +37,31 @@ function FitRoute() {
       observer.disconnect();
       window.clearTimeout(timeout);
     };
-  }, [map]);
+  }, [map, coordinates]);
   return null;
 }
 
-export default function RouteMap() {
+export default function RouteMap({ stops }: { stops: RouteStop[] }) {
+  const coordinates = useMemo(() => stops.map((stop) => stop.coordinate), [stops]);
+  const center = coordinates[0] ?? DEFAULT_CENTER;
+
   return (
     <div className="route-map-live">
-      <MapContainer center={[35.715, 140.04]} zoom={9} scrollWheelZoom={false}>
-        <TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-        <Polyline positions={[NARITA, SHIBUYA]} pathOptions={{ color: "#212121", weight: 3, opacity: 0.8, dashArray: "7 7" }} />
-        <CircleMarker center={NARITA} radius={7} pathOptions={{ color: "#fff", weight: 3, fillColor: "#D40119", fillOpacity: 1 }}><Popup>Narita Airport · 14:30</Popup></CircleMarker>
-        <CircleMarker center={SHIBUYA} radius={7} pathOptions={{ color: "#fff", weight: 3, fillColor: "#0072EA", fillOpacity: 1 }}><Popup>Shibuya Crossing · 14:40</Popup></CircleMarker>
-        <FitRoute />
+      <MapContainer center={center} zoom={12} scrollWheelZoom={false}>
+        <TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>' url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png" />
+        {coordinates.length > 1 && <Polyline positions={coordinates} pathOptions={{ color: "#212121", weight: 3, opacity: 0.8, dashArray: "7 7" }} />}
+        {stops.map((stop, index) => (
+          <Marker key={index} position={stop.coordinate} icon={numberIcon(index + 1, index)}>
+            <Popup>{stop.label}{stop.time ? ` · ${stop.time}` : ""}</Popup>
+          </Marker>
+        ))}
+        <FitRoute coordinates={coordinates} />
       </MapContainer>
-      <div className="route-map-key" aria-label="Route locations"><span><i className="narita-dot" />Narita</span><span><i className="shibuya-dot" />Shibuya</span></div>
+      {stops.length > 0 && (
+        <div className="route-map-key" aria-label="Stops in order">
+          {stops.map((stop, index) => <span key={index}><i className={`route-pin-${index % ROUTE_PIN_COLORS}`}>{index + 1}</i><b>{stop.label}</b></span>)}
+        </div>
+      )}
     </div>
   );
 }
