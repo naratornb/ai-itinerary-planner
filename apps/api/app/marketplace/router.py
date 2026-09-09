@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 from app import core
 from app.core import _err
 from app.marketplace import schemas, service
-from app.packages.service import _DETAIL_SELECT, UpstreamError
+from app.packages.service import UpstreamError
 
 router = APIRouter()
 

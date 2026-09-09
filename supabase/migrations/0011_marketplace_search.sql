@@ -5,18 +5,39 @@
 -- ============================================================
 
 -- ─────────────────────────────────────────────
--- 1. search_tsv — weighted document per package.
---    All inputs are IMMUTABLE (to_tsvector with an explicit
---    regconfig, array_to_string on text[]), so the column can
---    be GENERATED ... STORED.
+-- 1. search_tsv — weighted document per package, kept in sync by a
+--    trigger instead of GENERATED ... STORED. to_tsvector(regconfig,
+--    text) is STABLE, not IMMUTABLE, and Postgres re-derives that even
+--    through an IMMUTABLE-labelled plpgsql wrapper for a generated
+--    column's expression check (confirmed against the linked Supabase
+--    project — two wrapper variants were both rejected). A trigger
+--    function has no such immutability requirement, which is why
+--    tsvector_update_trigger-style triggers predate generated columns
+--    as the standard Postgres full-text-search pattern.
 -- ─────────────────────────────────────────────
-ALTER TABLE public.travel_packages ADD COLUMN search_tsv tsvector
-  GENERATED ALWAYS AS (
-    setweight(to_tsvector('english', coalesce(title, '')), 'A') ||
-    setweight(to_tsvector('english', coalesce(destination_city, '')), 'B') ||
-    setweight(to_tsvector('english', coalesce(array_to_string(tags, ' '), '')), 'B') ||
-    setweight(to_tsvector('english', coalesce(description, '')), 'C')
-  ) STORED;
+ALTER TABLE public.travel_packages ADD COLUMN search_tsv tsvector;
+
+CREATE FUNCTION public.travel_packages_search_tsv_trigger() RETURNS trigger AS $$
+BEGIN
+  NEW.search_tsv :=
+    setweight(to_tsvector('english', coalesce(NEW.title, '')), 'A') ||
+    setweight(to_tsvector('english', coalesce(NEW.destination_city, '')), 'B') ||
+    setweight(to_tsvector('english', coalesce(array_to_string(NEW.tags, ' '), '')), 'B') ||
+    setweight(to_tsvector('english', coalesce(NEW.description, '')), 'C');
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER travel_packages_search_tsv_update
+  BEFORE INSERT OR UPDATE ON public.travel_packages
+  FOR EACH ROW EXECUTE FUNCTION public.travel_packages_search_tsv_trigger();
+
+-- Backfill rows inserted before this trigger existed.
+UPDATE public.travel_packages SET search_tsv =
+  setweight(to_tsvector('english', coalesce(title, '')), 'A') ||
+  setweight(to_tsvector('english', coalesce(destination_city, '')), 'B') ||
+  setweight(to_tsvector('english', coalesce(array_to_string(tags, ' '), '')), 'B') ||
+  setweight(to_tsvector('english', coalesce(description, '')), 'C');
 
 CREATE INDEX idx_travel_packages_search ON public.travel_packages USING GIN (search_tsv);
 

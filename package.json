@@ -2,6 +2,7 @@
   "name": "ai-itinerary-planner",
   "private": true,
   "scripts": {
-    "dev": "./dev.sh"
+    "dev": "./dev.sh",
+    "seed:feasibility-rules": "apps/web/node_modules/.bin/tsx scripts/seed-feasibility-rules.mjs"
   }
 }

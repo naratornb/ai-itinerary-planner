@@ -332,6 +332,7 @@ export default function ItineraryEditor({ onBack, initialState }: { onBack: () =
 
   const runFeasibilityCheck = useCallback(async () => {
     setFeasLoading(true);
+    setFeasResult(null);
     try {
       const res = await fetch("/api/ai/validate", {
         method: "POST",
