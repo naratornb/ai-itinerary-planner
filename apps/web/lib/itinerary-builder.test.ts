@@ -93,15 +93,12 @@ const foodSuggestion: CopilotSuggestionV1 = {
   city: "Tokyo",
   country: "Japan",
   category: "food",
-  vibe: "Local, lively",
-  best_season: "Spring",
   suitable_for: "Foodies",
   duration_hours: 3.6,
   price_aud: 144,
+  price_unit: "per_person",
   rating: 4.5,
   why_recommended: "Matches your interest in local food.",
-  verified: true,
-  confidence: 0.95,
 };
 
 test("copilotSuggestionToTimelineItem maps suggestion fields onto a timeline item", () => {
@@ -134,10 +131,33 @@ test("copilotSuggestionToTimelineItem starts right after the day's last item", (
   assert.equal(item.icon, "hotel");
 });
 
+test("a suggestion with no price, duration, or category renders blanks instead of $null and NaN", () => {
+  const item = copilotSuggestionToTimelineItem(
+    {
+      ...foodSuggestion,
+      item_id: "HT-002",
+      item_type: "hotel",
+      price_aud: null,
+      price_unit: "per_night",
+      duration_hours: null,
+      rating: null,
+      category: null,
+    },
+    44,
+    [],
+  );
+
+  assert.equal(item.price, "");
+  assert.equal(item.duration, "60");
+  assert.equal(item.category, "hotel");
+});
+
 test("a flight lands on its arrival day, at its arrival time in the destination's zone", () => {
   // Departure and arrival fall on different UTC calendar days on purpose —
   // the flight must key off arrival, not departure, for both its day and
-  // its displayed clock time, so it lines up with that day's Tokyo activity.
+  // its displayed clock time. Day 1 is anchored on the first activity/hotel
+  // date (not the earlier departure): AI-selected flights are matched by
+  // route, not date, so departures can't be trusted to start the timeline.
   const pkg: CreatorPackageDetail = {
     package_id: "pkg-1",
     title: "Tokyo Street Food & Culture Week",
@@ -164,10 +184,10 @@ test("a flight lands on its arrival day, at its arrival time in the destination'
         flight_number: "QF25",
         origin_iata: "SYD",
         destination_iata: "NRT",
-        departure_datetime: "2026-07-10T20:00:00Z",
-        // JST (UTC+9, no DST in Japan) — lands 14:00 local on July 12, a day
-        // after it departed.
-        arrival_datetime: "2026-07-12T05:00:00Z",
+        departure_datetime: "2026-07-12T20:00:00Z",
+        // JST (UTC+9, no DST in Japan) — lands 14:00 local on July 13, a day
+        // after it departed and a day after the anchoring activity.
+        arrival_datetime: "2026-07-13T05:00:00Z",
         cabin_class: null,
         price_aud: 850,
       },
@@ -176,7 +196,8 @@ test("a flight lands on its arrival day, at its arrival time in the destination'
 
   const days = buildDaysFromPackage(pkg);
 
-  assert.equal(days[0].items.length, 0);
+  assert.equal(days[0].items.length, 1);
+  assert.equal(days[0].items[0].type, "ACTIVITY");
   const flightItem = days[1].items.find((item) => item.type === "FLIGHT");
   assert.equal(flightItem?.time, "14:00");
 });

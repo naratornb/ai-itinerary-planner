@@ -145,11 +145,14 @@ export function copilotSuggestionToTimelineItem(
     time,
     type,
     title: suggestion.item_name,
-    price: `$${suggestion.price_aud}`,
+    price: suggestion.price_aud != null
+      ? `$${suggestion.price_aud}${suggestion.price_unit === "per_night" ? "/night" : ""}`
+      : "",
     icon: COPILOT_TYPE_ICON[type] ?? "star",
     status: "pass",
-    category: suggestion.category,
-    duration: String(Math.round(suggestion.duration_hours * 60)),
+    category: suggestion.category ?? suggestion.item_type,
+    // ponytail: default 60min for hotels/flights, which carry no duration.
+    duration: String(Math.round((suggestion.duration_hours ?? 1) * 60)),
     notes: suggestion.why_recommended,
     sourceId: suggestion.item_id,
   };
@@ -201,14 +204,21 @@ export function extractClockTimeInZone(dateStr: string | null, timeZone: string)
  * The earliest date across all of them anchors day 1.
  */
 export function buildDaysFromPackage(pkg: CreatorPackageDetail): BuilderDay[] {
-  const anchor = Math.min(
-    ...[
-      ...pkg.activities.map((a) => parseDay(a.activity_date)),
-      ...pkg.flights.map((f) => parseDay(f.departure_datetime)),
-      ...pkg.hotels.map((h) => parseDay(h.check_in_date)),
-    ].filter((t): t is number => t !== null),
-    Date.now(),
-  );
+  // Anchor day 1 on activity/hotel dates only: AI-selected flights are matched
+  // by route and price, not date, so a flight can depart months before the
+  // stay — anchoring on it would push every activity onto the final day.
+  const stayDates = [
+    ...pkg.activities.map((a) => parseDay(a.activity_date)),
+    ...pkg.hotels.map((h) => parseDay(h.check_in_date)),
+  ].filter((t): t is number => t !== null);
+  const flightDates = pkg.flights
+    .map((f) => parseDay(f.departure_datetime))
+    .filter((t): t is number => t !== null);
+  const anchor = stayDates.length
+    ? Math.min(...stayDates)
+    : flightDates.length
+      ? Math.min(...flightDates)
+      : Date.now();
   const dayIndexFor = (dateStr: string | null, fallback = 0) => {
     const parsed = parseDay(dateStr);
     const raw = parsed === null ? fallback : Math.round((parsed - anchor) / 86_400_000);

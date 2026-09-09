@@ -1,65 +1,48 @@
-// Confirmed backend error classification (H.2 Context-Aware Co-Pilot spec).
-export type CopilotErrorType =
-  | "HUMAN_INPUT_ERROR"
-  | "DB_GAP_ERROR"
-  | "DETAIL_REQUEST"
-  | null;
-
 export type CopilotItemType = "activity" | "hotel" | "flight";
 
 export type CopilotNextAction = {
-  type: string;
+  type: "recommend" | "ask_clarification" | "warn" | "none";
   label: string;
-  reason: string;
 };
 
-// Confirmed backend suggestion fields: real inventory ID, price, rating.
 export type CopilotSuggestionV1 = {
   item_id: string;
-  item_name: string;
   item_type: CopilotItemType;
+  item_name: string;
   city: string;
-  country: string;
-  category: string;
-  // Always present on the wire (backend defaults each to "" when unknown —
-  // see build_output_format_prompt() in apps/api/app/ai/copilot.py) but not
-  // yet surfaced anywhere in the UI.
-  vibe: string;
-  best_season: string;
-  suitable_for: string;
-  duration_hours: number;
-  price_aud: number;
-  rating: number;
+  country: string | null;
+  price_aud: number | null;
+  price_unit: "per_person" | "per_night";
+  rating: number | null;
+  category: string | null;
+  duration_hours: number | null;
+  suitable_for: string | null;
   why_recommended: string;
-  verified: boolean;
-  confidence: number;
 };
 
-export type CopilotRequestV1 = {
-  query: string;
-  session_id: string | null;
-};
-
-export type CopilotResponseV1 = {
-  session_id: string;
-  copilot_message: string;
-  error_type: CopilotErrorType;
-  next_action: CopilotNextAction | null;
-  suggestions: CopilotSuggestionV1[];
-  auto_fill: { field: string | null; value: string | null };
+export type CopilotTurn = {
+  turn_id: string;
+  message: string;
+  next_action: CopilotNextAction;
   warnings: string[];
+  suggestions: CopilotSuggestionV1[];
 };
 
 export type CopilotMessageV1 = {
   id: string;
   role: "user" | "assistant";
   content: string;
+  turn_id?: string;
   suggestions?: CopilotSuggestionV1[];
   warnings?: string[];
-  next_action?: CopilotNextAction | null;
+  next_action?: CopilotNextAction;
 };
 
 export interface CopilotClient {
-  send(request: CopilotRequestV1): Promise<CopilotResponseV1>;
-  end(sessionId: string): Promise<void>;
+  send(prompt: string): Promise<CopilotTurn>;
+  setSuggestionStatus(
+    turnId: string,
+    itemId: string,
+    status: "accepted" | "dismissed",
+  ): Promise<void>;
 }

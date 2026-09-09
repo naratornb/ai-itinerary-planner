@@ -1,43 +1,127 @@
-import type { CopilotClient, CopilotRequestV1, CopilotResponseV1 } from "./copilot";
+import type {
+  CopilotClient,
+  CopilotNextAction,
+  CopilotSuggestionV1,
+  CopilotTurn,
+} from "./copilot";
+import { supabase } from "./supabase/client";
 
-const COPILOT_ENDPOINT = "/api/ai/copilot";
+type BackendSuggestion = {
+  item_id: string;
+  item_type: CopilotSuggestionV1["item_type"];
+  item_name: string;
+  city: string;
+  country?: string | null;
+  price_aud?: number | null;
+  price_unit: CopilotSuggestionV1["price_unit"];
+  rating?: number | null;
+  details?: Record<string, unknown> | null;
+  why_recommended: string;
+};
 
-// The backend's _fallback_response() (HUMAN_INPUT_ERROR / DB_GAP_ERROR paths)
-// sends warnings as {code, message, severity} objects instead of the
-// string[] the H.2 spec documents. copilot-panel.tsx renders each warning
-// directly as text, so an unnormalized object crashes the render.
-type RawWarning = string | { message?: unknown };
+type TurnRead = {
+  turn_id: string;
+  message: string;
+  next_action: CopilotNextAction;
+  warnings?: { code: string; message: string }[] | null;
+  suggestions?: BackendSuggestion[] | null;
+};
 
-function normalizeWarning(warning: RawWarning): string {
-  return typeof warning === "string" ? warning : String(warning.message ?? warning);
+async function failure(response: Response, fallback: string): Promise<Error> {
+  if (response.status === 401) return new Error("Your session expired. Please sign in again.");
+  const body = (await response.json().catch(() => null)) as { message?: string } | null;
+  return new Error(body?.message || fallback);
 }
 
-export function createCopilotClient(): CopilotClient {
+function toSuggestion(s: BackendSuggestion): CopilotSuggestionV1 {
+  const d = (s.details ?? {}) as Record<string, unknown>;
+  const durationMins = d.duration_mins as number | undefined;
   return {
-    async send(request: CopilotRequestV1): Promise<CopilotResponseV1> {
-      // Omit session_id on the first turn rather than sending null — the
-      // backend treats "no session" as the start of a new conversation.
-      const body: Record<string, unknown> = { query: request.query };
-      if (request.session_id) body.session_id = request.session_id;
+    item_id: s.item_id,
+    item_type: s.item_type,
+    item_name: s.item_name,
+    city: s.city,
+    country: s.country ?? null,
+    price_aud: s.price_aud ?? null,
+    price_unit: s.price_unit,
+    rating: s.rating ?? null,
+    category: (d.category ?? d.room_type ?? d.cabin_class ?? null) as string | null,
+    duration_hours: (d.duration_hours as number | undefined)
+      ?? (durationMins ? durationMins / 60 : null),
+    suitable_for: (d.suitable_for ?? null) as string | null,
+    why_recommended: s.why_recommended,
+  };
+}
 
-      const res = await fetch(COPILOT_ENDPOINT, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-
-      if (!res.ok) {
-        throw new Error(`Co-Pilot request failed with status ${res.status}`);
-      }
-
-      const data = (await res.json()) as CopilotResponseV1 & { warnings: RawWarning[] };
-      return { ...data, warnings: (data.warnings ?? []).map(normalizeWarning) };
+export async function sendCopilotTurn(
+  fetcher: typeof fetch,
+  apiUrl: string,
+  accessToken: string,
+  packageId: string,
+  prompt: string,
+): Promise<CopilotTurn> {
+  const response = await fetcher(
+    `${apiUrl.replace(/\/$/, "")}/ai/copilot/${encodeURIComponent(packageId)}/turns`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({ prompt }),
     },
+  ).catch(() => {
+    throw new Error("Could not reach the Co-Pilot. Please try again.");
+  });
+  if (!response.ok) {
+    throw await failure(response, `Co-Pilot request failed with status ${response.status}`);
+  }
 
-    async end(sessionId: string): Promise<void> {
-      // Frees the session server-side. Best-effort: the influencer is
-      // already leaving the editor, so a failure here isn't actionable.
-      await fetch(`${COPILOT_ENDPOINT}/${sessionId}`, { method: "DELETE" }).catch(() => {});
+  const payload = (await response.json()) as TurnRead;
+  return {
+    turn_id: String(payload.turn_id),
+    message: payload.message,
+    next_action: payload.next_action,
+    warnings: (payload.warnings ?? []).map((w) => w.message),
+    suggestions: (payload.suggestions ?? []).map(toSuggestion),
+  };
+}
+
+export async function setCopilotSuggestionStatus(
+  fetcher: typeof fetch,
+  apiUrl: string,
+  accessToken: string,
+  packageId: string,
+  turnId: string,
+  itemId: string,
+  status: "accepted" | "dismissed",
+): Promise<void> {
+  const response = await fetcher(
+    `${apiUrl.replace(/\/$/, "")}/ai/copilot/${encodeURIComponent(packageId)}/turns/${encodeURIComponent(turnId)}/items/${encodeURIComponent(itemId)}`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({ status }),
     },
+  ).catch(() => {
+    throw new Error("Could not reach the Co-Pilot. Please try again.");
+  });
+  // 409 means the suggestion was already resolved — the desired end state.
+  if (response.ok || response.status === 409) return;
+  throw await failure(response, `Co-Pilot update failed with status ${response.status}`);
+}
+
+export function createCopilotClient(apiUrl: string, packageId: string): CopilotClient {
+  // Resolve the token per call — getSession() auto-refreshes, so a long editing
+  // session doesn't strand the copilot with an expired JWT.
+  const token = async () =>
+    (await supabase.auth.getSession()).data.session?.access_token ?? "";
+  return {
+    send: async (prompt) => sendCopilotTurn(fetch, apiUrl, await token(), packageId, prompt),
+    setSuggestionStatus: async (turnId, itemId, status) =>
+      setCopilotSuggestionStatus(fetch, apiUrl, await token(), packageId, turnId, itemId, status),
   };
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import CopilotPanel from "./copilot/copilot-panel";
 import { formatHotelStarRating, HOTEL_OPTIONS, type HotelOption, type HotelRoomOption } from "./hotel-catalog";
 import RouteMap, { type RouteStop } from "./route-map";
@@ -21,7 +21,7 @@ import {
 import type { CopilotSuggestionV1 } from "../lib/copilot";
 import type { CreatorHotelDetail, CreatorPackageDetail } from "../lib/creator-api";
 
-const COPILOT_CLIENT = createCopilotClient();
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
   const paths: Record<IconName, React.ReactNode> = {
@@ -347,6 +347,10 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
 
 export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDetail; onBack: () => void }) {
   const { flights, hotels } = pkg;
+  const copilotClient = useMemo(
+    () => createCopilotClient(API_URL, pkg.package_id),
+    [pkg.package_id],
+  );
   const nextItemId = useRef(1000);
   const [packageTitle, setPackageTitle] = useState(pkg.title);
   const [titleDraft, setTitleDraft] = useState(pkg.title);
@@ -977,7 +981,7 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
             {expandedFeasibility === "passed" && <ul className="passed-details"><li><Icon name="check" size={15} />Daily schedule has a clear start and end</li><li><Icon name="check" size={15} />All stops have pricing</li><li><Icon name="check" size={15} />Accommodation is included</li><li><Icon name="check" size={15} />Required package photos are uploaded</li></ul>}
           </Panel>
           <CopilotPanel
-            client={COPILOT_CLIENT}
+            client={copilotClient}
             mobileOpen={copilotOpen}
             onClose={() => setCopilotOpen(false)}
             dayLabel={`Day ${activeDay + 1}`}

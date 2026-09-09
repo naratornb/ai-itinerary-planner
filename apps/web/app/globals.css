@@ -582,6 +582,9 @@ button:focus-visible, textarea:focus-visible { outline: 3px solid var(--fc-focus
 .copilot-suggestion-card button { width: 100%; min-height: 40px; margin-top: 11px; border: 1px solid var(--fc-blue); border-radius: 8px; background: var(--fc-blue); color: #fff; font-size: 13px; font-weight: 700; cursor: pointer; }
 .copilot-suggestion-card button:hover { background: #005dc7; border-color: #005dc7; }
 .copilot-suggestion-card button:disabled { border-color: var(--fc-border); background: var(--fc-surface-subtle); color: var(--fc-secondary); cursor: default; }
+.copilot-suggestion-card button.copilot-suggestion-dismiss { margin-top: 6px; border-color: var(--fc-border); background: transparent; color: var(--fc-secondary); font-weight: 400; }
+.copilot-suggestion-card button.copilot-suggestion-dismiss:hover { background: var(--fc-surface-subtle); border-color: var(--fc-border); }
+.copilot-suggestion-dismissed { opacity: .55; }
 .copilot-next-action { padding: 10px; border: 1px solid var(--fc-border); border-radius: 8px; background: var(--fc-surface-subtle); }
 .copilot-next-action span { color: var(--fc-secondary); font-size: 13px; line-height: 19px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
 .copilot-next-action p { margin: 3px 0 0; color: var(--fc-ink); font-size: 13px; line-height: 19px; }
