@@ -9,17 +9,28 @@ import { createCopilotClient } from "../lib/copilot-client";
 import {
   appendItemToDay,
   buildDaysFromPackage,
+  computePackagePrice,
   copilotSuggestionToTimelineItem,
+  daySubtitle,
   getEndTime,
   insertItemInDay,
   removeDay,
   timezoneForIata,
   type BuilderDay,
+  type DayPhoto,
   type IconName,
   type TimelineItem,
 } from "../lib/itinerary-builder";
 import type { CopilotSuggestionV1 } from "../lib/copilot";
-import type { CreatorHotelDetail, CreatorPackageDetail } from "../lib/creator-api";
+import {
+  deletePackageMedia,
+  listPackageMedia,
+  updatePackage,
+  uploadPackageMedia,
+  type CreatorHotelDetail,
+  type CreatorPackageDetail,
+} from "../lib/creator-api";
+import { supabase } from "../lib/supabase/client";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -357,11 +368,14 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
   const [editingTitle, setEditingTitle] = useState(false);
   const [activeDay, setActiveDay] = useState(0);
   const [days, setDays] = useState(() => buildDaysFromPackage(pkg));
-  const [saved, setSaved] = useState(false);
+  const [savedSnapshot, setSavedSnapshot] = useState<{ days: BuilderDay[]; title: string } | null>(null);
+  const [saving, setSaving] = useState(false);
   const [published, setPublished] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
-  const packagePrice = days.flatMap((day) => day.items)
-    .reduce((sum, item) => sum + (Number(item.price.replace(/[^0-9.]/g, "")) || 0), 0);
+  const [isGeneratingStory, setIsGeneratingStory] = useState(false);
+  const [editingDayField, setEditingDayField] = useState<"title" | null>(null);
+  const [dayDraft, setDayDraft] = useState("");
+  const packagePrice = computePackagePrice(days);
   const toSafeImageSrc = (value: string) => {
     try {
       const url = new URL(value, window.location.origin);
@@ -392,15 +406,22 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
   const [hotelCheckOutDayId, setHotelCheckOutDayId] = useState<string | null>(null);
   const [creatorDraft, setCreatorDraft] = useState({ title: "", category: "Activity", address: "", time: "12:00", duration: "60", price: "", reason: "" });
   const [copilotOpen, setCopilotOpen] = useState(true);
+  // "Saved" only holds while nothing has changed since the last successful PUT.
+  const saved = savedSnapshot?.days === days && savedSnapshot?.title === packageTitle;
   const activeDayData = days[activeDay] ?? days[0];
   const items = activeDayData?.items ?? [];
   const story = activeDayData?.story ?? "";
   const photos = activeDayData?.photos ?? [];
+  // buildDaysFromPackage stamps every row of a stay with `hotel-<id|name>`,
+  // so the API hotel is looked up by that key rather than by counting rows —
+  // the item list here is one day's worth, not the whole trip.
+  const hotelByStayGroup = new Map(hotels.map((hotel) => [`hotel-${hotel.hotel_id ?? hotel.hotel_name ?? ""}`, hotel]));
+  const hotelForItem = (item: TimelineItem) =>
+    item.type === "HOTEL" && item.stayGroupId ? hotelByStayGroup.get(item.stayGroupId) : undefined;
   const routeStopBases = items.map((item, index) => {
     const flightIdx = items.slice(0, index).filter(({ type }) => type === "FLIGHT").length;
     const flight = item.type === "FLIGHT" ? flights[flightIdx] : undefined;
-    const hotelIdx = items.slice(0, index).filter(({ type, stayGroupId }) => type === "HOTEL" && !stayGroupId).length;
-    const hotel = item.type === "HOTEL" && !item.stayGroupId ? hotels[hotelIdx] : undefined;
+    const hotel = hotelForItem(item);
     const hint = [item.address, item.title, flight?.destination_iata, hotel?.address, hotel?.city]
       .filter((part): part is string => Boolean(part))
       .join(" ");
@@ -430,7 +451,7 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
     setDays((current) => current.map((day) => (day.id === dayId ? { ...day, story: value } : day)));
   };
 
-  const setPhotos = (next: { src: string; alt: string }[]) => {
+  const setPhotos = (next: DayPhoto[]) => {
     const dayId = activeDayData?.id;
     if (!dayId) return;
     setDays((current) => current.map((day) => (day.id === dayId ? { ...day, photos: next } : day)));
@@ -473,6 +494,154 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
     if (nextTitle) setPackageTitle(nextTitle);
     else setTitleDraft(packageTitle);
     setEditingTitle(false);
+  };
+
+  const startEditingDayField = (field: "title") => {
+    setDayDraft(activeDayData?.title ?? "");
+    setEditingDayField(field);
+  };
+
+  const saveDayField = () => {
+    const dayId = activeDayData?.id;
+    const field = editingDayField;
+    setEditingDayField(null);
+    if (!dayId || !field) return;
+    const value = dayDraft.trim();
+    if (field === "title" && !value) return;   // a day always keeps a title
+    setDays((current) => current.map((day) => (day.id === dayId ? { ...day, [field]: value } : day)));
+  };
+
+  const accessToken = async () => (await supabase.auth.getSession()).data.session?.access_token ?? null;
+
+  // ponytail: only title, price, and the day titles/summaries are synced back —
+  // timeline items, hotels, and flights stay local. The API replaces those by
+  // delete/re-add, which is a separate feature.
+  const saveDraft = async () => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      const token = await accessToken();
+      if (!token) throw new Error("Your session expired. Please sign in again.");
+      await updatePackage(fetch, API_URL, token, pkg.package_id, {
+        title: packageTitle,
+        base_price_aud: Math.round(packagePrice),
+        days: days.map((day, index) => ({
+          day_number: index + 1,
+          // Don't pin the generated "Day N" placeholder as real data.
+          title: day.title === `Day ${index + 1}` ? null : day.title || null,
+          summary: day.story || null,
+        })),
+      });
+      setSavedSnapshot({ days, title: packageTitle });
+      showNotice("Draft saved");
+    } catch (error) {
+      showNotice(error instanceof Error ? error.message : "Unable to save this draft.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const generateContent = async () => {
+    if (isGeneratingStory) return;
+    setIsGeneratingStory(true);
+    try {
+      const activityNames = items
+        .filter((item) => item.type !== "FLIGHT" && item.type !== "HOTEL")
+        .map((item) => (item.notes ? `${item.title} (${item.notes})` : item.title));
+
+      const response = await fetch("/api/ai/generate-content", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          packageTitle,
+          destination: [pkg.destination_city, pkg.destination_country].filter(Boolean).join(", "),
+          selectedHotel: selectedHotelOption?.name ?? pkg.hotels[0]?.hotel_name ?? "",
+          dayNumber: activeDay + 1,
+          dayTitle: days[activeDay]?.title || `Day ${activeDay + 1}`,
+          items: activityNames,
+          vibe: days[activeDay]?.meta || "",
+        }),
+      });
+      const data = (await response.json()) as { listing?: string; error?: string };
+      if (data.listing) {
+        setStory(data.listing);
+        showNotice("Story generated");
+      } else {
+        showNotice(data.error || "The story generator returned nothing.");
+      }
+    } catch {
+      showNotice("Failed to connect to the story generator.");
+    } finally {
+      setIsGeneratingStory(false);
+    }
+  };
+
+  // ponytail: media rows carry no day association server-side, so every
+  // existing photo lands on day 1. Add a day column when it matters.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const token = await accessToken();
+      if (!token) return;
+      try {
+        const media = await listPackageMedia(fetch, API_URL, token, pkg.package_id);
+        if (cancelled || !media.length) return;
+        setDays((current) => current.map((day, index) => index === 0
+          ? { ...day, photos: [...media.map((entry) => ({ src: entry.url, alt: entry.caption || "Trip photo", media_id: entry.media_id })), ...day.photos] }
+          : day));
+      } catch {
+        // A photo list that won't load isn't worth blocking the editor over.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [pkg.package_id]);
+
+  const addDayPhoto = async (file: File) => {
+    const dayId = activeDayData?.id;
+    if (!dayId) return;
+    const preview = URL.createObjectURL(file);
+    const dropPreview = () => setDays((current) => current.map((day) => day.id === dayId
+      ? { ...day, photos: day.photos.filter((photo) => photo.src !== preview) }
+      : day));
+    setDays((current) => current.map((day) => day.id === dayId
+      ? { ...day, photos: [...day.photos, { src: preview, alt: file.name }] }
+      : day));
+    try {
+      const token = await accessToken();
+      if (!token) throw new Error("Your session expired. Please sign in again.");
+      const uploaded = await uploadPackageMedia(fetch, API_URL, token, pkg.package_id, file);
+      setDays((current) => current.map((day) => day.id === dayId ? {
+        ...day,
+        photos: day.photos.map((photo) => photo.src === preview
+          ? { src: uploaded.url, alt: file.name, media_id: uploaded.media_id }
+          : photo),
+      } : day));
+      showNotice("Photo uploaded");
+    } catch (error) {
+      dropPreview();
+      showNotice(error instanceof Error ? error.message : "Unable to upload this photo.");
+    } finally {
+      URL.revokeObjectURL(preview);
+    }
+  };
+
+  const removeDayPhoto = async (photo: DayPhoto) => {
+    const dayId = activeDayData?.id;
+    if (!dayId) return;
+    if (photo.media_id) {
+      try {
+        const token = await accessToken();
+        if (!token) throw new Error("Your session expired. Please sign in again.");
+        await deletePackageMedia(fetch, API_URL, token, photo.media_id);
+      } catch (error) {
+        showNotice(error instanceof Error ? error.message : "Unable to remove this photo.");
+        return;
+      }
+    }
+    setDays((current) => current.map((day) => day.id === dayId
+      ? { ...day, photos: day.photos.filter((entry) => entry.src !== photo.src) }
+      : day));
+    showNotice("Photo removed");
   };
 
   const startEditingItem = (item: TimelineItem) => {
@@ -617,7 +786,10 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
     const checkInIndex = hotelCheckInDayIndex;
     const checkOutIndex = hotelCheckOutDayIndex;
     const stayGroupId = `hotel-stay-${Date.now()}`;
-    const nightlyPrice = Math.round(selectedRoomOption.price / nights);
+    // Rounding down every night and giving the remainder to the first one
+    // keeps the nightly rows summing to exactly the room total.
+    const nightlyPrice = Math.floor(selectedRoomOption.price / nights);
+    const firstNightPrice = selectedRoomOption.price - nightlyPrice * (nights - 1);
     setDays((current) => {
       const next = [...current];
       while (next.length <= checkOutIndex) {
@@ -634,7 +806,7 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
           title: isCheckOutDay
             ? `${selectedHotelOption.name} (Check-out)`
             : nights > 1 ? `${selectedHotelOption.name} (Night ${offset + 1} of ${nights})` : selectedHotelOption.name,
-          price: `$${nightlyPrice.toLocaleString("en-US")}/night`,
+          price: `$${(offset === 0 ? firstNightPrice : nightlyPrice).toLocaleString("en-US")}/night`,
           icon: "hotel",
           status: "pass",
           address: selectedHotelOption.address,
@@ -761,7 +933,7 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
         <button className="text-action back-action" onClick={onBack} aria-label="Edit destination, travel style, duration, or season"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg> Edit trip setup</button>
         <div className="editor-title-block"><span className="editor-kicker">AI itinerary editor</span>{editingTitle ? <input className="package-title-input" value={titleDraft} autoFocus maxLength={200} aria-label="Package title" onChange={(event) => setTitleDraft(event.target.value)} onBlur={savePackageTitle} onKeyDown={(event) => { if (event.key === "Enter") savePackageTitle(); if (event.key === "Escape") { setTitleDraft(packageTitle); setEditingTitle(false); } }} /> : <button className="package-title-button" onClick={() => { setTitleDraft(packageTitle); setEditingTitle(true); }} aria-label={`Edit package title, currently ${packageTitle}`} title="Edit package title"><h1>{packageTitle}</h1></button>}</div>
         <div className="editor-actions">
-          <button className="quiet-button" onClick={() => { setSaved(true); showNotice("Draft saved"); }}>{saved ? "Saved" : "Save Draft"}</button>
+          <button className="quiet-button" disabled={saving} onClick={() => { void saveDraft(); }}>{saving ? "Saving…" : saved ? "Saved" : "Save Draft"}</button>
           <button className="quiet-button" onClick={() => setPreviewOpen(true)}>Preview</button>
           <button className="publish-button" onClick={() => { setPublished(true); showNotice("Package ready to publish"); }}>{published ? "Ready to publish" : "Continue to publish"}</button>
         </div>
@@ -770,7 +942,7 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
       <nav className="day-strip" aria-label="Itinerary days">
         <div className="day-tabs">
           {days.map((day, index) => <div key={day.day} className={`day-tab-wrap ${activeDay === index ? "active" : ""}`}>
-            <button aria-current={activeDay === index ? "page" : undefined} className={`day-tab ${activeDay === index ? "active" : ""}`} onClick={() => setActiveDay(index)}><span>DAY {day.day} <b>{day.items.length}</b></span><strong>{day.title}</strong><small>{day.meta}</small></button>
+            <button aria-current={activeDay === index ? "page" : undefined} className={`day-tab ${activeDay === index ? "active" : ""}`} onClick={() => setActiveDay(index)}><span>DAY {day.day} <b>{day.items.length}</b></span><strong>{day.title}</strong><small>{daySubtitle(day)}</small></button>
             <button className="delete-day-tab" disabled={days.length === 1} onClick={() => setPendingDeleteDay(index)} aria-label={`Delete Day ${day.day}`}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M6 6l12 12M18 6 6 18" /></svg></button>
           </div>)}
           <button className="add-day" onClick={() => { const nextDay = days.length + 1; setDays([...days, { id: `day-${Date.now()}`, day: nextDay, title: "Untitled day", meta: "Add your first stop", items: [], story: "", photos: [] }]); setActiveDay(days.length); showNotice("A new day was added"); }}><Icon name="plus" size={24} /><span>Add Day</span></button>
@@ -780,18 +952,26 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
 
       <div className="editor-shell">
         <div className="editor-main">
-          <div className="day-heading"><div><span>Day {activeDay + 1}</span><h2>{days[activeDay]?.title ?? "Untitled day"}</h2></div></div>
+          <div className="day-heading"><div>
+            <span>Day {activeDay + 1}</span>
+            {editingDayField === "title"
+              ? <input className="package-title-input" value={dayDraft} autoFocus maxLength={200} aria-label="Day title" onChange={(event) => setDayDraft(event.target.value)} onBlur={saveDayField} onKeyDown={(event) => { if (event.key === "Enter") saveDayField(); if (event.key === "Escape") setEditingDayField(null); }} />
+              : <button className="package-title-button" onClick={() => startEditingDayField("title")} aria-label={`Edit day title, currently ${activeDayData?.title ?? "Untitled day"}`} title="Edit day title"><h2>{activeDayData?.title || "Untitled day"}</h2></button>}
+          </div></div>
 
           <section className="story-section">
             <div className="section-label"><h3>Tell your story</h3><span>{photos.length} uploaded</span></div>
             <div className="photo-grid">
-              {photos.map((photo) => <img key={photo.src} src={toSafeImageSrc(photo.src)} alt={photo.alt} />)}
-              <label className="photo-add"><input type="file" accept="image/png,image/jpeg" onChange={(event) => { const file = event.target.files?.[0]; if (!file) return; setPhotos([...photos, { src: URL.createObjectURL(file), alt: file.name }]); showNotice("Photo uploaded"); }} /><Icon name="plus" size={30} /><span>Add photo</span><small>JPG or PNG</small></label>
+              {photos.map((photo) => <figure key={photo.src}>
+                <img src={toSafeImageSrc(photo.src)} alt={photo.alt} />
+                <button type="button" className="remove-photo-btn" aria-label={`Remove ${photo.alt}`} onClick={() => { void removeDayPhoto(photo); }}><Icon name="plus" size={10} /></button>
+              </figure>)}
+              <label className="photo-add"><input type="file" accept="image/png,image/jpeg" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (!file) return; void addDayPhoto(file); }} /><Icon name="plus" size={30} /><span>Add photo</span><small>JPG or PNG</small></label>
             </div>
           </section>
 
           <section className="story-copy">
-            <div className="section-label"><h3>Your story</h3><button className="ai-button" onClick={() => setStory("Start in the electric heart of Tokyo, then slow down over a steaming bowl of ramen before watching the city glow from Tokyo Tower.")}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m12 3 1.2 3.8L17 8l-3.8 1.2L12 13l-1.2-3.8L7 8l3.8-1.2zM18 14l.8 2.2L21 17l-2.2.8L18 20l-.8-2.2L15 17l2.2-.8z" /></svg> AI write for me</button></div>
+            <div className="section-label"><h3>Your story</h3><button className="ai-button" disabled={isGeneratingStory} aria-label="Generate story with AI" onClick={() => { void generateContent(); }}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m12 3 1.2 3.8L17 8l-3.8 1.2L12 13l-1.2-3.8L7 8l3.8-1.2zM18 14l.8 2.2L21 17l-2.2.8L18 20l-.8-2.2L15 17l2.2-.8z" /></svg> {isGeneratingStory ? "Generating story…" : "AI write for me"}</button></div>
             <textarea value={story} onChange={(event) => setStory(event.target.value)} placeholder="Share your insider tips and personal recommendations…" aria-label="Your story" />
           </section>
 
@@ -801,18 +981,20 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
               {items.map((item, index) => {
                 const flightIndex = items.slice(0, index).filter(({ type }) => type === "FLIGHT").length;
                 const flight = item.type === "FLIGHT" ? flights[flightIndex] : undefined;
-                const hotelIndex = items.slice(0, index).filter(({ type, stayGroupId }) => type === "HOTEL" && !stayGroupId).length;
-                const hotel = item.type === "HOTEL" && !item.stayGroupId ? hotels[hotelIndex] : undefined;
+                const hotel = hotelForItem(item);
                 const hasHotelDetails = item.type === "HOTEL" && (Boolean(hotel) || Boolean(item.roomType));
                 const isFixedActivity = item.type === "ACTIVITY";
                 const scheduleConflict = REAL_TIME_PATTERN.test(item.time)
                   ? findTimeConflict(items, item.id, item.time, item.duration ?? "0")
                   : null;
                 const nights = hotel ? hotelNights(hotel) : null;
-                const hotelTitle = hotel?.hotel_name
+                // Only the check-in row speaks for the whole stay; the night
+                // and check-out rows keep their own per-night wording/price.
+                const isStayHead = item.stayMarker === "check-in";
+                const hotelTitle = hotel?.hotel_name && isStayHead
                   ? `${hotel.hotel_name}${nights ? ` (${nights} night${nights === 1 ? "" : "s"})` : ""}`
                   : item.title;
-                const hotelTotal = hotel?.price_per_night_aud !== null && hotel?.price_per_night_aud !== undefined && nights
+                const hotelTotal = isStayHead && nights && hotel?.price_per_night_aud !== null && hotel?.price_per_night_aud !== undefined
                   ? `$${(hotel.price_per_night_aud * nights).toLocaleString("en-AU")}`
                   : item.price;
                 const itemPrice = flight?.price_aud !== null && flight?.price_aud !== undefined
@@ -820,9 +1002,7 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
                   : hotelTotal;
                 const isTimeValue = /^\d{1,2}:\d{2}/.test(item.time);
                 const isPriceValue = itemPrice.startsWith("$");
-                const stayMarkerLabel = hotel
-                  ? "Check-in"
-                  : item.stayMarker === "check-in"
+                const stayMarkerLabel = item.stayMarker === "check-in"
                     ? "Check-in"
                     : item.stayMarker === "check-out"
                       ? "Check-out"
@@ -933,6 +1113,8 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
                     </div>
                     {timeConflict && <p className="activity-card-time-error" role="alert">{timeConflict}</p>}
                   </>}
+                  {/* ponytail: per-activity photos stay local blob URLs — the media API
+                      attaches files to a package, not to a timeline item. */}
                   <div className="edit-photo">
                     <span>Photos <small>Optional</small></span>
                     <div>

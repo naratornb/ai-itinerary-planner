@@ -16,6 +16,7 @@ import type {
   CreatePackageInput,
   FlightInput,
   HotelInput,
+  PackageDayInput,
 } from "../creator-api";
 
 // ─── Wizard input ─────────────────────────────────────────────────────────────
@@ -202,7 +203,19 @@ export function itineraryToPackageInput(
   }
 
   const activities: ActivityInput[] = [];
-  for (const day of res.days ?? []) {
+  const days: PackageDayInput[] = [];
+  for (const [index, day] of (res.days ?? []).entries()) {
+    // Day titles/summaries persist even when the day has no usable date —
+    // they're independent of the activity rows below.
+    if (day.title || day.description) {
+      days.push({
+        // Position, not the engine's day_number: a 0/negative value 422s and a
+        // duplicate violates UNIQUE(package_id, day_number), killing the create.
+        day_number: index + 1,
+        title: day.title || null,
+        summary: day.description || null,
+      });
+    }
     const activityDate = dateOf(day.date);
     if (!activityDate) continue;             // activities carry no date of their own
     for (const activity of day.activities ?? []) {
@@ -241,6 +254,7 @@ export function itineraryToPackageInput(
     flights,
     hotels,
     activities,
+    days,
   };
 }
 

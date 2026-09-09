@@ -70,6 +70,8 @@ export type CreatorPackageDetail = {
   package_id: string;
   title: string;
   duration_days: number;
+  destination_city?: string | null;
+  destination_country?: string | null;
   flights: CreatorFlightDetail[];
   hotels: CreatorHotelDetail[];
   activities: CreatorActivityDetail[];
@@ -257,6 +259,12 @@ export type ActivityInput = {
   booking_required?: boolean | null;
 };
 
+export type PackageDayInput = {
+  day_number: number;
+  title: string | null;
+  summary: string | null;
+};
+
 export type CreatePackageInput = {
   title: string;
   description: string;
@@ -268,6 +276,13 @@ export type CreatePackageInput = {
   flights?: FlightInput[];
   hotels?: HotelInput[];
   activities?: ActivityInput[];
+  days?: PackageDayInput[];
+};
+
+export type UpdatePackageInput = {
+  title?: string;
+  base_price_aud?: number;
+  days?: PackageDayInput[];
 };
 
 export async function createPackage(
@@ -303,4 +318,93 @@ export async function fetchOwnPackage(
   if (response.status === 404) throw new Error("Package not found.");
   if (!response.ok) throw new Error("Unable to load this package. Please try again.");
   return response.json() as Promise<CreatorPackageDetail>;
+}
+
+export async function updatePackage(
+  fetcher: typeof fetch,
+  apiUrl: string,
+  accessToken: string,
+  packageId: string,
+  input: UpdatePackageInput,
+) {
+  const response = await fetcher(
+    `${apiUrl.replace(/\/$/, "")}/packages/${encodeURIComponent(packageId)}`,
+    {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify(input),
+    },
+  );
+  if (response.status === 401) throw new Error("Your session expired. Please sign in again.");
+  if (!response.ok) {
+    // e.g. 409 PACKAGE_NOT_EDITABLE on a submitted package — "try again" would lie.
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.message || "Unable to save this package. Please try again.");
+  }
+  return response.json() as Promise<{ package_id: string }>;
+}
+
+// Mirrors MediaItem/MediaUploadResponse in apps/api/app/media/schemas.py.
+export type PackageMedia = {
+  media_id: string;
+  package_id: string;
+  media_type: string;
+  url: string;
+  caption?: string | null;
+  is_cover?: boolean;
+  sort_order?: number;
+};
+
+export async function listPackageMedia(
+  fetcher: typeof fetch,
+  apiUrl: string,
+  accessToken: string,
+  packageId: string,
+) {
+  const response = await fetcher(
+    `${apiUrl.replace(/\/$/, "")}/media/${encodeURIComponent(packageId)}`,
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+  );
+  if (response.status === 401) throw new Error("Your session expired. Please sign in again.");
+  if (!response.ok) throw new Error("Unable to load photos for this package.");
+  const payload = (await response.json()) as { data: PackageMedia[] };
+  return payload.data;
+}
+
+export async function uploadPackageMedia(
+  fetcher: typeof fetch,
+  apiUrl: string,
+  accessToken: string,
+  packageId: string,
+  file: File,
+) {
+  const body = new FormData();
+  body.append("package_id", packageId);
+  body.append("file", file);
+  // No Content-Type header: the browser has to set the multipart boundary.
+  const response = await fetcher(`${apiUrl.replace(/\/$/, "")}/media/upload`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}` },
+    body,
+  });
+  if (response.status === 401) throw new Error("Your session expired. Please sign in again.");
+  if (!response.ok) throw new Error("Unable to upload this photo. Please try again.");
+  return response.json() as Promise<PackageMedia>;
+}
+
+export async function deletePackageMedia(
+  fetcher: typeof fetch,
+  apiUrl: string,
+  accessToken: string,
+  mediaId: string,
+) {
+  const response = await fetcher(
+    `${apiUrl.replace(/\/$/, "")}/media/${encodeURIComponent(mediaId)}`,
+    { method: "DELETE", headers: { Authorization: `Bearer ${accessToken}` } },
+  );
+  if (response.status === 401) throw new Error("Your session expired. Please sign in again.");
+  if (!response.ok) throw new Error("Unable to remove this photo. Please try again.");
 }

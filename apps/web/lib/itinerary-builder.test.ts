@@ -4,7 +4,9 @@ import test from "node:test";
 import {
   appendItemToDay,
   buildDaysFromPackage,
+  computePackagePrice,
   copilotSuggestionToTimelineItem,
+  daySubtitle,
   extractClockTimeInZone,
   getEndTime,
   insertItemInDay,
@@ -210,6 +212,78 @@ test("extractClockTimeInZone renders a flight's real instant in the given zone, 
 
   assert.equal(extractClockTimeInZone(instant, "Australia/Sydney"), "05:00");
   assert.equal(extractClockTimeInZone(instant, "Asia/Tokyo"), "03:00");
+});
+
+test("the AI day summary loads into the story textarea, not the day meta", () => {
+  const pkg: CreatorPackageDetail = {
+    package_id: "pkg-2",
+    title: "Paris Long Weekend",
+    duration_days: 1,
+    days: [{ id: "d1", day_number: 1, title: "Arrive", summary: "Check in and wander." }],
+    hotels: [],
+    activities: [],
+    flights: [],
+  };
+  const [day] = buildDaysFromPackage(pkg);
+  assert.equal(day.title, "Arrive");
+  assert.equal(day.story, "Check in and wander.");
+  assert.equal(day.meta, "");
+});
+
+test("daySubtitle clips the story with an ellipsis and falls back to meta", () => {
+  const day = { id: "d", day: 1, title: "T", meta: "Add your first stop", items: [], story: "", photos: [] };
+  assert.equal(daySubtitle(day), "Add your first stop");
+  const long = { ...day, story: "x".repeat(60) };
+  assert.equal(daySubtitle(long), `${"x".repeat(48)}…`);
+  const short = { ...day, story: "Short story" };
+  assert.equal(daySubtitle(short), "Short story");
+});
+
+const stayRow = (id: number, marker?: TimelineItem["stayMarker"]): TimelineItem => ({
+  ...firstItem,
+  id,
+  type: "HOTEL",
+  title: "Shibuya Inn",
+  price: "$100/night",
+  icon: "hotel",
+  stayGroupId: "stay-1",
+  stayMarker: marker,
+});
+
+test("a 2-night stay costs 2 nights — the check-out row is not billed", () => {
+  // buildDaysFromPackage renders nights+1 rows, each carrying the per-night
+  // price; summing every row would bill 3 nights for a 2-night stay.
+  const days: BuilderDay[] = [
+    { id: "day-1", day: 1, title: "In", meta: "", items: [stayRow(1, "check-in")], story: "", photos: [] },
+    { id: "day-2", day: 2, title: "Stay", meta: "", items: [stayRow(2)], story: "", photos: [] },
+    { id: "day-3", day: 3, title: "Out", meta: "", items: [stayRow(3, "check-out")], story: "", photos: [] },
+  ];
+
+  assert.equal(computePackagePrice(days), 200);
+});
+
+test("computePackagePrice parses a plain dollar price and treats Free/blank as 0", () => {
+  const days: BuilderDay[] = [
+    {
+      id: "day-1",
+      day: 1,
+      title: "Mixed",
+      meta: "",
+      items: [
+        { ...firstItem, id: 1, price: "$144" },
+        { ...firstItem, id: 2, price: "Free" },
+        { ...firstItem, id: 3, price: "" },
+      ],
+      story: "",
+      photos: [],
+    },
+  ];
+
+  assert.equal(computePackagePrice(days), 144);
+});
+
+test("computePackagePrice of no days is 0", () => {
+  assert.equal(computePackagePrice([]), 0);
 });
 
 test("timezoneForIata knows Sydney and Tokyo, and falls back to Sydney for an unknown code", () => {

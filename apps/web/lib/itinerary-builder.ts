@@ -41,8 +41,29 @@ export type BuilderDay = {
   meta: string;
   items: TimelineItem[];
   story: string;
-  photos: { src: string; alt: string }[];
+  photos: DayPhoto[];
 };
+
+/** `media_id` is absent while an optimistic blob preview is still uploading. */
+export type DayPhoto = { src: string; alt: string; media_id?: string };
+
+/**
+ * A multi-night stay renders one row per night *plus* a check-out row, and
+ * every row carries the same per-night price — so the check-out row would
+ * bill an extra night it never covers.
+ */
+export function computePackagePrice(days: BuilderDay[]): number {
+  return days
+    .flatMap((day) => day.items)
+    .filter((item) => item.stayMarker !== "check-out")
+    .reduce((sum, item) => sum + (Number(item.price.replace(/[^0-9.]/g, "")) || 0), 0);
+}
+
+/** Day-tab subtitle: the day's story, clipped for the narrow tab. */
+export function daySubtitle(day: BuilderDay, limit = 48): string {
+  const text = day.story || day.meta;
+  return text.length > limit ? `${text.slice(0, limit).trimEnd()}…` : text;
+}
 
 function updateDay(
   days: BuilderDay[],
@@ -234,9 +255,11 @@ export function buildDaysFromPackage(pkg: CreatorPackageDetail): BuilderDay[] {
       id: `day-${dayNumber}`,
       day: dayNumber,
       title: meta?.title || `Day ${dayNumber}`,
-      meta: meta?.summary || "",
+      // The AI day description is edited in the "Your story" textarea; the
+      // day tab derives its subtitle from story, so meta stays empty here.
+      meta: "",
       items: [],
-      story: "",
+      story: meta?.summary || "",
       photos: [],
     };
   });

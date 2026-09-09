@@ -33,6 +33,7 @@ Define the data contract that turns AI wizard selections into a persisted travel
 | activity `city` | `days[].city` | falls back to the base `destination_city` |
 | activity `description` | `notes` | rename |
 | `duration_hours` | `duration_hours` | passthrough |
+| `days[].day_number` / `.title` / `.summary` (`package_days`) | `days[].day_number` / `.title` / `.description` | `day_number` falls back to the array index + 1; `description` → `summary`; a day with neither a title nor a description is skipped (nothing to persist). Independent of the activity skip rules — an undated day still contributes its title/summary |
 | package `title` | `trip.title` | engine value when non-empty, else base; always `.slice(0, 200)` (backend `max_length=200`) |
 | package `description` | `description` | engine value when non-empty, else base |
 | package `duration_days` | `trip.duration_days` | engine value when an integer ≥ 1, else base — then raised to at least the number of distinct activity dates, since the engine can return more dated days than `trip.duration_days` claims and the editor would squash the overflow onto its last day |
@@ -52,7 +53,7 @@ There is no city→IATA lookup table on the client. Resolving a free-text city t
 
 ## Non-goals
 
-- **Day titles and stories are not persisted.** `TravelPackageCreate` has no `days` input; the editor shows "Day N". Add a backend `days` input later if it matters.
+- **Day stories are not persisted.** `package_days` carries a title and a summary only; the editor's per-day story text and photos stay local.
 - **Group size and budget are not collected.** The engine accepts both through the query, but the wizard does not ask; the defaults (2 travellers, no budget) stand.
 - **A build that finishes after the user navigates within the wizard still persists its package.** The wizard remembers the created id per setup fingerprint and reuses it on the next identical build instead of creating a twin.
 - **No fallback to an empty draft on generation failure.** An error returns the user to the season step to retry. The engine already has its own deterministic fallback when the LLM fails, so an extra client-side one would only hide problems.

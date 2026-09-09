@@ -351,6 +351,45 @@ def test_create_maps_inputs(fake):
     assert resp.json()["flights"][0]["origin_iata"] == "SYD"
 
 
+def test_create_persists_days(fake):
+    fake.route("POST", "/rest/v1/travel_packages", FakeResp([{"package_id": PKG}]))
+    fake.route(
+        "POST", "/rest/v1/flights", FakeResp([{"flight_id": "f1"}, {"flight_id": "f2"}])
+    )
+    fake.route(
+        "POST", "/rest/v1/hotels", FakeResp([{"hotel_id": "h1"}, {"hotel_id": "h2"}])
+    )
+    fake.route(
+        "POST",
+        "/rest/v1/activities",
+        FakeResp([{"activity_id": "a1"}, {"activity_id": "a2"}]),
+    )
+    fake.route("POST", "package_flights", FakeResp([{}]))
+    fake.route("POST", "package_hotels", FakeResp([{}]))
+    fake.route("POST", "package_activities", FakeResp([{}]))
+    fake.route("POST", "package_days", FakeResp([{}]))
+    fake.route("GET", "travel_packages", FakeResp([DETAIL_ROW]))
+
+    body = dict(CREATE_BODY)
+    body["days"] = [
+        {"day_number": 1, "title": "Arrive", "summary": "Land and eat ramen."},
+        {"day_number": 2, "title": "Shibuya", "summary": None},
+    ]
+    resp = client.post("/packages", json=body)
+    assert resp.status_code == 201
+
+    days_post = fake.find("POST", "package_days")[0]
+    # Caller's JWT, not the service role — RLS grants the owner ALL.
+    assert days_post["headers"]["Authorization"] == USER_HEADERS["Authorization"]
+    rows = days_post["json"]
+    assert [r["day_number"] for r in rows] == [1, 2]
+    assert [r["package_id"] for r in rows] == [PKG, PKG]
+    assert rows[0]["title"] == "Arrive"
+    assert rows[0]["summary"] == "Land and eat ramen."
+    assert rows[1]["title"] == "Shibuya"
+    assert rows[1]["summary"] is None
+
+
 def test_create_missing_required(fake):
     body = {k: v for k, v in CREATE_BODY.items() if k != "title"}
     resp = client.post("/packages", json=body)
@@ -420,6 +459,52 @@ def test_put_draft_ok(fake):
     patch = fake.find("PATCH", "travel_packages")[0]
     assert set(patch["json"]) == {"title", "updated_at"}
     assert patch["params"]["status"] == "in.(draft,rejected)"
+
+
+def test_put_days_replaces_rows(fake):
+    fake.route("PATCH", "travel_packages", FakeResp([{"package_id": PKG}]))
+    fake.route("DELETE", "package_days", FakeResp([{}]))
+    fake.route("POST", "package_days", FakeResp([{}]))
+    fake.route("GET", "travel_packages", FakeResp([DETAIL_ROW]))
+
+    resp = client.put(
+        f"/packages/{PKG}",
+        json={
+            "title": "New",
+            "days": [{"day_number": 1, "title": "Arrive", "summary": "Ramen."}],
+        },
+    )
+    assert resp.status_code == 200
+
+    # `days` is not a travel_packages column — it must not leak into the PATCH.
+    patch = fake.find("PATCH", "travel_packages")[0]
+    assert "days" not in patch["json"]
+
+    # Upsert-then-trim: deleting first would lose all rows if the insert failed.
+    upsert = fake.find("POST", "package_days")[0]
+    assert upsert["params"]["on_conflict"] == "package_id,day_number"
+    assert upsert["headers"]["Prefer"] == "resolution=merge-duplicates"
+    assert upsert["headers"]["Authorization"] == USER_HEADERS["Authorization"]
+    rows = upsert["json"]
+    assert [r["day_number"] for r in rows] == [1]
+    assert rows[0]["package_id"] == PKG
+    assert rows[0]["title"] == "Arrive"
+    assert rows[0]["summary"] == "Ramen."
+
+    trim = fake.find("DELETE", "package_days")[0]
+    assert trim["params"]["package_id"] == f"eq.{PKG}"
+    assert trim["params"]["day_number"] == "gt.1"
+    assert trim["headers"]["Authorization"] == USER_HEADERS["Authorization"]
+
+
+def test_put_without_days_leaves_them_alone(fake):
+    fake.route("PATCH", "travel_packages", FakeResp([{"package_id": PKG}]))
+    fake.route("GET", "travel_packages", FakeResp([DETAIL_ROW]))
+
+    resp = client.put(f"/packages/{PKG}", json={"title": "New"})
+    assert resp.status_code == 200
+    assert fake.find("DELETE", "package_days") == []
+    assert fake.find("POST", "package_days") == []
 
 
 def test_put_not_editable_and_missing(fake):

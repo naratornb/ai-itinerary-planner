@@ -221,6 +221,58 @@ test("maps activity notes to description and rounds price", () => {
   assert.equal(out.activities?.[0].duration_hours, 2);
 });
 
+// ─── days ─────────────────────────────────────────────────────────────────────
+
+test("maps day title and description onto days rows", () => {
+  const out = itineraryToPackageInput(base(), response());
+  assert.deepEqual(out.days, [
+    { day_number: 1, title: "Day one", summary: "Arrival" },
+  ]);
+});
+
+test("day_number falls back to the index when the engine omits it", () => {
+  const out = itineraryToPackageInput(
+    base(),
+    response({
+      days: [
+        day({ day_number: undefined as unknown as number, title: "First" }),
+        day({ day_number: undefined as unknown as number, title: "Second" }),
+      ],
+    }),
+  );
+  assert.deepEqual(out.days?.map((d) => d.day_number), [1, 2]);
+});
+
+test("position always wins over the engine's day_number — zero or duplicates can't 422/409 the create", () => {
+  const out = itineraryToPackageInput(
+    base(),
+    response({
+      days: [
+        day({ day_number: 0, title: "First" }),
+        day({ day_number: 0, title: "Second" }),
+      ],
+    }),
+  );
+  assert.deepEqual(out.days?.map((d) => d.day_number), [1, 2]);
+});
+
+test("a day with neither title nor description is skipped", () => {
+  const out = itineraryToPackageInput(
+    base(),
+    response({
+      days: [
+        day({ day_number: 1, title: "", description: "" }),
+        day({ day_number: 2, title: "", description: "Free day" }),
+      ],
+    }),
+  );
+  assert.deepEqual(out.days, [{ day_number: 2, title: null, summary: "Free day" }]);
+});
+
+test("an empty engine response yields no days", () => {
+  assert.deepEqual(itineraryToPackageInput(base(), {} as ItineraryResponse).days, []);
+});
+
 // ─── metadata ─────────────────────────────────────────────────────────────────
 
 test("engine metadata overrides the base package fields", () => {

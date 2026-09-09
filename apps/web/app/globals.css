@@ -297,7 +297,10 @@ button:focus-visible, textarea:focus-visible { outline: 3px solid var(--fc-focus
 .day-heading > div { display: flex; align-items: baseline; gap: 14px; }
 .day-heading span { color: var(--fc-secondary); font-size: 21px; }
 .day-heading h2 { margin: 0; font-family: var(--fc-font-display); font-size: 32px; letter-spacing: -.025em; }
-.day-heading button { border: 0; background: transparent; color: var(--fc-red); font-size: 13px; font-weight: 600; cursor: pointer; }
+.day-heading > button { border: 0; background: transparent; color: var(--fc-red); font-size: 13px; font-weight: 600; cursor: pointer; }
+/* Click-to-edit wrappers must render exactly like develop's static heading. */
+.day-heading .package-title-button { max-width: none; margin: 0; padding: 3px 8px; color: inherit; font: inherit; text-align: left; }
+.day-heading .package-title-button small { color: var(--fc-secondary); font-size: 14px; font-weight: 400; }
 .section-label { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
 .section-label h3, .timeline-section > h3 { margin: 0; color: var(--fc-secondary); font-size: 12px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
 .section-label span { color: var(--fc-secondary); font-size: 12px; font-weight: 600; }
@@ -397,11 +400,12 @@ button:focus-visible, textarea:focus-visible { outline: 3px solid var(--fc-focus
 .edit-photo figure b svg { fill: currentColor; }
 .edit-photo figure .set-cover-btn { position: absolute; left: 6px; bottom: 6px; padding: 2px 6px; border: 0; border-radius: 4px; background: rgba(255,255,255,.92); color: var(--fc-secondary); font-size: 10px; line-height: 14px; font-weight: 600; cursor: pointer; }
 .edit-photo figure .set-cover-btn:hover { color: var(--fc-blue); }
-.edit-photo figure .remove-photo-btn { position: absolute; top: 6px; right: 6px; width: 20px; height: 20px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 999px; background: rgba(15,23,42,.55); color: #fff; cursor: pointer; }
-.edit-photo figure .remove-photo-btn svg { width: 10px; height: 10px; transform: rotate(45deg); }
-.edit-photo figure .remove-photo-btn:hover { background: rgba(15,23,42,.8); }
-.edit-photo figure .remove-photo-btn:focus-visible { outline: 2px solid var(--fc-focus-ring); outline-offset: 1px; }
+figure .remove-photo-btn { position: absolute; top: 6px; right: 6px; width: 20px; height: 20px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 999px; background: rgba(15,23,42,.55); color: #fff; cursor: pointer; }
+figure .remove-photo-btn svg { width: 10px; height: 10px; transform: rotate(45deg); }
+figure .remove-photo-btn:hover { background: rgba(15,23,42,.8); }
+figure .remove-photo-btn:focus-visible { outline: 2px solid var(--fc-focus-ring); outline-offset: 1px; }
 .edit-photo label { width: 132px; height: 104px; display: grid; place-content: center; justify-items: center; gap: 4px; border: 1px dashed #bdbdbd; border-radius: 8px; color: var(--fc-secondary); font-size: 12px; cursor: pointer; }.edit-photo label:hover { border-color: var(--fc-blue); color: var(--fc-blue); }.edit-photo label input { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
+.photo-grid figure { position: relative; }
 .inline-edit-actions { margin-top: 16px; display: flex; justify-content: flex-end; gap: 8px; }
 .inline-edit-actions .publish-button:disabled { border-color: var(--fc-disabled); background: var(--fc-disabled); cursor: not-allowed; }
 .detail-card { padding: 0; }
