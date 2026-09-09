@@ -22,6 +22,8 @@ Usage:
 """
 
 import os
+import time
+import logging
 import json
 from dataclasses import dataclass
 from urllib import request as urlrequest, error as urlerror
@@ -50,7 +52,8 @@ class LLMResponse:
 def _call_gemini(
     system_prompt: str,
     user_prompt: str,
-    max_tokens: int
+    max_tokens: int,
+    timeout: float = 120,
 ) -> LLMResponse:
 
     api_key = os.environ.get("GEMINI_API_KEY", "")
@@ -96,7 +99,7 @@ def _call_gemini(
     )
 
     try:
-        with urlrequest.urlopen(req, timeout=120) as resp:
+        with urlrequest.urlopen(req, timeout=timeout) as resp:
             data = json.loads(
                 resp.read().decode("utf-8")
             )
@@ -114,7 +117,7 @@ def _call_gemini(
 
     except TimeoutError as e:
         raise RuntimeError(
-            "Gemini request timed out after 120 seconds"
+            f"Gemini request timed out after {timeout:g} seconds"
         ) from e
 
     candidates = data.get("candidates", [])
@@ -163,12 +166,14 @@ def _call_gemini(
         tokens_out=tokens_out,
     )
 # ── Anthropic Claude ───────────────────────────────────────────────────────────
-def _call_anthropic(system_prompt: str, user_prompt: str, max_tokens: int) -> LLMResponse:
+def _call_anthropic(system_prompt: str, user_prompt: str, max_tokens: int,
+                    timeout: float | None = None) -> LLMResponse:
     import anthropic  # only imported when actually needed
 
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     model   = ANTHROPIC_MODEL
-    client  = anthropic.Anthropic(api_key=api_key)
+    options = {"timeout": timeout, "max_retries": 0} if timeout is not None else {}
+    client  = anthropic.Anthropic(api_key=api_key, **options)
 
     message = client.messages.create(
         model=model,
@@ -192,6 +197,8 @@ def call_llm(
     system_prompt: str,
     user_prompt:   str,
     max_tokens:    int = 1000,
+    *,
+    deadline: float | None = None,
 ) -> LLMResponse:
     """
     Call the configured LLM and return an LLMResponse.
@@ -207,18 +214,26 @@ def call_llm(
     gemini_key    = os.environ.get("GEMINI_API_KEY",    "")
     anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
 
+    def options() -> dict:
+        if deadline is None:
+            return {}
+        remaining = deadline - time.monotonic()
+        if remaining <= 0.05:
+            raise TimeoutError("LLM request budget exhausted")
+        return {"timeout": remaining}
+
     if gemini_key:
         try:
-            return _call_gemini(system_prompt, user_prompt, max_tokens)
+            return _call_gemini(system_prompt, user_prompt, max_tokens, **options())
         except Exception as e:
             if anthropic_key:
-                print(f"[llm_provider] Gemini failed ({e}), falling back to Claude")
+                logging.getLogger(__name__).warning("Gemini failed; trying configured fallback (%s)", type(e).__name__)
             else:
                 raise RuntimeError(f"Gemini call failed: {e}") from e
 
     if anthropic_key:
         try:
-            return _call_anthropic(system_prompt, user_prompt, max_tokens)
+            return _call_anthropic(system_prompt, user_prompt, max_tokens, **options())
         except Exception as e:
             raise RuntimeError(f"Anthropic call failed: {e}") from e
 

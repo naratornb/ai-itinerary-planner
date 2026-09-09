@@ -33,3 +33,8 @@ pytest
 - `PATCH /users/{user_id}` — update email / status
 
 Conventions for this service: [AGENTS.md](AGENTS.md).
+
+## Package co-pilot
+
+Authenticated, package-scoped suggestions: see [the co-pilot guide](docs/copilot.md).
+The existing full-itinerary and legacy suggestion endpoints retain their contracts.

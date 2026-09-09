@@ -40,7 +40,7 @@ info:
     Error responses use a consistent `ErrorResponse` schema throughout.
     All monetary values are stored and returned as **whole AUD dollars** (integer), matching the database columns.
 
-  version: "2.0.0"
+  version: "2.1.0"
   license:
     name: Academic Use Only
 
@@ -113,6 +113,202 @@ components:
   #  REUSABLE SCHEMAS
   # ─────────────────────────────────────────────
   schemas:
+    FeedbackInput:
+      properties:
+        status:
+          type: string
+          enum:
+          - accepted
+          - dismissed
+          title: Status
+        auto_apply:
+          type: boolean
+          title: Auto Apply
+          default: false
+          enum:
+          - false
+      additionalProperties: false
+      type: object
+      required:
+      - status
+      title: FeedbackInput
+    NextAction:
+      properties:
+        type:
+          type: string
+          enum:
+          - recommend
+          - ask_clarification
+          - warn
+          - none
+          title: Type
+        label:
+          type: string
+          maxLength: 100
+          minLength: 1
+          title: Label
+      additionalProperties: false
+      type: object
+      required:
+      - type
+      - label
+      title: NextAction
+    PromptInput:
+      properties:
+        prompt:
+          type: string
+          maxLength: 1000
+          minLength: 1
+          title: Prompt
+      additionalProperties: false
+      type: object
+      required:
+      - prompt
+      title: PromptInput
+    Suggestion:
+      properties:
+        item_id:
+          type: string
+          title: Item Id
+        item_type:
+          type: string
+          enum:
+          - activity
+          - hotel
+          - flight
+          title: Item Type
+        item_name:
+          type: string
+          title: Item Name
+        city:
+          type: string
+          title: City
+        country:
+          title: Country
+          type: string
+          nullable: true
+        price_aud:
+          title: Price Aud
+          type: number
+          nullable: true
+        price_unit:
+          type: string
+          enum:
+          - per_person
+          - per_night
+          title: Price Unit
+        rating:
+          title: Rating
+          type: number
+          nullable: true
+        details:
+          additionalProperties: true
+          type: object
+          title: Details
+        why_recommended:
+          type: string
+          title: Why Recommended
+        status:
+          type: string
+          enum:
+          - pending
+          - accepted
+          - dismissed
+          title: Status
+          default: pending
+      type: object
+      required:
+      - item_id
+      - item_type
+      - item_name
+      - city
+      - price_unit
+      - details
+      - why_recommended
+      title: Suggestion
+    TurnList:
+      properties:
+        data:
+          items:
+            $ref: '#/components/schemas/TurnRead'
+          type: array
+          title: Data
+        meta:
+          $ref: '#/components/schemas/PaginationMeta'
+      type: object
+      required:
+      - data
+      - meta
+      title: TurnList
+    TurnRead:
+      properties:
+        turn_id:
+          type: string
+          format: uuid
+          title: Turn Id
+        package_id:
+          type: string
+          format: uuid
+          title: Package Id
+        prompt:
+          type: string
+          title: Prompt
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        message:
+          type: string
+          title: Message
+        next_action:
+          $ref: '#/components/schemas/NextAction'
+        warnings:
+          items:
+            $ref: '#/components/schemas/Warning'
+          type: array
+          title: Warnings
+        suggestions:
+          items:
+            $ref: '#/components/schemas/Suggestion'
+          type: array
+          title: Suggestions
+        generation_mode:
+          type: string
+          enum:
+          - llm
+          - inventory_fallback
+          - clarification
+          title: Generation Mode
+        response_time_ms:
+          type: integer
+          minimum: 0.0
+          title: Response Time Ms
+      type: object
+      required:
+      - turn_id
+      - package_id
+      - prompt
+      - created_at
+      - message
+      - next_action
+      - warnings
+      - suggestions
+      - generation_mode
+      - response_time_ms
+      title: TurnRead
+    Warning:
+      properties:
+        code:
+          type: string
+          title: Code
+        message:
+          type: string
+          title: Message
+      type: object
+      required:
+      - code
+      - message
+      title: Warning
 
     # ── Auth ──────────────────────────────────
     LoginRequest:
@@ -2487,3 +2683,210 @@ paths:
               example:
                 error_code: "SEARCH_QUERY_TOO_SHORT"
                 message: "The search query must be at least 2 characters long."
+
+  /ai/copilot/{package_id}/turns:
+    post:
+      tags:
+      - copilot
+      summary: Create Turn
+      operationId: create_turn_ai_copilot__package_id__turns_post
+      parameters:
+      - name: package_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Package Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PromptInput'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TurnRead'
+        '422':
+          description: Invalid request; auto_apply true is unsupported
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Package, turn or item not owned or not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '502':
+          description: Upstream database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Dependency unavailable or request budget exhausted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+      - BearerAuth: []
+    get:
+      tags:
+      - copilot
+      summary: List Turns
+      operationId: list_turns_ai_copilot__package_id__turns_get
+      parameters:
+      - name: package_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Package Id
+      - name: page
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          default: 1
+          title: Page
+      - name: per_page
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 20
+          title: Per Page
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TurnList'
+        '422':
+          description: Invalid request; auto_apply true is unsupported
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Package, turn or item not owned or not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '502':
+          description: Upstream database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Dependency unavailable or request budget exhausted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+      - BearerAuth: []
+  /ai/copilot/{package_id}/turns/{turn_id}/items/{item_id}:
+    patch:
+      tags:
+      - copilot
+      summary: Feedback
+      operationId: feedback_ai_copilot__package_id__turns__turn_id__items__item_id__patch
+      parameters:
+      - name: package_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Package Id
+      - name: turn_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Turn Id
+      - name: item_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Item Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FeedbackInput'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Suggestion'
+        '422':
+          description: Invalid request; auto_apply true is unsupported
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Package, turn or item not owned or not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '502':
+          description: Upstream database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Dependency unavailable or request budget exhausted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Suggestion already resolved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+      - BearerAuth: []
