@@ -21,6 +21,12 @@ export type CopilotSuggestionV1 = {
   city: string;
   country: string;
   category: string;
+  // Always present on the wire (backend defaults each to "" when unknown —
+  // see build_output_format_prompt() in apps/api/app/ai/copilot.py) but not
+  // yet surfaced anywhere in the UI.
+  vibe: string;
+  best_season: string;
+  suitable_for: string;
   duration_hours: number;
   price_aud: number;
   rating: number;

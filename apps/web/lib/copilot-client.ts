@@ -2,6 +2,16 @@ import type { CopilotClient, CopilotRequestV1, CopilotResponseV1 } from "./copil
 
 const COPILOT_ENDPOINT = "/api/ai/copilot";
 
+// The backend's _fallback_response() (HUMAN_INPUT_ERROR / DB_GAP_ERROR paths)
+// sends warnings as {code, message, severity} objects instead of the
+// string[] the H.2 spec documents. copilot-panel.tsx renders each warning
+// directly as text, so an unnormalized object crashes the render.
+type RawWarning = string | { message?: unknown };
+
+function normalizeWarning(warning: RawWarning): string {
+  return typeof warning === "string" ? warning : String(warning.message ?? warning);
+}
+
 export function createCopilotClient(): CopilotClient {
   return {
     async send(request: CopilotRequestV1): Promise<CopilotResponseV1> {
@@ -19,7 +29,9 @@ export function createCopilotClient(): CopilotClient {
       if (!res.ok) {
         throw new Error(`Co-Pilot request failed with status ${res.status}`);
       }
-      return res.json();
+
+      const data = (await res.json()) as CopilotResponseV1 & { warnings: RawWarning[] };
+      return { ...data, warnings: (data.warnings ?? []).map(normalizeWarning) };
     },
 
     async end(sessionId: string): Promise<void> {

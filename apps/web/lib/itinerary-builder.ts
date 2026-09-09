@@ -24,6 +24,7 @@ export type TimelineItem = {
   duration?: string;
   notes?: string;
   photos?: string[];
+  checkIn?: string;
   checkOut?: string;
   roomType?: string;
   starRating?: number;
@@ -162,6 +163,38 @@ function parseDay(dateStr: string | null): number | null {
   return Number.isNaN(time) ? null : time;
 }
 
+// A flight is shown in the local time of whichever end it's currently at —
+// departure in the origin airport's zone, arrival in the destination's —
+// not the viewer's own timezone, and not a raw regex substring of the ISO
+// string (which just echoes whatever offset it happened to be stored with).
+const IATA_TIMEZONES: Record<string, string> = {
+  SYD: "Australia/Sydney",
+  MEL: "Australia/Melbourne",
+  BNE: "Australia/Brisbane",
+  PER: "Australia/Perth",
+  NRT: "Asia/Tokyo",
+  HND: "Asia/Tokyo",
+};
+
+export function timezoneForIata(iata: string | null | undefined): string {
+  return (iata && IATA_TIMEZONES[iata]) || "Australia/Sydney";
+}
+
+export function extractClockTimeInZone(dateStr: string | null, timeZone: string): string | null {
+  if (!dateStr) return null;
+  const date = new Date(dateStr);
+  if (Number.isNaN(date.getTime())) return null;
+  const parts = new Intl.DateTimeFormat("en-AU", {
+    timeZone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  const hour = parts.find((part) => part.type === "hour")?.value ?? "00";
+  const minute = parts.find((part) => part.type === "minute")?.value ?? "00";
+  return `${hour}:${minute}`;
+}
+
 /**
  * Builds the editor's day/timeline from a real package's flights, hotels,
  * and activities — none of which carry a day number, only calendar dates.
@@ -217,8 +250,13 @@ export function buildDaysFromPackage(pkg: CreatorPackageDetail): BuilderDay[] {
 
   for (const flight of pkg.flights) {
     nextId += 1;
-    const time = flight.departure_datetime?.match(/T(\d{2}:\d{2})/)?.[1] ?? "09:00";
-    days[dayIndexFor(flight.departure_datetime)].items.push({
+    // The flight is placed on its arrival day, at its arrival time in the
+    // destination's zone — the day/time it actually delivers you into,
+    // shown in local Japan (or wherever) time so it lines up with that
+    // day's activities instead of the day/zone it merely left from.
+    const scheduleDatetime = flight.arrival_datetime ?? flight.departure_datetime;
+    const time = extractClockTimeInZone(scheduleDatetime, timezoneForIata(flight.destination_iata ?? flight.origin_iata)) ?? "09:00";
+    days[dayIndexFor(scheduleDatetime)].items.push({
       id: nextId,
       time,
       type: "FLIGHT",
@@ -241,7 +279,10 @@ export function buildDaysFromPackage(pkg: CreatorPackageDetail): BuilderDay[] {
       nextId += 1;
       days[dayIndex].items.push({
         id: nextId,
-        time: offset === 0 ? "15:00" : isCheckOut ? "11:00" : "Overnight stay",
+        // "15:00"/"11:00" would look like real check-in/out times when
+        // they're not — hotel bookings only carry a date, never a time —
+        // so this reads honestly instead of implying a fact we don't have.
+        time: offset === 0 ? "Check-in" : isCheckOut ? "Check-out" : "Overnight stay",
         type: "HOTEL",
         title: isCheckOut
           ? `${hotel.hotel_name ?? "Hotel"} (Check-out)`
@@ -250,6 +291,7 @@ export function buildDaysFromPackage(pkg: CreatorPackageDetail): BuilderDay[] {
         icon: "hotel",
         status: "pass",
         address: hotel.address || hotel.city || undefined,
+        checkIn: hotel.check_in_date || undefined,
         checkOut: hotel.check_out_date || undefined,
         roomType: hotel.room_type || undefined,
         starRating: hotel.star_rating || undefined,

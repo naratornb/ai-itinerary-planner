@@ -13,6 +13,7 @@ import {
   getEndTime,
   insertItemInDay,
   removeDay,
+  timezoneForIata,
   type BuilderDay,
   type IconName,
   type TimelineItem,
@@ -60,6 +61,56 @@ function hotelNights(hotel: CreatorHotelDetail) {
   return Math.round((checkOut - checkIn) / 86_400_000);
 }
 
+const REAL_TIME_PATTERN = /^\d{1,2}:\d{2}/;
+
+// The inverse of getEndTime(): how far back a stop's start time has to move
+// so it still finishes exactly at a given clock time.
+function subtractMinutes(time: string, durationMinutes: string) {
+  const [hours, minutes] = time.split(":").map(Number);
+  const total = (((hours * 60 + minutes) - Number(durationMinutes)) % 1440 + 1440) % 1440;
+  return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+}
+
+// A stop can only be scheduled after the previous one has actually ended,
+// and must itself end before the next one starts — duration is fixed, so
+// only the start time can move, and moving it can't create an overlap.
+// Both messages are phrased around the start time, since that's the only
+// thing the user can actually change here. A neighbor only counts if its
+// own displayed time is a real clock time — a hotel stop shows "Check-in" /
+// "Check-out" / "Overnight stay" instead (bookings only carry a date, never
+// a time), so it naturally never enters either side of this check.
+export function findTimeConflict(items: TimelineItem[], editingId: number, time: string, duration: string): string | null {
+  const index = items.findIndex((item) => item.id === editingId);
+  if (index === -1) return null;
+
+  const previous = items[index - 1];
+  if (previous && REAL_TIME_PATTERN.test(previous.time)) {
+    const previousEnds = getEndTime(previous.time, previous.duration ?? "0");
+    if (time < previousEnds) return `Must start at or after ${previous.title} ends, at ${previousEnds}`;
+  }
+
+  const next = items[index + 1];
+  if (next && REAL_TIME_PATTERN.test(next.time)) {
+    const thisEnds = getEndTime(time, duration);
+    if (thisEnds > next.time) {
+      const latestStart = subtractMinutes(next.time, duration);
+      return `Must start by ${latestStart}, so it ends before ${next.title} starts at ${next.time}`;
+    }
+  }
+
+  return null;
+}
+
+// "$776/night" has no space to wrap at, so a narrow price column broke it
+// mid-word ("$776/n" / "ight"). Rendering the "/night" unit smaller frees up
+// enough width that it no longer needs to wrap; the <wbr/> is a fallback
+// for anything still too narrow.
+function withWrapBeforeSlash(text: string) {
+  const index = text.indexOf("/");
+  if (index === -1) return text;
+  return <>{text.slice(0, index)}<wbr /><span className="item-price-unit">{text.slice(index)}</span></>;
+}
+
 function formatStayDate(value: string | null) {
   if (!value) return "Not provided";
   const date = new Date(`${value}T00:00:00Z`);
@@ -67,7 +118,10 @@ function formatStayDate(value: string | null) {
   return new Intl.DateTimeFormat("en-AU", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }).format(date);
 }
 
-function formatFlightDateTime(value: string | null) {
+// Departure renders in the origin airport's zone, arrival in the
+// destination's — the traveler's actual local clock at each end, not the
+// viewer's own timezone.
+function formatFlightDateTime(value: string | null, timeZone: string) {
   if (!value) return "Not provided";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
@@ -77,6 +131,7 @@ function formatFlightDateTime(value: string | null) {
     year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
+    timeZone,
   }).format(date);
 }
 
@@ -425,8 +480,10 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
     setEditingItem({ id: item.id, title: item.title, time: item.time, price: item.price.replace(/[^0-9.]/g, ""), category: item.category ?? "Activity", address: item.address ?? "", duration: item.duration ?? "60", notes: item.notes ?? "", photos: item.photos ?? [] });
   };
 
+  const timeConflict = editingItem ? findTimeConflict(items, editingItem.id, editingItem.time, editingItem.duration) : null;
+
   const saveEditedItem = () => {
-    if (!editingItem || !editingItem.title.trim()) return;
+    if (!editingItem || !editingItem.title.trim() || timeConflict) return;
     setItems((current) => current.map((item) => item.id === editingItem.id ? {
       ...item,
       title: editingItem.title.trim(),
@@ -458,14 +515,30 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
     setActivitySearch("");
   };
 
-  const moveItem = (fromIndex: number, toIndex: number) => {
-    if (fromIndex === toIndex || toIndex < 0 || toIndex >= items.length) return;
+  // Shared by drag-and-drop and the keyboard reorder shortcut — dropping an
+  // activity ahead of the flight that gets you there (or any other
+  // scheduling conflict) is rejected the same way a manual time edit is.
+  const applyReorder = (fromIndex: number, insertionIndex: number) => {
     const next = [...items];
     const [moved] = next.splice(fromIndex, 1);
-    next.splice(toIndex, 0, moved);
+    next.splice(insertionIndex, 0, moved);
+
+    const conflict = REAL_TIME_PATTERN.test(moved.time)
+      ? findTimeConflict(next, moved.id, moved.time, moved.duration ?? "0")
+      : null;
+    if (conflict) {
+      showNotice(`Can't move ${moved.title} there — ${conflict}`);
+      return;
+    }
+
     setItems(next);
     setAddingAfter(null);
-    showNotice(`${moved.title} moved to position ${toIndex + 1}`);
+    showNotice(`${moved.title} moved to position ${insertionIndex + 1}`);
+  };
+
+  const moveItem = (fromIndex: number, toIndex: number) => {
+    if (fromIndex === toIndex || toIndex < 0 || toIndex >= items.length) return;
+    applyReorder(fromIndex, toIndex);
   };
 
   const dropItem = () => {
@@ -474,12 +547,7 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
     if (fromIndex < 0) return;
     let insertionIndex = dropTarget.index + (dropTarget.position === "after" ? 1 : 0);
     if (fromIndex < insertionIndex) insertionIndex -= 1;
-    const next = [...items];
-    const [moved] = next.splice(fromIndex, 1);
-    next.splice(insertionIndex, 0, moved);
-    setItems(next);
-    setAddingAfter(null);
-    showNotice(`${moved.title} moved to position ${insertionIndex + 1}`);
+    applyReorder(fromIndex, insertionIndex);
   };
 
   const endDrag = () => {
@@ -733,6 +801,9 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
                 const hotel = item.type === "HOTEL" && !item.stayGroupId ? hotels[hotelIndex] : undefined;
                 const hasHotelDetails = item.type === "HOTEL" && (Boolean(hotel) || Boolean(item.roomType));
                 const isFixedActivity = item.type === "ACTIVITY";
+                const scheduleConflict = REAL_TIME_PATTERN.test(item.time)
+                  ? findTimeConflict(items, item.id, item.time, item.duration ?? "0")
+                  : null;
                 const nights = hotel ? hotelNights(hotel) : null;
                 const hotelTitle = hotel?.hotel_name
                   ? `${hotel.hotel_name}${nights ? ` (${nights} night${nights === 1 ? "" : "s"})` : ""}`
@@ -760,11 +831,11 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
                   startEditingItem(item);
                 };
                 return <div key={item.id} className={`timeline-group ${addingAfter === index ? "adding" : ""} ${dropTarget?.index === index ? `drop-${dropTarget.position}` : ""}`} onDragOver={(event) => { event.preventDefault(); if (draggedItemId === item.id) return; const rect = event.currentTarget.getBoundingClientRect(); setDropTarget({ index, position: event.clientY < rect.top + rect.height / 2 ? "before" : "after" }); }} onDrop={(event) => { event.preventDefault(); dropItem(); endDrag(); }}>
-                <article className={`timeline-item ${item.status} ${draggedItemId === item.id ? "dragging" : ""} ${canExpand ? "editable" : ""} ${isExpanded ? "expanded" : ""}`} onClick={(event) => { if (!canExpand || (event.target as HTMLElement).closest("button")) return; toggleExpand(); }} onKeyDown={(event) => { if (!canExpand || (event.target as HTMLElement).closest("button")) return; if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggleExpand(); } }} tabIndex={canExpand ? 0 : undefined} role={canExpand ? "button" : undefined} aria-expanded={canExpand ? isExpanded : undefined}>
+                <article className={`timeline-item ${scheduleConflict ? "critical" : item.status} ${draggedItemId === item.id ? "dragging" : ""} ${canExpand ? "editable" : ""} ${isExpanded ? "expanded" : ""}`} onClick={(event) => { if (!canExpand || (event.target as HTMLElement).closest("button")) return; toggleExpand(); }} onKeyDown={(event) => { if (!canExpand || (event.target as HTMLElement).closest("button")) return; if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggleExpand(); } }} tabIndex={canExpand ? 0 : undefined} role={canExpand ? "button" : undefined} aria-expanded={canExpand ? isExpanded : undefined}>
                   <button className="drag-handle" draggable aria-label={`Move ${hotelTitle}. Use drag and drop, or the up and down arrow keys.`} onDragStart={(event) => { setEditingItem(null); setDraggedItemId(item.id); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", String(item.id)); }} onDragEnd={endDrag} onKeyDown={(event) => { if (event.key === "ArrowUp") { event.preventDefault(); moveItem(index, index - 1); } if (event.key === "ArrowDown") { event.preventDefault(); moveItem(index, index + 1); } }}><span /><span /><span /><span /><span /><span /></button>
                   <div className="item-time"><Icon name={item.icon} /><strong className={isTimeValue ? undefined : "item-time-word"}>{item.time}</strong></div>
-                  <div className="item-copy"><div className="item-copy-head"><span>{item.type}</span>{stayMarkerLabel && <span className="stay-marker">{stayMarkerLabel}</span>}</div><h4>{hotelTitle}</h4>{item.problem && <div className="item-alert"><Icon name="alert" size={15} /><div><strong>{item.problem}</strong><span>{item.problemDetail}</span></div></div>}</div>
-                  <div className="item-price"><span>Price</span><strong className={isPriceValue ? undefined : "item-price-word"}>{itemPrice}</strong></div>
+                  <div className="item-copy"><div className="item-copy-head"><span>{item.type}</span>{stayMarkerLabel && <span className="stay-marker">{stayMarkerLabel}</span>}</div><h4>{hotelTitle}</h4>{scheduleConflict ? <div className="item-alert"><Icon name="alert" size={15} /><div><strong>Scheduling conflict</strong><span>{scheduleConflict}</span></div></div> : item.problem && <div className="item-alert"><Icon name="alert" size={15} /><div><strong>{item.problem}</strong><span>{item.problemDetail}</span></div></div>}</div>
+                  <div className="item-price"><span>Price</span><strong className={isPriceValue ? undefined : "item-price-word"}>{withWrapBeforeSlash(itemPrice)}</strong></div>
                 </article>
                 {flight && expandedFlightId === item.id && <section id={`flight-details-${item.id}`} className="timeline-detail-panel" aria-label={`${flight.airline ?? "Flight"} details`}>
                   <div className="detail-card">
@@ -785,8 +856,8 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
                       <div><dt>Cabin</dt><dd>{flight.cabin_class || "Not provided"}</dd></div>
                       <div><dt>From</dt><dd>{flight.origin_iata || "Not provided"}</dd></div>
                       <div><dt>To</dt><dd>{flight.destination_iata || "Not provided"}</dd></div>
-                      <div><dt>Departure</dt><dd>{formatFlightDateTime(flight.departure_datetime)}</dd></div>
-                      <div><dt>Arrival</dt><dd>{formatFlightDateTime(flight.arrival_datetime)}</dd></div>
+                      <div><dt>Departure</dt><dd>{formatFlightDateTime(flight.departure_datetime, timezoneForIata(flight.origin_iata))}</dd></div>
+                      <div><dt>Arrival</dt><dd>{formatFlightDateTime(flight.arrival_datetime, timezoneForIata(flight.destination_iata))}</dd></div>
                     </dl>
                   </div>
                   <button className="item-delete" onClick={() => requestDeleteItem(item)}>Delete</button>
@@ -815,7 +886,7 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
                         <div className="full"><dt>Address</dt><dd>{hotel.address || [hotel.city].filter(Boolean).join(", ") || "Not provided"}</dd></div>
                       </> : <>
                         <div><dt>Room type</dt><dd>{item.roomType || "Not provided"}</dd></div>
-                        <div><dt>Check-in</dt><dd>{item.time}</dd></div>
+                        <div><dt>Check-in</dt><dd>{item.checkIn || "Not provided"}</dd></div>
                         <div><dt>Check-out</dt><dd>{item.checkOut || "Not provided"}</dd></div>
                         <div><dt>Rating</dt><dd className="rating-value">{item.starRating ? <><Icon name="star" size={14} />{item.starRating} / 5</> : "Not provided"}</dd></div>
                         <div className="full"><dt>Address</dt><dd>{item.address || "Not provided"}</dd></div>
@@ -838,10 +909,11 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
                         </div>
                       </div>
                       <div className="activity-card-stats">
-                        <div className="activity-card-stat"><Icon name="clock" size={14} /><span><small>Start time</small><strong>{editingItem.time}</strong></span></div>
+                        <div className="activity-card-stat"><Icon name="clock" size={16} /><span><small>Start time</small><div className="activity-card-time-field"><input type="time" className="activity-card-time-input" aria-label="Start time" value={editingItem.time} onChange={(event) => setEditingItem({ ...editingItem, time: event.target.value })} onClick={(event) => { try { event.currentTarget.showPicker(); } catch { /* unsupported browser: native click behavior still works */ } }} /></div></span></div>
                         <div className="activity-card-duration"><span className="activity-card-duration-label">{editingItem.duration} min</span></div>
-                        <div className="activity-card-stat"><Icon name="clock" size={14} /><span><small>Ends at</small><strong>{getEndTime(editingItem.time, editingItem.duration)}</strong></span></div>
+                        <div className="activity-card-stat"><Icon name="clock" size={16} /><span><small>Ends at</small><strong>{getEndTime(editingItem.time, editingItem.duration)}</strong></span></div>
                       </div>
+                      {timeConflict && <p className="activity-card-time-error" role="alert">{timeConflict}</p>}
                     </div>
                     <label className="activity-card-notes"><span>Notes</span><div className="activity-card-notes-field"><textarea value={editingItem.notes} maxLength={500} onChange={(event) => setEditingItem({ ...editingItem, notes: event.target.value })} placeholder="Share why this is worth a stop" /><small>{editingItem.notes.length} / 500</small></div></label>
                   </> : <>
@@ -855,6 +927,7 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
                       <label><span>Ends at</span><input value={getEndTime(editingItem.time, editingItem.duration)} readOnly /></label>
                       <label className="edit-notes"><span>Notes</span><textarea value={editingItem.notes} onChange={(event) => setEditingItem({ ...editingItem, notes: event.target.value })} placeholder="Share why this is worth a stop" /></label>
                     </div>
+                    {timeConflict && <p className="activity-card-time-error" role="alert">{timeConflict}</p>}
                   </>}
                   <div className="edit-photo">
                     <span>Photos <small>Optional</small></span>
@@ -869,7 +942,7 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
                       <label><input type="file" accept="image/png,image/jpeg" multiple onChange={(event) => { const files = Array.from(event.target.files ?? []); if (files.length) setEditingItem({ ...editingItem, photos: [...editingItem.photos, ...files.map((file) => URL.createObjectURL(file))] }); event.target.value = ""; }} /><Icon name="plus" size={18} />Add photo</label>
                     </div>
                   </div>
-                  <div className="inline-edit-actions"><button className="item-delete" onClick={() => requestDeleteItem(item)}>Delete</button><button className="quiet-button" onClick={() => setEditingItem(null)}>Cancel</button><button className="publish-button" disabled={!editingItem.title.trim()} onClick={saveEditedItem}>Save changes</button></div>
+                  <div className="inline-edit-actions"><button className="item-delete" onClick={() => requestDeleteItem(item)}>Delete</button><button className="quiet-button" onClick={() => setEditingItem(null)}>Cancel</button><button className="publish-button" disabled={!editingItem.title.trim() || Boolean(timeConflict)} onClick={saveEditedItem}>Save changes</button></div>
                 </section>}
                 <AddStopFlow index={index} {...addFlowProps} />
               </div>})}

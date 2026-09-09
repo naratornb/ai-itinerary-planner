@@ -3,16 +3,20 @@ import test from "node:test";
 
 import {
   appendItemToDay,
+  buildDaysFromPackage,
   copilotSuggestionToTimelineItem,
+  extractClockTimeInZone,
   getEndTime,
   insertItemInDay,
   moveItemInDay,
   removeDay,
+  timezoneForIata,
   updateItemInDay,
   type BuilderDay,
   type TimelineItem,
 } from "./itinerary-builder";
 import type { CopilotSuggestionV1 } from "./copilot";
+import type { CreatorPackageDetail } from "./creator-api";
 
 const firstItem: TimelineItem = {
   id: 1,
@@ -89,6 +93,9 @@ const foodSuggestion: CopilotSuggestionV1 = {
   city: "Tokyo",
   country: "Japan",
   category: "food",
+  vibe: "Local, lively",
+  best_season: "Spring",
+  suitable_for: "Foodies",
   duration_hours: 3.6,
   price_aud: 144,
   rating: 4.5,
@@ -125,4 +132,68 @@ test("copilotSuggestionToTimelineItem starts right after the day's last item", (
   assert.equal(item.time, "09:20");
   assert.equal(item.type, "HOTEL");
   assert.equal(item.icon, "hotel");
+});
+
+test("a flight lands on its arrival day, at its arrival time in the destination's zone", () => {
+  // Departure and arrival fall on different UTC calendar days on purpose —
+  // the flight must key off arrival, not departure, for both its day and
+  // its displayed clock time, so it lines up with that day's Tokyo activity.
+  const pkg: CreatorPackageDetail = {
+    package_id: "pkg-1",
+    title: "Tokyo Street Food & Culture Week",
+    duration_days: 2,
+    days: [],
+    hotels: [],
+    activities: [
+      {
+        activity_id: "act-1",
+        sequence_order: 1,
+        activity_name: "Tokyo Cooking Class",
+        activity_date: "2026-07-12",
+        city: "Tokyo",
+        duration_hours: 3,
+        price_aud: 128,
+        description: null,
+        booking_required: null,
+      },
+    ],
+    flights: [
+      {
+        flight_id: "fl-1",
+        airline: "Qantas",
+        flight_number: "QF25",
+        origin_iata: "SYD",
+        destination_iata: "NRT",
+        departure_datetime: "2026-07-10T20:00:00Z",
+        // JST (UTC+9, no DST in Japan) — lands 14:00 local on July 12, a day
+        // after it departed.
+        arrival_datetime: "2026-07-12T05:00:00Z",
+        cabin_class: null,
+        price_aud: 850,
+      },
+    ],
+  };
+
+  const days = buildDaysFromPackage(pkg);
+
+  assert.equal(days[0].items.length, 0);
+  const flightItem = days[1].items.find((item) => item.type === "FLIGHT");
+  assert.equal(flightItem?.time, "14:00");
+});
+
+test("extractClockTimeInZone renders a flight's real instant in the given zone, not a raw ISO substring", () => {
+  // Stored with a +14:00 offset: the digits right after "T" ("08:00") match
+  // neither Sydney's nor Tokyo's clock — only a real zone-aware conversion
+  // of the underlying UTC instant (2026-04-01T18:00:00Z) does.
+  const instant = "2026-04-02T08:00:00+14:00";
+
+  assert.equal(extractClockTimeInZone(instant, "Australia/Sydney"), "05:00");
+  assert.equal(extractClockTimeInZone(instant, "Asia/Tokyo"), "03:00");
+});
+
+test("timezoneForIata knows Sydney and Tokyo, and falls back to Sydney for an unknown code", () => {
+  assert.equal(timezoneForIata("SYD"), "Australia/Sydney");
+  assert.equal(timezoneForIata("NRT"), "Asia/Tokyo");
+  assert.equal(timezoneForIata("XXX"), "Australia/Sydney");
+  assert.equal(timezoneForIata(null), "Australia/Sydney");
 });

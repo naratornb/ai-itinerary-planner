@@ -97,6 +97,13 @@ export default function CopilotPanel({ client, dayLabel, onAddSuggestion, onClos
                           {suggestion.duration_hours}h · {suggestion.rating.toFixed(1)}★
                           {suggestion.verified ? " · Verified" : ""}
                         </p>
+                        {[suggestion.vibe, suggestion.best_season, suggestion.suitable_for].some(Boolean) && (
+                          <p>
+                            {[suggestion.vibe, suggestion.best_season, suggestion.suitable_for]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          </p>
+                        )}
                         <small>{suggestion.why_recommended}</small>
                         <button
                           type="button"
