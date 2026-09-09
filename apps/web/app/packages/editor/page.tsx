@@ -1,22 +1,12 @@
-"use client";
+import { redirect } from "next/navigation";
 
-import { useRouter } from "next/navigation";
-
-import ItineraryEditor from "../../../components/itinerary-editor";
-import { useDemoState } from "../../../components/demo-state";
-import { APP_ROUTES } from "../../../lib/routes";
+// The AI wizard doesn't create a real package yet (see BuilderScreen for the
+// "Build from Scratch" path, which does), so this route has no package id of
+// its own. Redirect to the seeded demo package's editor route so there is
+// only one implementation (/packages/editor/[packageId]) instead of two
+// separate pages that both wrap PackageEditorScreen.
+const DEMO_PACKAGE_ID = "b0000000-0000-0000-0000-000000000001";
 
 export default function PackageEditorPage() {
-  const router = useRouter();
-  const { setWizardStep, generatedItinerary } = useDemoState();
-
-  return (
-    <ItineraryEditor
-      initialState={generatedItinerary}
-      onBack={() => {
-        setWizardStep(3);
-        router.push(APP_ROUTES.wizard);
-      }}
-    />
-  );
+  redirect(`/packages/editor/${DEMO_PACKAGE_ID}`);
 }

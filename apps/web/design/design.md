@@ -82,6 +82,11 @@ components:
     textColor: "{colors.text-primary}"
     rounded: "{rounded.md}"
     padding: 16px
+  copilot-conversation:
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.text-primary}"
+    rounded: "{rounded.lg}"
+    padding: 16px
 ---
 
 # Design Analysis — Influencer Travel Marketplace web experience
@@ -240,6 +245,13 @@ Default boundaries use `{colors.border}` (#E0E0E0) at 1px. Focus changes the bou
 - **Where it appears**: Package editor only.
 - **Confidence**: ✅ high
 
+#### Copilot conversation
+- **What it is**: A task-focused assistant surface with a compact identity header, explicit mock-data notice, conversational welcome, large request shortcuts, and a persistent composer.
+- **Why it's signature**: It turns itinerary editing guidance into a visible conversation while keeping the prototype boundary unmistakable.
+- **Composition**: A 340px desktop sidebar panel that becomes a full-viewport mobile sheet below 700px. Blue marks identity and action; white and subtle-gray surfaces carry messages and guidance.
+- **Where it appears**: Package editor only.
+- **Confidence**: ✅ high — adapted from the supplied mobile reference.
+
 ## 4. Layout & Composition
 
 ### 4.1 Grid & containers
@@ -306,6 +318,7 @@ Use the target repository's Next.js App Router, React, TypeScript, and Tailwind 
 - Use `{colors.brand}` (#D40119) for structural identity and `{colors.action}` (#0072EA) for interaction.
 - Keep itinerary facts, pricing, and warnings on solid readable surfaces.
 - Preserve the fixed-size day-card rhythm and visible validation sidebar on desktop.
+- Preserve the Co-Pilot's chat-first order: identity, prototype disclosure, welcome, request shortcuts, conversation, then composer.
 - Use only neutral Marketplace naming and approved public-facing identifiers.
 
 ### Don't
@@ -317,4 +330,4 @@ Use the target repository's Next.js App Router, React, TypeScript, and Tailwind 
 
 ## 7. Open Questions
 
-No open questions remain because the source contains explicit tokens, desktop component styles, and responsive intent. Exact mobile composition will be validated in-browser during implementation.
+No open questions remain because the supplied reference establishes the Co-Pilot's mobile composition. Exact device chrome is intentionally excluded because the browser supplies its own viewport controls.

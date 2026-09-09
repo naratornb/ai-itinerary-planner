@@ -1,28 +1,24 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import type { WizardSelection } from "../lib/ai/itinerary";
 import { useRouter } from "next/navigation";
 import type { Session } from "@supabase/supabase-js";
 
 import {
+  createPackage,
   fetchOwnPackages,
-  formatDashboardStats,
   formatCreatorPackage,
   resolveCreatorProfile,
   signInWithEmail,
   type CreatorPackage,
 } from "../lib/creator-api";
-
 import {
   fetchMarketplacePackages,
   searchMarketplacePackages,
   uniqueDestinationSuggestions,
   type MarketplacePackageSummary,
 } from "../lib/marketplace-api";
-
 import { supabase } from "../lib/supabase/client";
-
 const creatorBannerImg = "/creator-banner.png";
 
 
@@ -1152,12 +1148,12 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
     return matchesTab && matchesSearch;
   });
 
-  const stats = formatDashboardStats({
-    packageCount: packages.length,
-    bookingCount: null,
-    commissionRate: null,
-    commissionAud: null,
-  });
+  const stats = [
+    { label: "Packages", value: String(packages.length), sub: "All your packages" },
+    { label: "Live", value: String(packages.filter((p) => p.status === "live").length), sub: "Published & bookable" },
+    { label: "Approved", value: String(packages.filter((p) => p.status === "approved").length), sub: "Ready to publish" },
+    { label: "Drafts", value: String(packages.filter((p) => p.status === "draft").length), sub: "Still in progress" },
+  ];
 
   const cols = {
     grid: "minmax(0,1.8fr) minmax(140px,1fr) 100px 120px 140px 150px",
@@ -1378,6 +1374,7 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
                     whiteSpace: "nowrap",
                     opacity: hov ? 1 : 0.75, transition: "opacity 140ms, border-color 140ms",
                   }}
+                    onClick={() => router.push(`/packages/editor/${encodeURIComponent(pkg.id)}`)}
                     onMouseEnter={(e) => { e.currentTarget.style.borderColor = "#9E9E9E"; }}
                     onMouseLeave={(e) => { e.currentTarget.style.borderColor = C.border; }}
                   >{pkg.rowAction}</button>
@@ -1566,8 +1563,99 @@ export function CreatorNav({ activeItem, onItem, onNav }: {
 }
 
 // ─── Builder Screen ────────────────────────────────────────────────────────────
+const BUILDER_API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+function DraftField({
+  label, value, onChange, type = "text", textarea = false, placeholder,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  type?: string;
+  textarea?: boolean;
+  placeholder?: string;
+}) {
+  const [focused, setFocused] = useState(false);
+  const sharedStyle: React.CSSProperties = {
+    width: "100%", boxSizing: "border-box",
+    padding: textarea ? "14px" : "0 14px",
+    height: textarea ? undefined : 48,
+    minHeight: textarea ? 84 : undefined,
+    fontSize: 16, color: C.ink, fontFamily: "var(--fc-font-body)",
+    border: `1.5px solid ${focused ? C.blue : C.ink}`, borderRadius: 6, outline: "none",
+    resize: textarea ? "vertical" : undefined,
+  };
+  return (
+    <div style={{ position: "relative" }}>
+      <label style={{
+        position: "absolute", top: -9, left: 12, background: C.white,
+        padding: "0 4px", fontSize: 12, color: C.secondary, lineHeight: 1, zIndex: 1,
+      }}>{label}</label>
+      {textarea ? (
+        <textarea value={value} placeholder={placeholder} onFocus={() => setFocused(true)} onBlur={() => setFocused(false)} onChange={(event) => onChange(event.target.value)} style={sharedStyle} />
+      ) : (
+        <input type={type} value={value} placeholder={placeholder} onFocus={() => setFocused(true)} onBlur={() => setFocused(false)} onChange={(event) => onChange(event.target.value)} style={sharedStyle} />
+      )}
+    </div>
+  );
+}
+
+const NEW_PACKAGE_DRAFT = {
+  title: "",
+  description: "",
+  destination_country: "",
+  destination_city: "",
+  duration_days: "3",
+  base_price_aud: "",
+  max_group_size: "",
+};
+
 export function BuilderScreen({ onNav }: { onNav: (s: Screen) => void }) {
+  const router = useRouter();
   const [hovScratch, setHovScratch] = useState(false);
+  const [newPackageOpen, setNewPackageOpen] = useState(false);
+  const [draft, setDraft] = useState(NEW_PACKAGE_DRAFT);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState("");
+
+  const createDraftPackage = async () => {
+    setCreating(true);
+    setCreateError("");
+    try {
+      const { data } = await supabase.auth.getSession();
+      const accessToken = data.session?.access_token;
+      if (!accessToken) throw new Error("Please sign in again.");
+      const { package_id } = await createPackage(fetch, BUILDER_API_URL, accessToken, {
+        title: draft.title.trim(),
+        description: draft.description.trim(),
+        destination_country: draft.destination_country.trim(),
+        destination_city: draft.destination_city.trim(),
+        duration_days: Number(draft.duration_days) || 1,
+        base_price_aud: Number(draft.base_price_aud) || 0,
+        max_group_size: draft.max_group_size.trim() ? Number(draft.max_group_size) : null,
+      });
+      setNewPackageOpen(false);
+      setDraft(NEW_PACKAGE_DRAFT);
+      router.push(`/packages/editor/${encodeURIComponent(package_id)}`);
+    } catch (error) {
+      setCreateError(error instanceof Error ? error.message : "Unable to create this package.");
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const draftValid = draft.title.trim() && draft.description.trim()
+    && draft.destination_country.trim() && draft.destination_city.trim()
+    && Number(draft.duration_days) >= 1 && draft.base_price_aud.trim() !== "" && Number(draft.base_price_aud) >= 0;
+
+  useEffect(() => {
+    if (!newPackageOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !creating) setNewPackageOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [newPackageOpen, creating]);
 
   const steps = [
     { n: 1, label: "Pick destination", icon: "M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z" },
@@ -1688,7 +1776,7 @@ export function BuilderScreen({ onNav }: { onNav: (s: Screen) => void }) {
 
           {/* Build from scratch */}
           <button
-            onClick={() => {}}
+            onClick={() => setNewPackageOpen(true)}
             onMouseEnter={() => setHovScratch(true)}
             onMouseLeave={() => setHovScratch(false)}
             style={{
@@ -1723,6 +1811,66 @@ export function BuilderScreen({ onNav }: { onNav: (s: Screen) => void }) {
           </button>
 
       </div>
+
+      {newPackageOpen && (
+        <div
+          role="presentation"
+          onMouseDown={() => { if (!creating) { setNewPackageOpen(false); setCreateError(""); } }}
+          style={{ position: "fixed", inset: 0, zIndex: 200, background: "rgba(33,33,33,0.45)", display: "grid", placeItems: "center", padding: 24 }}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="new-package-title"
+            onMouseDown={(event) => event.stopPropagation()}
+            style={{ width: "100%", maxWidth: 480, maxHeight: "90vh", overflowY: "auto", background: C.white, borderRadius: C.radiusLg, boxShadow: C.shadowRaised, padding: 32 }}
+          >
+            <h2 id="new-package-title" style={{ fontFamily: "var(--fc-font-body)", fontSize: 20, fontWeight: 700, color: C.ink, margin: "0 0 4px" }}>New package</h2>
+            <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, color: C.secondary, margin: "0 0 24px", lineHeight: "21px" }}>
+              Fill in the essentials — add flights, hotels and activities in the editor next.
+            </p>
+
+            <div style={{ display: "grid", gap: 20 }}>
+              <DraftField label="Title *" value={draft.title} onChange={(value) => setDraft({ ...draft, title: value })} placeholder="e.g. Kyoto Autumn Cultural Tour" />
+              <DraftField label="Description *" value={draft.description} onChange={(value) => setDraft({ ...draft, description: value })} textarea placeholder="What makes this trip worth booking?" />
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                <DraftField label="Destination country *" value={draft.destination_country} onChange={(value) => setDraft({ ...draft, destination_country: value })} placeholder="Japan" />
+                <DraftField label="Destination city *" value={draft.destination_city} onChange={(value) => setDraft({ ...draft, destination_city: value })} placeholder="Kyoto" />
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16 }}>
+                <DraftField label="Duration (days) *" type="number" value={draft.duration_days} onChange={(value) => setDraft({ ...draft, duration_days: value })} />
+                <DraftField label="Base price (AUD) *" type="number" value={draft.base_price_aud} onChange={(value) => setDraft({ ...draft, base_price_aud: value })} placeholder="2200" />
+                <DraftField label="Max group size" type="number" value={draft.max_group_size} onChange={(value) => setDraft({ ...draft, max_group_size: value })} placeholder="Optional" />
+              </div>
+            </div>
+
+            {createError && (
+              <p role="alert" style={{ margin: "16px 0 0", padding: "10px 12px", borderRadius: 6, background: "#FFF1F2", color: "#B42318", fontSize: 14, lineHeight: "20px" }}>
+                {createError}
+              </p>
+            )}
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 12, marginTop: 28 }}>
+              <BtnSecondary onClick={() => { setNewPackageOpen(false); setCreateError(""); }}>Cancel</BtnSecondary>
+              <button
+                type="button"
+                disabled={!draftValid || creating}
+                onClick={() => void createDraftPackage()}
+                style={{
+                  display: "inline-flex", alignItems: "center", justifyContent: "center",
+                  minHeight: 44, padding: "12px 20px",
+                  background: !draftValid || creating ? C.disabled : C.blue,
+                  color: C.white, border: "none", borderRadius: C.radiusMd,
+                  fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 500, lineHeight: "20px",
+                  cursor: !draftValid || creating ? "not-allowed" : "pointer",
+                }}
+              >
+                {creating ? "Creating…" : "Create package"}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }
@@ -1748,7 +1896,7 @@ const VIBES = [
   { id: "scenic",     label: "Scenic",           desc: "Beautiful views, nature, and photo-worthy spots",      img: "https://images.unsplash.com/photo-1626948688703-0136bc0a90da?w=600&h=320&fit=crop" },
 ];
 
-export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequestId = 0, hasBuilt = false, onBuild }: { onNav: (s: Screen) => void; initialStep?: number; requestedStep?: number; stepRequestId?: number; hasBuilt?: boolean; onBuild?: (selection: WizardSelection) => Promise<void> }) {
+export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequestId = 0, hasBuilt = false }: { onNav: (s: Screen) => void; initialStep?: number; requestedStep?: number; stepRequestId?: number; hasBuilt?: boolean }) {
   const [step, setStep] = useState(initialStep);
   const [selected, setSelected] = useState<string | null>(null);
   const [dest, setDest] = useState("");
@@ -1768,16 +1916,23 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
     setStep(requestedStep);
   }, [requestedStep, stepRequestId]);
 
-  // Creeps toward 90% while the request is in flight; the real response
-  // drives it to 100. Never completes on its own.
   useEffect(() => {
     if (!isLoading) return;
     setProgress(0);
     const interval = setInterval(() => {
-      setProgress((p) => (p >= 90 ? 90 : p + (p < 60 ? 1.2 : 0.4)));
+      setProgress((p) => {
+        if (p >= 100) { clearInterval(interval); return 100; }
+        return p + (p < 60 ? 1.2 : p < 85 ? 0.6 : 0.3);
+      });
     }, 60);
     return () => clearInterval(interval);
   }, [isLoading]);
+
+  useEffect(() => {
+    if (!isLoading || progress < 100) return;
+    const timeout = window.setTimeout(() => onNav("editor"), 500);
+    return () => window.clearTimeout(timeout);
+  }, [isLoading, progress, onNav]);
 
   const canContinue = step === 0 ? (selected !== null || dest.trim().length > 0) : step === 1 ? vibes.length > 0 : step === 2 ? duration !== null : step === 3 ? season !== null : true;
   const filteredDestinations = DESTINATIONS.filter((destination) => {
@@ -1798,7 +1953,7 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
     season,
   });
   const setupHasChanged = lastBuiltSetup !== null && currentSetup !== lastBuiltSetup;
-  const continueWizard = async () => {
+  const continueWizard = () => {
     if (step === 3) {
       if (hasBuilt && !setupHasChanged) {
         onNav("editor");
@@ -1807,23 +1962,6 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
       setLastBuiltSetup(currentSetup);
       setProgress(0);
       setStep(4);
-
-      if (!onBuild) { onNav("editor"); return; }   // no handler: old behaviour
-
-      try {
-        await onBuild({
-          destination: selected ?? dest.trim(),
-          vibes,
-          duration,
-          customDurationDays,
-          season,
-          groupSize: 2,
-        });
-        setProgress(100);                          // onBuild navigates on success
-      } catch {
-        setProgress(0);
-        setStep(3);                                // drop back so they can retry
-      }
       return;
     }
     setStep((currentStep) => currentStep + 1);
