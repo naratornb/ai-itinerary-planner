@@ -4,7 +4,6 @@ export const APP_ROUTES = {
   dashboard: "/dashboard",
   builder: "/packages/new",
   wizard: "/packages/new/ai",
-  editor: "/packages/editor",
 } as const;
 
 export type AppScreen = keyof typeof APP_ROUTES;

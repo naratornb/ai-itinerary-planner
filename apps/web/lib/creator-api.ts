@@ -224,6 +224,39 @@ export async function fetchOwnPackages(
   return payload.data;
 }
 
+// Mirrors FlightInput/HotelInput/ActivityInput in apps/api/app/packages/schemas.py.
+export type FlightInput = {
+  origin_iata: string;              // exactly 3 chars
+  destination_iata: string;         // exactly 3 chars
+  airline: string;
+  flight_number?: string | null;
+  departure_datetime: string;
+  arrival_datetime: string;
+  cabin_class?: string | null;
+  price_aud?: number | null;
+};
+
+export type HotelInput = {
+  hotel_name: string;
+  star_rating?: number | null;      // 1–5
+  city: string;
+  address?: string | null;
+  check_in_date: string;            // YYYY-MM-DD
+  check_out_date: string;           // YYYY-MM-DD
+  price_per_night_aud?: number | null;
+  room_type?: string | null;
+};
+
+export type ActivityInput = {
+  activity_name: string;
+  activity_date: string;            // YYYY-MM-DD
+  city: string;
+  duration_hours?: number | null;
+  price_aud?: number | null;
+  description?: string | null;
+  booking_required?: boolean | null;
+};
+
 export type CreatePackageInput = {
   title: string;
   description: string;
@@ -232,6 +265,9 @@ export type CreatePackageInput = {
   duration_days: number;
   base_price_aud: number;
   max_group_size?: number | null;
+  flights?: FlightInput[];
+  hotels?: HotelInput[];
+  activities?: ActivityInput[];
 };
 
 export async function createPackage(

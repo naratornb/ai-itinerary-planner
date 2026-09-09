@@ -21,7 +21,6 @@ const SCREEN_ROUTES: Record<Screen, string> = {
   dashboard: APP_ROUTES.dashboard,
   builder: APP_ROUTES.builder,
   "ai-wizard": APP_ROUTES.wizard,
-  editor: APP_ROUTES.editor,
 };
 
 function useScreenNavigation() {
@@ -54,15 +53,11 @@ export function BuilderRouteScreen() {
 
 export function WizardRouteScreen() {
   const onNav = useScreenNavigation();
-  const { hasBuiltTrip, setHasBuiltTrip, wizardStep } = useDemoState();
+  const { wizardStep } = useDemoState();
 
   return <><CreatorNav activeItem="My Packages" onItem={() => undefined} onNav={onNav} /><AIWizardScreen
-    hasBuilt={hasBuiltTrip}
     initialStep={wizardStep}
-    onNav={(screen) => {
-      if (screen === "editor") setHasBuiltTrip(true);
-      onNav(screen);
-    }}
+    onNav={onNav}
     requestedStep={wizardStep}
     stepRequestId={wizardStep}
   /></>;

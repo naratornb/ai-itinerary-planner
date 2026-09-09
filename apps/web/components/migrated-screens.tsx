@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import type { Session } from "@supabase/supabase-js";
 
@@ -10,6 +10,7 @@ import {
   formatCreatorPackage,
   resolveCreatorProfile,
   signInWithEmail,
+  type CreatePackageInput,
   type CreatorPackage,
 } from "../lib/creator-api";
 import {
@@ -18,11 +19,16 @@ import {
   uniqueDestinationSuggestions,
   type MarketplacePackageSummary,
 } from "../lib/marketplace-api";
+import {
+  generateItinerary,
+  itineraryToPackageInput,
+  type WizardSelection,
+} from "../lib/ai/itinerary";
 import { supabase } from "../lib/supabase/client";
 const creatorBannerImg = "/creator-banner.png";
 
 
-export type Screen = "login" | "marketplace" | "dashboard" | "builder" | "ai-wizard" | "editor";
+export type Screen = "login" | "marketplace" | "dashboard" | "builder" | "ai-wizard";
 
 // ─── Image URLs ────────────────────────────────────────────────────────────────
 const IMG = {
@@ -1896,7 +1902,34 @@ const VIBES = [
   { id: "scenic",     label: "Scenic",           desc: "Beautiful views, nature, and photo-worthy spots",      img: "https://images.unsplash.com/photo-1626948688703-0136bc0a90da?w=600&h=320&fit=crop" },
 ];
 
-export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequestId = 0, hasBuilt = false }: { onNav: (s: Screen) => void; initialStep?: number; requestedStep?: number; stepRequestId?: number; hasBuilt?: boolean }) {
+const DURATION_DAYS = { short: 4, mid: 7, long: 12 } as const;
+
+export function wizardDraftToPackageInput(draft: {
+  destination: string;
+  vibes: string[];
+  duration: "short" | "mid" | "long" | "custom";
+  customDurationDays: number;
+  season: string;
+}): CreatePackageInput {
+  const destination = draft.destination.trim();
+  // ponytail: naive split; the wizard's picker only offers "City, Country" names
+  const comma = destination.lastIndexOf(",");
+  const city = (comma === -1 ? destination : destination.slice(0, comma).trim()) || destination;
+  const country = (comma === -1 ? destination : destination.slice(comma + 1).trim()) || destination;
+  const vibes = draft.vibes.join(", ");
+  return {
+    title: `${destination} trip`.slice(0, 200),
+    description: `AI-planned ${vibes ? `${vibes} ` : ""}itinerary for ${draft.season}.`,
+    destination_city: city,
+    destination_country: country,
+    duration_days: draft.duration === "custom" ? Math.max(1, draft.customDurationDays) : DURATION_DAYS[draft.duration],
+    base_price_aud: 0,
+    max_group_size: null,
+  };
+}
+
+export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequestId = 0 }: { onNav: (s: Screen) => void; initialStep?: number; requestedStep?: number; stepRequestId?: number }) {
+  const router = useRouter();
   const [step, setStep] = useState(initialStep);
   const [selected, setSelected] = useState<string | null>(null);
   const [dest, setDest] = useState("");
@@ -1907,7 +1940,10 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
   const [customDurationDays, setCustomDurationDays] = useState(7);
   const [season, setSeason] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
-  const [lastBuiltSetup, setLastBuiltSetup] = useState<string | null>(null);
+  const [createdPackageId, setCreatedPackageId] = useState<string | null>(null);
+  const [builtSetup, setBuiltSetup] = useState<string | null>(null);
+  const inFlightSetupRef = useRef<string | null>(null);
+  const [createError, setCreateError] = useState("");
 
   const isLoading = step === 4;
 
@@ -1929,10 +1965,71 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
   }, [isLoading]);
 
   useEffect(() => {
-    if (!isLoading || progress < 100) return;
-    const timeout = window.setTimeout(() => onNav("editor"), 500);
+    if (!isLoading) return;
+    // One build per setup fingerprint — guards Strict Mode's double effect and
+    // re-entering step 4 while a build for the same setup is still in flight.
+    if (builtSetup !== null && inFlightSetupRef.current === builtSetup) return;
+    const runSetup = builtSetup;
+    inFlightSetupRef.current = runSetup;
+    let cancelled = false;
+    // ponytail: 20s timeout so a hung request lands in the catch instead of a forever-100% bar
+    const timeoutFetch: typeof fetch = (input, init) =>
+      fetch(input, { ...init, signal: AbortSignal.timeout(20_000) });
+    void (async () => {
+      try {
+        const { data } = await supabase.auth.getSession();
+        const accessToken = data.session?.access_token;
+        if (!accessToken) {
+          if (!cancelled) router.push("/login");
+          return;
+        }
+        // The /api/ai/recommend proxy has its own 120s timeout — the 20s
+        // timeoutFetch above is only for the create POST.
+        const selection: WizardSelection = {
+          destination: selected ?? dest.trim(),
+          vibes,                                   // raw ids — the engine mapping needs them
+          duration,
+          customDurationDays,
+          season,
+        };
+        const res = await generateItinerary(selection);
+        const base = wizardDraftToPackageInput({
+          destination: selected ?? dest.trim(),
+          vibes: vibes.map((vibe) => VIBES.find((item) => item.id === vibe)?.label ?? vibe),
+          duration: duration ?? "short",
+          customDurationDays,
+          season: season ?? "",
+        });
+        const { package_id } = await createPackage(
+          timeoutFetch,
+          BUILDER_API_URL,
+          accessToken,
+          itineraryToPackageInput(base, res),
+        );
+        // Set even after cleanup: the package now exists server-side, and the
+        // reuse guard in continueWizard needs the id to avoid creating a twin.
+        // Skipped only when a newer build for a different setup superseded this one.
+        if (inFlightSetupRef.current === runSetup) setCreatedPackageId(package_id);
+      } catch (error) {
+        if (inFlightSetupRef.current === runSetup) inFlightSetupRef.current = null;
+        if (cancelled) return;
+        setCreateError(
+          error instanceof DOMException && error.name === "TimeoutError"
+            ? "The request timed out. Please try again."
+            : error instanceof Error ? error.message : "Unable to create this package.",
+        );
+        setStep(3);
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoading]);
+
+  useEffect(() => {
+    if (!isLoading || progress < 100 || !createdPackageId) return;
+    const timeout = window.setTimeout(() => router.push(`/packages/editor/${encodeURIComponent(createdPackageId)}`), 500);
     return () => window.clearTimeout(timeout);
-  }, [isLoading, progress, onNav]);
+  }, [isLoading, progress, createdPackageId, router]);
 
   const canContinue = step === 0 ? (selected !== null || dest.trim().length > 0) : step === 1 ? vibes.length > 0 : step === 2 ? duration !== null : step === 3 ? season !== null : true;
   const filteredDestinations = DESTINATIONS.filter((destination) => {
@@ -1947,19 +2044,21 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
   ];
   const currentSetup = JSON.stringify({
     destination: selected ?? dest.trim(),
-    travelStyles: [...vibes].sort(),
+    vibes: [...vibes].sort(),
     duration,
     customDurationDays: duration === "custom" ? customDurationDays : null,
     season,
   });
-  const setupHasChanged = lastBuiltSetup !== null && currentSetup !== lastBuiltSetup;
   const continueWizard = () => {
     if (step === 3) {
-      if (hasBuilt && !setupHasChanged) {
-        onNav("editor");
+      // Rebuilding an unchanged setup would orphan a duplicate draft — reuse the one we made.
+      if (createdPackageId && builtSetup === currentSetup) {
+        router.push(`/packages/editor/${encodeURIComponent(createdPackageId)}`);
         return;
       }
-      setLastBuiltSetup(currentSetup);
+      setBuiltSetup(currentSetup);
+      setCreatedPackageId(null);
+      setCreateError("");
       setProgress(0);
       setStep(4);
       return;
@@ -2261,6 +2360,11 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
           </div>
         </div>
         )}</div>
+        {createError && step === 3 && (
+          <p role="alert" style={{ margin: "12px 0 0", fontFamily: "var(--fc-font-body)", fontSize: 13, color: "#B42318" }}>
+            {createError}
+          </p>
+        )}
         <div style={{ flexShrink: 0, display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 0 20px", borderTop: `1px solid ${C.border}`, background: "#FAFAFA" }}>
           <button onClick={() => step === 0 ? onNav("builder") : setStep((s) => s - 1)} style={{
             height: 44, padding: "0 24px",
@@ -2290,7 +2394,7 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
             onMouseEnter={(e) => { if (canContinue) e.currentTarget.style.opacity = "0.88"; }}
             onMouseLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
           >
-            {step === 3 ? (hasBuilt ? (setupHasChanged ? "Rebuild your trip" : "Back to trip") : "Build your trip") : "Continue"}
+            {step === 3 ? "Build your trip" : "Continue"}
             {step < 3 && (
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M5 12h14M12 5l7 7-7 7"/>

@@ -7,9 +7,7 @@ import { DEFAULT_DEMO_STATE, parseDemoState } from "../lib/demo-state";
 const STORAGE_KEY = "marketplace-demo-state";
 
 type DemoStateContextValue = {
-  hasBuiltTrip: boolean;
   wizardStep: number;
-  setHasBuiltTrip: (value: boolean) => void;
   setWizardStep: (value: number) => void;
 };
 
@@ -30,7 +28,6 @@ export function DemoStateProvider({ children }: { children: React.ReactNode }) {
     <DemoStateContext.Provider
       value={{
         ...state,
-        setHasBuiltTrip: (hasBuiltTrip) => setState((current) => ({ ...current, hasBuiltTrip })),
         setWizardStep: (wizardStep) =>
           setState((current) => ({
             ...current,
