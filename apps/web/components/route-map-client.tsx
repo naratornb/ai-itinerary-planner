@@ -22,19 +22,30 @@ function numberIcon(n: number, colorIndex: number) {
 function FitRoute({ coordinates }: { coordinates: [number, number][] }) {
   const map = useMap();
   useEffect(() => {
+    // A rAF queued by the observer can fire after MapContainer destroys the
+    // map (StrictMode's throwaway mount does this on every dev page-load),
+    // and invalidateSize on a destroyed map throws on _leaflet_pos.
+    let disposed = false;
+    let frame = 0;
     const fit = () => {
+      if (disposed) return;
       map.invalidateSize({ animate: false });
       if (coordinates.length === 0) return;
       if (coordinates.length === 1) { map.setView(coordinates[0], 13, { animate: false }); return; }
       map.fitBounds(coordinates, { padding: [28, 28], animate: false });
     };
     const container = map.getContainer();
-    const observer = new ResizeObserver(() => window.requestAnimationFrame(fit));
+    const observer = new ResizeObserver(() => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(fit);
+    });
     observer.observe(container);
     const timeout = window.setTimeout(fit, 100);
     fit();
     return () => {
+      disposed = true;
       observer.disconnect();
+      window.cancelAnimationFrame(frame);
       window.clearTimeout(timeout);
     };
   }, [map, coordinates]);
