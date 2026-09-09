@@ -23,12 +23,15 @@ def require_copilot_ctx(authorization: str = Header(default="")) -> dict:
     started = time.monotonic()
     if not core.SUPABASE_ANON_KEY:
         raise HTTPException(500, "Supabase credentials not configured.")
-    user = core.validate_user(authorization, timeout=2)
+    user = core.validate_user(authorization, timeout=5)
     return {
         "uid": user["id"],
         "headers": {"apikey": core.SUPABASE_ANON_KEY, "Authorization": authorization},
         "started": started,
-        "deadline": started + 10,
+        # ponytail: the spec's ~10s budget assumed warm infra; a cold serverless
+        # start plus cross-region Supabase blows 2s sub-timeouts, so the
+        # ceilings are raised while the budget mechanism itself stays.
+        "deadline": started + 25,
     }
 
 

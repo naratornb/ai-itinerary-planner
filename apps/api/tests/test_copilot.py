@@ -300,7 +300,7 @@ def test_auth_rejects_missing_and_expired_tokens(monkeypatch):
     assert (
         client.get(BASE, headers={"Authorization": "Bearer expired"}).status_code == 401
     )
-    assert get.call_args.kwargs["timeout"] == 2
+    assert get.call_args.kwargs["timeout"] == 5
 
 
 def test_database_timeout_respects_remaining_budget(monkeypatch):
