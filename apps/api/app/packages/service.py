@@ -343,6 +343,21 @@ def create_package(uid, headers, payload):
                 ],
                 headers=headers,
             )
+        if payload.days:
+            _call(
+                "post",
+                "package_days",
+                json=[
+                    {
+                        "package_id": package_id,
+                        "day_number": d.day_number,
+                        "title": d.title,
+                        "summary": d.summary,
+                    }
+                    for d in payload.days
+                ],
+                headers=headers,
+            )
         return get_package_detail(package_id, headers, uid)
     except UpstreamError:
         try:
@@ -369,6 +384,7 @@ def create_package(uid, headers, payload):
 
 def update_package(package_id, headers, uid, payload):
     body = payload.model_dump(exclude_unset=True)
+    days = body.pop("days", None)
     body["updated_at"] = _now()
     rows = _call(
         "patch",
@@ -387,6 +403,31 @@ def update_package(package_id, headers, uid, payload):
         if not current:
             return "not_found", None
         return "not_editable", current[0].get("status")
+    if days is not None:
+        # Upsert first, then trim extras — deleting first would lose every
+        # title/summary if the insert then failed (there is no transaction here).
+        if days:
+            _call(
+                "post",
+                "package_days",
+                params={"on_conflict": "package_id,day_number"},
+                json=[
+                    {
+                        "package_id": package_id,
+                        "day_number": d["day_number"],
+                        "title": d.get("title"),
+                        "summary": d.get("summary"),
+                    }
+                    for d in days
+                ],
+                headers={**headers, "Prefer": "resolution=merge-duplicates"},
+            )
+        _call(
+            "delete",
+            "package_days",
+            params={"package_id": f"eq.{package_id}", "day_number": f"gt.{len(days)}"},
+            headers=headers,
+        )
     return "ok", get_package_detail(package_id, headers, uid)
 
 

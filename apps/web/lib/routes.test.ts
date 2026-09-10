@@ -10,7 +10,6 @@ test("every migrated screen has a stable absolute route", () => {
     dashboard: "/dashboard",
     builder: "/packages/new",
     wizard: "/packages/new/ai",
-    editor: "/packages/editor",
   });
-  assert.equal(routeFor("editor"), "/packages/editor");
+  assert.equal(routeFor("login"), APP_ROUTES.login);
 });

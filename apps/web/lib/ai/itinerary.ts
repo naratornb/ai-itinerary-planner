@@ -5,11 +5,19 @@
  *
  *   AIWizardScreen state  --buildItineraryQuery-->  free-text query
  *   free-text query       --POST /api/ai/recommend-->  engine JSON
- *   engine JSON           --mapItineraryToEditor-->  editor state
+ *   engine JSON           --itineraryToPackageInput-->  POST /packages body
  *
  * The engine parses a natural-language string, so the wizard's structured
  * selections have to be rendered back into a sentence it can read.
  */
+
+import type {
+  ActivityInput,
+  CreatePackageInput,
+  FlightInput,
+  HotelInput,
+  PackageDayInput,
+} from "../creator-api";
 
 // ─── Wizard input ─────────────────────────────────────────────────────────────
 
@@ -70,36 +78,6 @@ export type ItineraryResponse = {
   validation: { is_valid: boolean; warnings: string[]; errors: string[] };
 };
 
-// ─── Editor state ─────────────────────────────────────────────────────────────
-
-export type EditorItem = {
-  id: number;
-  dayIndex: number;                          // which day tab this belongs to
-  time: string;                              // "14:30"
-  type: "FLIGHT" | "HOTEL" | "ACTIVITY";
-  title: string;
-  price: string;                             // "$850"
-  icon: "plane" | "hotel" | "star";
-  status: "critical" | "pass";
-  category?: string;
-  address?: string;
-  duration?: string;                         // minutes, as a string
-  notes?: string;
-  sourceId?: string;                         // inventory id — proves it came from the DB
-};
-
-export type EditorDay = { day: number; count: number; title: string; meta: string };
-
-export type EditorState = {
-  packageTitle: string;
-  days: EditorDay[];
-  items: EditorItem[];
-  selectedHotel: string;
-  packagePrice: number;
-  story: string;
-  warnings: string[];
-};
-
 // ─── Wizard → query string ────────────────────────────────────────────────────
 
 /**
@@ -126,7 +104,7 @@ const VIBE_TO_KEYWORD: Record<string, string | null> = {
   scenic:    null,          // no matching theme in the engine
 };
 
-const DURATION_TO_DAYS: Record<string, number> = { short: 4, mid: 7, long: 11 };
+const DURATION_TO_DAYS: Record<string, number> = { short: 4, mid: 7, long: 12 };
 
 /** "Tokyo, Japan" → "Tokyo". The engine matches on city aliases. */
 function cityOf(destination: string): string {
@@ -160,87 +138,123 @@ export function buildItineraryQuery(selection: WizardSelection): string {
   return parts.filter(Boolean).join(" ");
 }
 
-// ─── Engine response → editor state ───────────────────────────────────────────
+// ─── Engine response → POST /packages body ────────────────────────────────────
 
-const money = (n: number) => `$${Math.round(n || 0).toLocaleString()}`;
-const clockOf = (iso: string) => {
-  const m = /T(\d{2}:\d{2})/.exec(iso ?? "");
-  return m ? m[1] : "00:00";
-};
+/** "Sydney (SYD)" → "SYD"; a bare "SYD" → "SYD"; anything else → null. */
+function iataOf(place: string | undefined): string | null {
+  const value = (place ?? "").trim();
+  const parenthesised = /\(([A-Z]{3})\)/.exec(value);
+  if (parenthesised) return parenthesised[1];
+  return /^[A-Z]{3}$/.test(value) ? value : null;
+}
 
-export function mapItineraryToEditor(res: ItineraryResponse): EditorState {
-  const items: EditorItem[] = [];
-  let id = 1;
+/** "2026-03-01T09:00:00" → "2026-03-01"; anything shorter than a date → null. */
+function dateOf(value: string | undefined): string | null {
+  const day = (value ?? "").slice(0, 10);
+  return day.length === 10 ? day : null;
+}
 
-  const outbound = res.flights.find((f) => f.leg === "outbound");
-  const inbound  = res.flights.find((f) => f.leg === "return");
-  const hotel    = res.accommodation[0];
-  const lastDay  = Math.max(0, (res.days?.length ?? 1) - 1);
+const roundOrNull = (n: number | undefined) =>
+  typeof n === "number" && Number.isFinite(n) ? Math.round(n) : null;
 
-  if (outbound) {
-    items.push({
-      id: id++, dayIndex: 0, time: clockOf(outbound.arrival_datetime),
-      type: "FLIGHT", icon: "plane", status: "pass",
-      title: `${outbound.airline} ${outbound.origin} to ${outbound.destination}`,
-      price: money(outbound.price_aud),
-      sourceId: outbound.flight_id,
+/**
+ * Merge the engine's itinerary into the wizard's base package input.
+ * Components missing a field the backend requires are skipped rather than sent
+ * (a 422 would lose the whole package for one bad row).
+ */
+export function itineraryToPackageInput(
+  base: CreatePackageInput,
+  res: ItineraryResponse,
+): CreatePackageInput {
+  const flights: FlightInput[] = [];
+  for (const flight of res.flights ?? []) {
+    const origin = iataOf(flight.origin);
+    const destination = iataOf(flight.destination);
+    // ponytail: the engine sends free text ("Sydney (SYD)" or a city name); no
+    // city→IATA table here — a flight we can't resolve is dropped, not guessed.
+    if (!origin || !destination) continue;
+    if (!flight.airline || !flight.departure_datetime || !flight.arrival_datetime) continue;
+    flights.push({
+      origin_iata: origin,
+      destination_iata: destination,
+      airline: flight.airline,
+      departure_datetime: flight.departure_datetime,
+      arrival_datetime: flight.arrival_datetime,
+      cabin_class: flight.cabin_class ?? null,
+      price_aud: roundOrNull(flight.price_aud),
     });
   }
 
-  res.days?.forEach((day, dayIndex) => {
-    day.activities?.forEach((act) => {
-      items.push({
-        id: id++, dayIndex,
-        time: act.start_time,
-        type: "ACTIVITY", icon: "star", status: "pass",
-        title: act.activity_name,
-        price: money(act.price_aud),
-        category: act.category,
-        duration: String(Math.round((act.duration_hours || 1) * 60)),
-        address: act.address ?? "",
-        notes: act.notes,
-        sourceId: act.activity_id,          // AC-xxx-nnn — traceable to the DB
+  const hotels: HotelInput[] = [];
+  for (const hotel of res.accommodation ?? []) {
+    const checkIn = dateOf(hotel.check_in);
+    const checkOut = dateOf(hotel.check_out);
+    if (!hotel.hotel_name || !hotel.city || !checkIn || !checkOut) continue;
+    const stars = roundOrNull(hotel.star_rating);
+    hotels.push({
+      hotel_name: hotel.hotel_name,
+      star_rating: stars === null ? null : Math.min(5, Math.max(1, stars)),
+      city: hotel.city,
+      check_in_date: checkIn,
+      check_out_date: checkOut,
+      price_per_night_aud: roundOrNull(hotel.price_per_night_aud),
+      room_type: hotel.room_type ?? null,
+    });
+  }
+
+  const activities: ActivityInput[] = [];
+  const days: PackageDayInput[] = [];
+  for (const [index, day] of (res.days ?? []).entries()) {
+    // Day titles/summaries persist even when the day has no usable date —
+    // they're independent of the activity rows below.
+    if (day.title || day.description) {
+      days.push({
+        // Position, not the engine's day_number: a 0/negative value 422s and a
+        // duplicate violates UNIQUE(package_id, day_number), killing the create.
+        day_number: index + 1,
+        title: day.title || null,
+        summary: day.description || null,
       });
-    });
-  });
-
-  if (hotel) {
-    items.push({
-      id: id++, dayIndex: 0, time: "19:00",
-      type: "HOTEL", icon: "hotel", status: "pass",
-      title: `${hotel.hotel_name} (${hotel.nights} nights)`,
-      price: money(hotel.total_price_aud),
-      address: hotel.city,
-      notes: hotel.amenities,
-      sourceId: hotel.hotel_id,
-    });
+    }
+    const activityDate = dateOf(day.date);
+    if (!activityDate) continue;             // activities carry no date of their own
+    for (const activity of day.activities ?? []) {
+      if (!activity.activity_name) continue;
+      activities.push({
+        activity_name: activity.activity_name,
+        activity_date: activityDate,
+        city: day.city || base.destination_city,
+        duration_hours: Number.isFinite(activity.duration_hours) ? activity.duration_hours : null,
+        price_aud: roundOrNull(activity.price_aud),
+        description: activity.notes ?? null,
+      });
+    }
   }
 
-  if (inbound) {
-    items.push({
-      id: id++, dayIndex: lastDay, time: clockOf(inbound.departure_datetime),
-      type: "FLIGHT", icon: "plane", status: "pass",
-      title: `${inbound.airline} ${inbound.origin} to ${inbound.destination}`,
-      price: money(inbound.price_aud),
-      sourceId: inbound.flight_id,
-    });
-  }
-
-  const days: EditorDay[] = (res.days ?? []).map((day, i) => ({
-    day: day.day_number ?? i + 1,
-    count: items.filter((it) => it.dayIndex === i).length,
-    title: day.title || `Day ${i + 1}`,
-    meta: day.city ? `${day.city} · ${day.activities?.length ?? 0} stops` : "",
-  }));
-
+  const totalCost = res.trip?.total_cost_aud;
+  const engineDuration = res.trip?.duration_days;
+  // The engine can return more dated days than trip.duration_days claims (it
+  // records the mismatch in validation.errors and returns anyway); a too-small
+  // duration makes the editor squash the overflow onto its last day.
+  const duration = Math.max(
+    Number.isInteger(engineDuration) && (engineDuration as number) >= 1
+      ? (engineDuration as number)
+      : base.duration_days,
+    new Set(activities.map((a) => a.activity_date)).size,
+  );
   return {
-    packageTitle:  res.trip?.title ?? "Untitled package",
-    days:          days.length ? days : [{ day: 1, count: items.length, title: "Day 1", meta: "" }],
-    items,
-    selectedHotel: hotel?.hotel_name ?? "",
-    packagePrice:  Math.round(res.budget_breakdown?.total_aud ?? 0),
-    story:         res.description ?? "",
-    warnings:      res.validation?.warnings ?? [],
+    ...base,
+    title: (res.trip?.title || base.title).slice(0, 200),
+    description: res.description || base.description,
+    duration_days: duration,
+    base_price_aud:
+      typeof totalCost === "number" && Number.isFinite(totalCost) && totalCost > 0
+        ? Math.round(totalCost)
+        : base.base_price_aud,
+    flights,
+    hotels,
+    activities,
+    days,
   };
 }
 
@@ -249,7 +263,7 @@ export function mapItineraryToEditor(res: ItineraryResponse): EditorState {
 export async function generateItinerary(
   selection: WizardSelection,
   originCity = "Sydney",
-): Promise<EditorState> {
+): Promise<ItineraryResponse> {
   const response = await fetch("/api/ai/recommend", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -261,8 +275,15 @@ export async function generateItinerary(
 
   if (!response.ok) {
     const detail = await response.json().catch(() => ({}));
-    throw new Error(detail?.error ?? `Itinerary request failed (${response.status})`);
+    const friendly: Record<string, string> = {
+      itinerary_timeout: "The AI took too long to respond. Please try again.",
+      api_unreachable: "Could not reach the AI service. Please try again.",
+      endpoint_unavailable: "The AI service is unavailable right now. Please try again later.",
+    };
+    throw new Error(
+      friendly[detail?.error as string] ?? `Itinerary request failed (${response.status})`,
+    );
   }
 
-  return mapItineraryToEditor((await response.json()) as ItineraryResponse);
+  return (await response.json()) as ItineraryResponse;
 }

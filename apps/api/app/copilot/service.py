@@ -41,7 +41,7 @@ def _call(
             method,
             f"{core.SUPABASE_URL}/rest/v1/{table}",
             headers=headers,
-            timeout=min(2.0, remaining / 2),
+            timeout=min(5.0, remaining / 2),
             **kwargs,
         )
     except requests.RequestException as exc:

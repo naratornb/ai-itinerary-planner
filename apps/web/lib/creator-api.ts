@@ -23,6 +23,61 @@ export type CreatorPackage = {
   cover_image_url?: string | null;
 };
 
+export type CreatorHotelDetail = {
+  hotel_id: string | null;
+  hotel_name: string | null;
+  star_rating: number | null;
+  city: string | null;
+  address: string | null;
+  check_in_date: string | null;
+  check_out_date: string | null;
+  price_per_night_aud: number | null;
+  room_type: string | null;
+};
+
+export type CreatorFlightDetail = {
+  flight_id: string | null;
+  airline: string | null;
+  flight_number: string | null;
+  origin_iata: string | null;
+  destination_iata: string | null;
+  departure_datetime: string | null;
+  arrival_datetime: string | null;
+  cabin_class: string | null;
+  price_aud: number | null;
+};
+
+export type CreatorActivityDetail = {
+  activity_id: string | null;
+  sequence_order: number | null;
+  activity_name: string | null;
+  activity_date: string | null;
+  city: string | null;
+  duration_hours: number | null;
+  price_aud: number | null;
+  description: string | null;
+  booking_required: boolean | null;
+};
+
+export type CreatorPackageDay = {
+  id: string | null;
+  day_number: number | null;
+  title: string | null;
+  summary: string | null;
+};
+
+export type CreatorPackageDetail = {
+  package_id: string;
+  title: string;
+  duration_days: number;
+  destination_city?: string | null;
+  destination_country?: string | null;
+  flights: CreatorFlightDetail[];
+  hotels: CreatorHotelDetail[];
+  activities: CreatorActivityDetail[];
+  days: CreatorPackageDay[];
+};
+
 type ProfileRow = {
   full_name?: string | null;
   avatar_url?: string | null;
@@ -169,4 +224,187 @@ export async function fetchOwnPackages(
 
   const payload = (await response.json()) as PackageListResponse;
   return payload.data;
+}
+
+// Mirrors FlightInput/HotelInput/ActivityInput in apps/api/app/packages/schemas.py.
+export type FlightInput = {
+  origin_iata: string;              // exactly 3 chars
+  destination_iata: string;         // exactly 3 chars
+  airline: string;
+  flight_number?: string | null;
+  departure_datetime: string;
+  arrival_datetime: string;
+  cabin_class?: string | null;
+  price_aud?: number | null;
+};
+
+export type HotelInput = {
+  hotel_name: string;
+  star_rating?: number | null;      // 1–5
+  city: string;
+  address?: string | null;
+  check_in_date: string;            // YYYY-MM-DD
+  check_out_date: string;           // YYYY-MM-DD
+  price_per_night_aud?: number | null;
+  room_type?: string | null;
+};
+
+export type ActivityInput = {
+  activity_name: string;
+  activity_date: string;            // YYYY-MM-DD
+  city: string;
+  duration_hours?: number | null;
+  price_aud?: number | null;
+  description?: string | null;
+  booking_required?: boolean | null;
+};
+
+export type PackageDayInput = {
+  day_number: number;
+  title: string | null;
+  summary: string | null;
+};
+
+export type CreatePackageInput = {
+  title: string;
+  description: string;
+  destination_country: string;
+  destination_city: string;
+  duration_days: number;
+  base_price_aud: number;
+  max_group_size?: number | null;
+  flights?: FlightInput[];
+  hotels?: HotelInput[];
+  activities?: ActivityInput[];
+  days?: PackageDayInput[];
+};
+
+export type UpdatePackageInput = {
+  title?: string;
+  base_price_aud?: number;
+  days?: PackageDayInput[];
+};
+
+export async function createPackage(
+  fetcher: typeof fetch,
+  apiUrl: string,
+  accessToken: string,
+  input: CreatePackageInput,
+) {
+  const response = await fetcher(`${apiUrl.replace(/\/$/, "")}/packages`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify(input),
+  });
+  if (response.status === 401) throw new Error("Your session expired. Please sign in again.");
+  if (!response.ok) throw new Error("Unable to create this package. Please try again.");
+  return response.json() as Promise<{ package_id: string }>;
+}
+
+export async function fetchOwnPackage(
+  fetcher: typeof fetch,
+  apiUrl: string,
+  accessToken: string,
+  packageId: string,
+) {
+  const response = await fetcher(
+    `${apiUrl.replace(/\/$/, "")}/packages/${encodeURIComponent(packageId)}`,
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+  );
+  if (response.status === 401) throw new Error("Your session expired. Please sign in again.");
+  if (response.status === 404) throw new Error("Package not found.");
+  if (!response.ok) throw new Error("Unable to load this package. Please try again.");
+  return response.json() as Promise<CreatorPackageDetail>;
+}
+
+export async function updatePackage(
+  fetcher: typeof fetch,
+  apiUrl: string,
+  accessToken: string,
+  packageId: string,
+  input: UpdatePackageInput,
+) {
+  const response = await fetcher(
+    `${apiUrl.replace(/\/$/, "")}/packages/${encodeURIComponent(packageId)}`,
+    {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify(input),
+    },
+  );
+  if (response.status === 401) throw new Error("Your session expired. Please sign in again.");
+  if (!response.ok) {
+    // e.g. 409 PACKAGE_NOT_EDITABLE on a submitted package — "try again" would lie.
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.message || "Unable to save this package. Please try again.");
+  }
+  return response.json() as Promise<{ package_id: string }>;
+}
+
+// Mirrors MediaItem/MediaUploadResponse in apps/api/app/media/schemas.py.
+export type PackageMedia = {
+  media_id: string;
+  package_id: string;
+  media_type: string;
+  url: string;
+  caption?: string | null;
+  is_cover?: boolean;
+  sort_order?: number;
+};
+
+export async function listPackageMedia(
+  fetcher: typeof fetch,
+  apiUrl: string,
+  accessToken: string,
+  packageId: string,
+) {
+  const response = await fetcher(
+    `${apiUrl.replace(/\/$/, "")}/media/${encodeURIComponent(packageId)}`,
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+  );
+  if (response.status === 401) throw new Error("Your session expired. Please sign in again.");
+  if (!response.ok) throw new Error("Unable to load photos for this package.");
+  const payload = (await response.json()) as { data: PackageMedia[] };
+  return payload.data;
+}
+
+export async function uploadPackageMedia(
+  fetcher: typeof fetch,
+  apiUrl: string,
+  accessToken: string,
+  packageId: string,
+  file: File,
+) {
+  const body = new FormData();
+  body.append("package_id", packageId);
+  body.append("file", file);
+  // No Content-Type header: the browser has to set the multipart boundary.
+  const response = await fetcher(`${apiUrl.replace(/\/$/, "")}/media/upload`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}` },
+    body,
+  });
+  if (response.status === 401) throw new Error("Your session expired. Please sign in again.");
+  if (!response.ok) throw new Error("Unable to upload this photo. Please try again.");
+  return response.json() as Promise<PackageMedia>;
+}
+
+export async function deletePackageMedia(
+  fetcher: typeof fetch,
+  apiUrl: string,
+  accessToken: string,
+  mediaId: string,
+) {
+  const response = await fetcher(
+    `${apiUrl.replace(/\/$/, "")}/media/${encodeURIComponent(mediaId)}`,
+    { method: "DELETE", headers: { Authorization: `Bearer ${accessToken}` } },
+  );
+  if (response.status === 401) throw new Error("Your session expired. Please sign in again.");
+  if (!response.ok) throw new Error("Unable to remove this photo. Please try again.");
 }

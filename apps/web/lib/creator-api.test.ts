@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  createPackage,
+  fetchOwnPackage,
   fetchOwnPackages,
   fetchDashboardStats,
   formatDashboardStats,
@@ -9,6 +11,100 @@ import {
   resolveCreatorProfile,
   signInWithEmail,
 } from "./creator-api";
+
+test("fetchOwnPackage loads authenticated hotel details", async () => {
+  const responseBody = {
+    package_id: "package-1",
+    title: "Tokyo food tour",
+    flights: [{
+      flight_id: "flight-1",
+      airline: "Qantas",
+      flight_number: "QF25",
+      origin_iata: "SYD",
+      destination_iata: "HND",
+      departure_datetime: "2026-09-10T20:55:00+10:00",
+      arrival_datetime: "2026-09-11T05:55:00+09:00",
+      cabin_class: "Economy",
+      price_aud: 850,
+    }],
+    hotels: [{
+      hotel_id: "hotel-1",
+      hotel_name: "Shibuya Excel Hotel Tokyu",
+      room_type: "Standard twin room",
+      check_in_date: "2026-09-10",
+      check_out_date: "2026-09-12",
+      star_rating: 4,
+      city: "Tokyo",
+      address: "Shibuya, Tokyo",
+      price_per_night_aud: 360,
+    }],
+  };
+  const fetcher: typeof fetch = async (input, init) => {
+    assert.equal(String(input), "http://localhost:8000/packages/package-1");
+    assert.deepEqual(init?.headers, { Authorization: "Bearer access-token" });
+    return new Response(JSON.stringify(responseBody), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  const result = await fetchOwnPackage(fetcher, "http://localhost:8000/", "access-token", "package-1");
+  assert.equal(result.flights[0]?.flight_number, "QF25");
+  assert.deepEqual(result, responseBody);
+});
+
+test("fetchOwnPackage identifies an expired login", async () => {
+  const fetcher: typeof fetch = async () => new Response("{}", { status: 401 });
+
+  await assert.rejects(
+    fetchOwnPackage(fetcher, "http://localhost:8000", "expired-token", "package-1"),
+    /sign in again/i,
+  );
+});
+
+test("createPackage posts the draft and returns the new package id", async () => {
+  const input = {
+    title: "Kyoto Autumn Escape",
+    description: "A slow week exploring temples and food.",
+    destination_country: "Japan",
+    destination_city: "Kyoto",
+    duration_days: 5,
+    base_price_aud: 2200,
+    max_group_size: 6,
+  };
+  const fetcher: typeof fetch = async (url, init) => {
+    assert.equal(String(url), "http://localhost:8000/packages");
+    assert.equal(init?.method, "POST");
+    assert.deepEqual(init?.headers, {
+      "Content-Type": "application/json",
+      Authorization: "Bearer access-token",
+    });
+    assert.deepEqual(JSON.parse(String(init?.body)), input);
+    return new Response(JSON.stringify({ package_id: "package-9", ...input }), {
+      status: 201,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  const result = await createPackage(fetcher, "http://localhost:8000", "access-token", input);
+  assert.equal(result.package_id, "package-9");
+});
+
+test("createPackage identifies an expired login", async () => {
+  const fetcher: typeof fetch = async () => new Response("{}", { status: 401 });
+
+  await assert.rejects(
+    createPackage(fetcher, "http://localhost:8000", "expired-token", {
+      title: "Trip",
+      description: "Desc",
+      destination_country: "Japan",
+      destination_city: "Kyoto",
+      duration_days: 5,
+      base_price_aud: 2200,
+    }),
+    /sign in again/i,
+  );
+});
 
 test("signInWithEmail returns the authenticated session", async () => {
   const session = { access_token: "access-token" };

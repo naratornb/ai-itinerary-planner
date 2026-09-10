@@ -40,6 +40,12 @@ class ActivityInput(BaseModel):
     booking_required: bool | None = None
 
 
+class PackageDayInput(BaseModel):
+    day_number: int = Field(ge=1)
+    title: str | None = None
+    summary: str | None = None
+
+
 class TravelPackageCreate(BaseModel):
     title: str = Field(max_length=200)
     description: str
@@ -52,6 +58,7 @@ class TravelPackageCreate(BaseModel):
     flights: list[FlightInput] = []
     hotels: list[HotelInput] = []
     activities: list[ActivityInput] = []
+    days: list[PackageDayInput] = []
 
 
 class TravelPackageUpdate(BaseModel):
@@ -65,6 +72,7 @@ class TravelPackageUpdate(BaseModel):
     base_price_aud: int | None = Field(default=None, ge=0)
     max_group_size: int | None = None
     tags: list[str] | None = None
+    days: list[PackageDayInput] | None = None
 
 
 class SubmitBody(BaseModel):
