@@ -1,9 +1,8 @@
 "use client";
 
-import Image from "next/image";
 import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import CopilotPanel from "./copilot/copilot-panel";
-import { formatHotelStarRating, HOTEL_OPTIONS, type HotelOption, type HotelRoomOption } from "./hotel-catalog";
+import { formatHotelStarRating } from "./hotel-catalog";
 import RouteMap, { type RouteStop } from "./route-map";
 import { createCopilotClient } from "../lib/copilot-client";
 import {
@@ -225,12 +224,10 @@ type AddStopFlowProps = {
   selectedFlightId: string | null;
   setSelectedFlightId: Dispatch<SetStateAction<string | null>>;
   addSelectedFlight: () => void;
-  selectedHotelOptionId: string | null;
-  setSelectedHotelOptionId: Dispatch<SetStateAction<string | null>>;
-  selectedRoomOptionId: string | null;
-  setSelectedRoomOptionId: Dispatch<SetStateAction<string | null>>;
-  selectedHotelOption: HotelOption | undefined;
-  selectedRoomOption: HotelRoomOption | undefined;
+  availableHotels: CreatorHotelDetail[];
+  selectedHotelIndex: number | null;
+  setSelectedHotelIndex: Dispatch<SetStateAction<number | null>>;
+  selectedHotelOption: CreatorHotelDetail | undefined;
   hotelCheckInDayId: string | null;
   setHotelCheckInDayId: Dispatch<SetStateAction<string | null>>;
   setHotelCheckOutDayId: Dispatch<SetStateAction<string | null>>;
@@ -287,45 +284,36 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
 
                   {p.addFlow === "hotel" && <>
                     <div className="inline-add-head"><button className="inline-back" onClick={() => p.setAddFlow("type")} aria-label="Back to item types">‹</button><h4>Add hotel</h4><button onClick={() => p.setAddingAfter(null)}>Cancel</button></div>
+                    <p className="database-note">Hotels are supplied by Travel Marketplace and cannot be edited here.</p>
                     <div className="hotel-choice-grid" role="radiogroup" aria-label="Available hotels">
-                      {HOTEL_OPTIONS.map((hotel) => <button key={hotel.id} type="button" role="radio" aria-checked={p.selectedHotelOptionId === hotel.id} className={`hotel-choice-card${p.selectedHotelOptionId === hotel.id ? " selected" : ""}`} onClick={() => { p.setSelectedHotelOptionId(hotel.id); p.setSelectedRoomOptionId(null); }}>
-                        <span className="hotel-choice-image"><Image src={hotel.image} alt={hotel.imageAlt} fill sizes="(max-width: 720px) 100vw, 33vw" /></span>
-                        <span className="hotel-choice-copy"><strong>{hotel.name}</strong><span className="hotel-star-rating">{formatHotelStarRating(hotel.starRating)}</span><small>{hotel.area}</small><span>{hotel.room}</span><b>${hotel.price.toLocaleString("en-US")} total</b></span>
-                        <span className="hotel-choice-check" aria-hidden="true">{p.selectedHotelOptionId === hotel.id ? <Icon name="check" size={20} /> : ""}</span>
+                      {p.availableHotels.map((hotel, index) => <button key={hotel.hotel_id ?? hotel.hotel_name ?? index} type="button" role="radio" aria-checked={p.selectedHotelIndex === index} className={`hotel-choice-card${p.selectedHotelIndex === index ? " selected" : ""}`} onClick={() => p.setSelectedHotelIndex(index)}>
+                        <span className="hotel-choice-copy">
+                          <strong>{hotel.hotel_name ?? "Hotel"}</strong>
+                          {hotel.star_rating != null && <span className="hotel-star-rating">{formatHotelStarRating(hotel.star_rating)}</span>}
+                          <small>{hotel.city ?? "Not provided"}</small>
+                          {hotel.room_type && <span>{hotel.room_type}</span>}
+                          <b>{hotel.price_per_night_aud != null ? `$${hotel.price_per_night_aud.toLocaleString("en-US")}/night` : "Price not provided"}</b>
+                        </span>
+                        <span className="hotel-choice-check" aria-hidden="true">{p.selectedHotelIndex === index ? <Icon name="check" size={20} /> : ""}</span>
                       </button>)}
+                      {p.availableHotels.length === 0 && <p>No hotels found for this package.</p>}
                     </div>
                     {p.selectedHotelOption && <>
-                      <p className="database-note">Travellers can change this hotel option after booking, from their trip.</p>
-                      <div className="room-choice-grid" role="radiogroup" aria-label={`Room options for ${p.selectedHotelOption.name}`}>
-                        {p.selectedHotelOption.rooms.map((room) => <button key={room.id} type="button" role="radio" aria-checked={p.selectedRoomOptionId === room.id} className={`room-choice-card${p.selectedRoomOptionId === room.id ? " selected" : ""}`} onClick={() => p.setSelectedRoomOptionId(room.id)}>
-                          <strong>{room.name}</strong>
-                          <span>{room.description}</span>
-                          <b>${room.price.toLocaleString("en-US")} total</b>
-                        </button>)}
-                      </div>
-                    </>}
-                    {p.selectedHotelOption && p.selectedRoomOption && <>
                       <div className="hotel-confirm-card">
                         <div className="hotel-confirm-top">
-                          <span className="hotel-confirm-media">
-                            <Image src={p.selectedHotelOption.image} alt={p.selectedHotelOption.imageAlt} fill sizes="96px" />
-                            <span className="hotel-confirm-media-badge">Illustrative room image</span>
-                          </span>
                           <span className="hotel-confirm-heading">
                             <small>Hotel</small>
-                            <strong>{p.selectedHotelOption.name}</strong>
-                            <span>{p.selectedRoomOption.name}</span>
+                            <strong>{p.selectedHotelOption.hotel_name ?? "Hotel"}</strong>
+                            {p.selectedHotelOption.room_type && <span>{p.selectedHotelOption.room_type}</span>}
                           </span>
-                          <span className="hotel-confirm-rating">
+                          {p.selectedHotelOption.star_rating != null && <span className="hotel-confirm-rating">
                             <Icon name="star" size={16} />
-                            <b>{p.selectedHotelOption.starRating}</b><span>/ 5</span>
-                          </span>
+                            <b>{p.selectedHotelOption.star_rating}</b><span>/ 5</span>
+                          </span>}
                         </div>
                         <dl className="hotel-confirm-stats">
-                          <div><dt>Total price</dt><dd>${p.selectedRoomOption.price.toLocaleString("en-US")}</dd></div>
-                          <div><dt>Check-in</dt><dd>{p.selectedHotelOption.checkIn}</dd></div>
-                          <div><dt>Check-out</dt><dd>{p.selectedHotelOption.checkOut}</dd></div>
-                          <div className="full"><dt>Address</dt><dd>{p.selectedHotelOption.address}</dd></div>
+                          <div><dt>Per night</dt><dd>{p.selectedHotelOption.price_per_night_aud != null ? `$${p.selectedHotelOption.price_per_night_aud.toLocaleString("en-US")}` : "Not provided"}</dd></div>
+                          <div className="full"><dt>Address</dt><dd>{p.selectedHotelOption.address || p.selectedHotelOption.city || "Not provided"}</dd></div>
                         </dl>
                       </div>
                       <div className="activity-form hotel-fixed-details">
@@ -340,11 +328,10 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
                             {p.hotelCheckOutDayOptions.map((option) => <option key={option.id} value={option.id}>{option.id === NEW_DAY_OPTION_ID ? `Day ${option.index + 1} (new day)` : `Day ${option.index + 1}: ${option.title}`}</option>)}
                           </select>
                         </label>
-                        <label><span>Price</span><input readOnly value={`$${p.selectedRoomOption.price.toLocaleString("en-US")}`} /></label>
                         <label className="full"><span>Notes</span><textarea value={p.hotelNotes} onChange={(event) => p.setHotelNotes(event.target.value)} placeholder="Add check-in or booking details" /></label>
                       </div>
                     </>}
-                    <div className="activity-form-actions"><button className="publish-button" disabled={!p.selectedHotelOption || !p.selectedRoomOption || !p.hotelCheckInDayId} onClick={p.createHotel}>Add hotel</button></div>
+                    <div className="activity-form-actions"><button className="publish-button" disabled={!p.selectedHotelOption || !p.hotelCheckInDayId} onClick={p.createHotel}>Add hotel</button></div>
                   </>}
 
                   {p.addFlow === "creator" && <>
@@ -431,8 +418,7 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
   const [activityDraft, setActivityDraft] = useState({ title: "", price: "", address: "", startTime: "12:00", duration: "30", notes: "" });
   const [flightSearch, setFlightSearch] = useState("");
   const [selectedFlightId, setSelectedFlightId] = useState<string | null>(null);
-  const [selectedHotelOptionId, setSelectedHotelOptionId] = useState<string | null>(null);
-  const [selectedRoomOptionId, setSelectedRoomOptionId] = useState<string | null>(null);
+  const [selectedHotelIndex, setSelectedHotelIndex] = useState<number | null>(null);
   const [hotelNotes, setHotelNotes] = useState("");
   const [hotelCheckInDayId, setHotelCheckInDayId] = useState<string | null>(null);
   const [hotelCheckOutDayId, setHotelCheckOutDayId] = useState<string | null>(null);
@@ -591,7 +577,7 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
         body: JSON.stringify({
           packageTitle,
           destination: [pkg.destination_city, pkg.destination_country].filter(Boolean).join(", "),
-          selectedHotel: selectedHotelOption?.name ?? pkg.hotels[0]?.hotel_name ?? "",
+          selectedHotel: selectedHotelOption?.hotel_name ?? pkg.hotels[0]?.hotel_name ?? "",
           dayNumber: activeDay + 1,
           dayTitle: days[activeDay]?.title || `Day ${activeDay + 1}`,
           items: activityNames,
@@ -810,8 +796,7 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
   const matchingFlights = AVAILABLE_FLIGHTS.filter((flight) =>
     [flight.airline, flight.number, flight.from, flight.to].join(" ").toLowerCase().includes(flightSearch.trim().toLowerCase()),
   );
-  const selectedHotelOption = HOTEL_OPTIONS.find(({ id }) => id === selectedHotelOptionId);
-  const selectedRoomOption = selectedHotelOption?.rooms.find(({ id }) => id === selectedRoomOptionId);
+  const selectedHotelOption = selectedHotelIndex !== null ? hotels[selectedHotelIndex] : undefined;
 
   const hotelCheckInDayIndex = hotelCheckInDayId === NEW_DAY_OPTION_ID
     ? days.length
@@ -827,15 +812,13 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
   const hotelNightsCount = Math.max(1, hotelCheckOutDayIndex - hotelCheckInDayIndex);
 
   const createHotel = () => {
-    if (!selectedHotelOption || !selectedRoomOption) return;
+    if (!selectedHotelOption) return;
+    const hotelName = selectedHotelOption.hotel_name ?? "Hotel";
+    const pricePerNight = selectedHotelOption.price_per_night_aud ?? 0;
     const nights = hotelNightsCount;
     const checkInIndex = hotelCheckInDayIndex;
     const checkOutIndex = hotelCheckOutDayIndex;
     const stayGroupId = `hotel-stay-${Date.now()}`;
-    // Rounding down every night and giving the remainder to the first one
-    // keeps the nightly rows summing to exactly the room total.
-    const nightlyPrice = Math.floor(selectedRoomOption.price / nights);
-    const firstNightPrice = selectedRoomOption.price - nightlyPrice * (nights - 1);
     setDays((current) => {
       const next = [...current];
       while (next.length <= checkOutIndex) {
@@ -847,19 +830,22 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
         const isCheckOutDay = offset === nights;
         const item: TimelineItem = {
           id: nextItemId.current,
-          time: offset === 0 ? selectedHotelOption.checkIn : isCheckOutDay ? selectedHotelOption.checkOut : "Overnight stay",
+          // "Check-in"/"Check-out"/"Overnight stay" instead of a fabricated
+          // clock time — bookings only ever carry a date, never a time.
+          time: offset === 0 ? "Check-in" : isCheckOutDay ? "Check-out" : "Overnight stay",
           type: "HOTEL",
           title: isCheckOutDay
-            ? `${selectedHotelOption.name} (Check-out)`
-            : nights > 1 ? `${selectedHotelOption.name} (Night ${offset + 1} of ${nights})` : selectedHotelOption.name,
-          price: `$${(offset === 0 ? firstNightPrice : nightlyPrice).toLocaleString("en-US")}/night`,
+            ? `${hotelName} (Check-out)`
+            : nights > 1 ? `${hotelName} (Night ${offset + 1} of ${nights})` : hotelName,
+          price: `$${pricePerNight.toLocaleString("en-US")}/night`,
           icon: "hotel",
           status: "pass",
-          address: selectedHotelOption.address,
+          address: selectedHotelOption.address ?? selectedHotelOption.city ?? undefined,
           notes: hotelNotes.trim(),
-          checkOut: selectedHotelOption.checkOut,
-          roomType: selectedRoomOption.name,
-          starRating: selectedHotelOption.starRating,
+          checkIn: selectedHotelOption.check_in_date ?? undefined,
+          checkOut: selectedHotelOption.check_out_date ?? undefined,
+          roomType: selectedHotelOption.room_type ?? undefined,
+          starRating: selectedHotelOption.star_rating ?? undefined,
           stayMarker: offset === 0 ? "check-in" : isCheckOutDay ? "check-out" : undefined,
           stayGroupId,
         };
@@ -871,12 +857,9 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
     setActiveDay(checkInIndex);
     setAddingAfter(null);
     setAddFlow("type");
-    setSelectedHotelOptionId(null);
-    setSelectedRoomOptionId(null);
+    setSelectedHotelIndex(null);
     setHotelNotes("");
-    showNotice(nights > 1
-      ? `${selectedHotelOption.name} added across ${nights} nights`
-      : `${selectedHotelOption.name} added`);
+    showNotice(nights > 1 ? `${hotelName} added across ${nights} nights` : `${hotelName} added`);
   };
 
   const createCreatorPick = () => {
@@ -949,9 +932,9 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
     matchingFlights,
     selectedFlightId, setSelectedFlightId,
     addSelectedFlight,
-    selectedHotelOptionId, setSelectedHotelOptionId,
-    selectedRoomOptionId, setSelectedRoomOptionId,
-    selectedHotelOption, selectedRoomOption,
+    availableHotels: hotels,
+    selectedHotelIndex, setSelectedHotelIndex,
+    selectedHotelOption,
     hotelCheckInDayId, setHotelCheckInDayId,
     setHotelCheckOutDayId,
     days,
