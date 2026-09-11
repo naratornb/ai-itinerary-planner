@@ -1,3 +1,5 @@
+import type { CreatorActivityDetail, CreatorFlightDetail, CreatorHotelDetail } from "./creator-api";
+
 export type MarketplacePackageSummary = {
   package_id: string;
   title: string;
@@ -17,26 +19,29 @@ export type MarketplacePackageSummary = {
 
 export type MarketplacePackageDetail = MarketplacePackageSummary & {
   description?: string | null;
+  max_group_size?: number | null;
   creator?: {
     full_name?: string | null;
     avatar_url?: string | null;
     influencer_profiles?: {
       bio?: string | null;
       instagram_handle?: string | null;
+      tiktok_handle?: string | null;
       follower_count?: number | null;
       verified?: boolean | null;
     } | Array<{
       bio?: string | null;
       instagram_handle?: string | null;
+      tiktok_handle?: string | null;
       follower_count?: number | null;
       verified?: boolean | null;
     }>;
   } | null;
-  media?: Array<{ media_id?: string; url?: string; media_url?: string; is_cover?: boolean }>;
-  days?: Array<{ package_day_id?: string; day_number?: number; title?: string; description?: string }>;
-  flights?: unknown[];
-  hotels?: unknown[];
-  activities?: unknown[];
+  media?: Array<{ media_id?: string; url?: string; media_url?: string; is_cover?: boolean; sort_order?: number }>;
+  days?: Array<{ id?: string; day_number?: number; title?: string; summary?: string }>;
+  flights?: CreatorFlightDetail[];
+  hotels?: CreatorHotelDetail[];
+  activities?: CreatorActivityDetail[];
 };
 
 type MarketplaceListResponse = { data: MarketplacePackageSummary[] };

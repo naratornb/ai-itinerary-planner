@@ -248,7 +248,6 @@ export function TopNav({ screen, onNav }: { screen: Screen; onNav: (s: Screen) =
 
   return (
     <header style={{
-      position: "sticky", top: 0, zIndex: 100,
       width: "100%", background: "#d40119", color: "#fff",
     }}>
       <div style={{
@@ -921,14 +920,23 @@ export function MarketplaceScreen() {
           {packages.map((card) => {
             const destination = [card.destination_city, card.destination_country].filter(Boolean).join(", ");
             const creatorName = card.influencer?.display_name || "Marketplace creator";
+            const openTrip = () => router.push(`/marketplace/packages/${card.package_id}`);
             return (
-            <article key={card.package_id} style={{
-              borderRadius: 14, overflow: "hidden",
-              border: `1px solid ${C.border}`,
-              background: C.white,
-              boxShadow: C.shadowCard,
-              display: "flex", flexDirection: "column",
-            }}>
+            <article
+              key={card.package_id}
+              role="link"
+              tabIndex={0}
+              onClick={openTrip}
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openTrip(); } }}
+              style={{
+                borderRadius: 14, overflow: "hidden",
+                border: `1px solid ${C.border}`,
+                background: C.white,
+                boxShadow: C.shadowCard,
+                display: "flex", flexDirection: "column",
+                cursor: "pointer",
+              }}
+            >
               {/* Image */}
               <div style={{ position: "relative", aspectRatio: "3/2", overflow: "hidden" }}>
                 <img src={card.cover_image_url || IMG.hero} alt={card.title} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
@@ -968,7 +976,7 @@ export function MarketplaceScreen() {
                 <div style={{ paddingTop: 6 }}>
                   <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 12, color: C.secondary, margin: "0 0 3px" }}>From per person</p>
                   <p style={{ fontFamily: "var(--fc-font-display)", fontSize: 24, fontWeight: 700, color: C.ink, margin: "0 0 14px", letterSpacing: "-0.01em" }}>{marketplacePrice(card.base_price_aud)}</p>
-                  <BtnPrimary full onClick={() => router.push(`/marketplace/packages/${card.package_id}`)}>View trip</BtnPrimary>
+                  <BtnPrimary full onClick={openTrip}>View trip</BtnPrimary>
                 </div>
               </div>
             </article>

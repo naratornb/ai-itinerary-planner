@@ -22,6 +22,8 @@ export type TimelineItem = {
   category?: string;
   address?: string;
   duration?: string;
+  /** Short factual line under the title (e.g. a flight's airline + duration). */
+  subtitle?: string;
   notes?: string;
   photos?: string[];
   checkIn?: string;
@@ -200,6 +202,15 @@ const IATA_TIMEZONES: Record<string, string> = {
   HND: "Asia/Tokyo",
 };
 
+function formatFlightDuration(departure: string | null, arrival: string | null): string | null {
+  if (!departure || !arrival) return null;
+  const start = Date.parse(departure);
+  const end = Date.parse(arrival);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null;
+  const minutes = Math.round((end - start) / 60_000);
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
 export function timezoneForIata(iata: string | null | undefined): string {
   return (iata && IATA_TIMEZONES[iata]) || "Australia/Sydney";
 }
@@ -294,6 +305,7 @@ export function buildDaysFromPackage(pkg: CreatorPackageDetail): BuilderDay[] {
       time,
       type: "FLIGHT",
       title: [flight.origin_iata, flight.destination_iata].filter(Boolean).join(" to ") || flight.airline || "Flight",
+      subtitle: [flight.airline, formatFlightDuration(flight.departure_datetime, flight.arrival_datetime)].filter(Boolean).join(" · ") || undefined,
       price: `$${flight.price_aud ?? 0}`,
       icon: "plane",
       status: "pass",
