@@ -190,15 +190,26 @@ const TOKYO_LANDMARKS: { keywords: string[]; coordinate: [number, number] }[] = 
   { keywords: ["harajuku"], coordinate: [35.6702, 139.7026] },
   { keywords: ["tokyo"], coordinate: [35.6812, 139.7671] },
 ];
-const TOKYO_STATION: [number, number] = [35.6812, 139.7671];
+// Landmark-level precision only exists for Tokyo; anywhere else, stops
+// scatter around the day's actual city center instead of always Tokyo
+// Station, which put every non-Tokyo trip's map in the wrong country.
+const CITY_CENTERS: Record<string, [number, number]> = {
+  Tokyo: [35.6812, 139.7671],
+  Paris: [48.8566, 2.3522],
+  Sydney: [-33.8688, 151.2093],
+  Bali: [-8.6705, 115.2126],
+};
 
-function resolveStopCoordinate(hint: string, fallbackIndex: number): [number, number] {
+function resolveStopCoordinate(hint: string, fallbackIndex: number, city: string | null): [number, number] {
   const lower = hint.toLowerCase();
-  const match = TOKYO_LANDMARKS.find(({ keywords }) => keywords.some((keyword) => lower.includes(keyword)));
-  if (match) return match.coordinate;
+  if (city === null || city === "Tokyo") {
+    const match = TOKYO_LANDMARKS.find(({ keywords }) => keywords.some((keyword) => lower.includes(keyword)));
+    if (match) return match.coordinate;
+  }
+  const center = (city && CITY_CENTERS[city]) || CITY_CENTERS.Tokyo;
   const angle = (fallbackIndex * 47 * Math.PI) / 180;
   const radius = 0.012;
-  return [TOKYO_STATION[0] + radius * Math.cos(angle), TOKYO_STATION[1] + radius * Math.sin(angle)];
+  return [center[0] + radius * Math.cos(angle), center[1] + radius * Math.sin(angle)];
 }
 
 function Panel({ title, children, className = "" }: { title: string; children: React.ReactNode; className?: string }) {
@@ -447,7 +458,7 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
     const hint = [item.address, item.title, flight?.destination_iata, hotel?.address, hotel?.city]
       .filter((part): part is string => Boolean(part))
       .join(" ");
-    return { label: item.title, time: item.time, coordinate: resolveStopCoordinate(hint, index) };
+    return { label: item.title, time: item.time, coordinate: resolveStopCoordinate(hint, index, activeDayCity) };
   });
   const routeStopLats = routeStopBases.map(({ coordinate }) => coordinate[0]);
   const routeStopLngs = routeStopBases.map(({ coordinate }) => coordinate[1]);
@@ -819,7 +830,7 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
     const nights = hotelNightsCount;
     const checkInIndex = hotelCheckInDayIndex;
     const checkOutIndex = hotelCheckOutDayIndex;
-    const stayGroupId = `hotel-stay-${Date.now()}`;
+    const stayGroupId = `hotel-stay-${nextItemId.current + 1}`;
     setDays((current) => {
       const next = [...current];
       while (next.length <= checkOutIndex) {
