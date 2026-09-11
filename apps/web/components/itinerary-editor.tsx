@@ -419,8 +419,12 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
   const hotelForItem = (item: TimelineItem) =>
     item.type === "HOTEL" && item.stayGroupId ? hotelByStayGroup.get(item.stayGroupId) : undefined;
   const routeStopBases = items.map((item, index) => {
-    const flightIdx = items.slice(0, index).filter(({ type }) => type === "FLIGHT").length;
-    const flight = item.type === "FLIGHT" ? flights[flightIdx] : undefined;
+    // item.flightIndex points into pkg.flights. Counting FLIGHT rows within the
+    // active day and using that as a global index showed the wrong flight on
+    // any day that was not the first to contain one.
+    const flight = item.type === "FLIGHT" && item.flightIndex !== undefined
+      ? flights[item.flightIndex]
+      : undefined;
     const hotel = hotelForItem(item);
     const hint = [item.address, item.title, flight?.destination_iata, hotel?.address, hotel?.city]
       .filter((part): part is string => Boolean(part))
@@ -979,8 +983,9 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
             <h3>Timeline</h3>
             <div className="timeline-list">
               {items.map((item, index) => {
-                const flightIndex = items.slice(0, index).filter(({ type }) => type === "FLIGHT").length;
-                const flight = item.type === "FLIGHT" ? flights[flightIndex] : undefined;
+                const flight = item.type === "FLIGHT" && item.flightIndex !== undefined
+                  ? flights[item.flightIndex]
+                  : undefined;
                 const hotel = hotelForItem(item);
                 const hasHotelDetails = item.type === "HOTEL" && (Boolean(hotel) || Boolean(item.roomType));
                 const isFixedActivity = item.type === "ACTIVITY";
