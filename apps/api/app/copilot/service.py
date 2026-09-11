@@ -9,7 +9,7 @@ import requests
 
 from app import core
 from app.ai import llm_provider
-from app.copilot.retrieval import TABLES, normalize, retrieve
+from app.copilot.retrieval import TABLES, TYPE_WORDS, normalize, retrieve
 from app.copilot.schemas import ModelOutput, Suggestion, TurnRead
 from app.packages.service import UpstreamError
 
@@ -116,9 +116,22 @@ def create_turn(package_id: str, prompt: str, ctx: dict) -> TurnRead:
             "order": "turn_id.asc,item_id.asc",
         },
     )
+    # Flights are 36k of the 41k catalog rows: fetching them costs ~73 of the
+    # ~84 Supabase round trips per turn, which was consuming most of the
+    # request budget and pushing generation into the inventory fallback.
+    # Activities and hotels already cover every city in the catalog, so the
+    # destination vocabulary retrieve() builds is unchanged by skipping them.
+    wants_flights = bool(
+        re.search(TYPE_WORDS["flight"], prompt, re.I)
+    ) or not package.get("package_flights")
+    tables = {
+        kind: table
+        for kind, table in TABLES.items()
+        if kind != "flight" or wants_flights
+    }
     inventory = [
         normalize(kind, row)
-        for kind, table in TABLES.items()
+        for kind, table in tables.items()
         for row in _all(table, ctx, select="*", order=f"{kind}_id.asc")
     ]
     candidates, context, clarification = retrieve(
@@ -156,7 +169,10 @@ def create_turn(package_id: str, prompt: str, ctx: dict) -> TurnRead:
                         ],
                     }
                 ),
-                max_tokens=1500,
+                # Thinking tokens count against this cap on current Gemini
+                # models and are not reported separately, so 1500 could be
+                # spent before any JSON was emitted.
+                max_tokens=3000,
                 deadline=ctx["deadline"] - 2,
             )
             if time.monotonic() >= ctx["deadline"] - 2:
@@ -241,11 +257,14 @@ def create_turn(package_id: str, prompt: str, ctx: dict) -> TurnRead:
         },
     ).json()
     logger.info(
-        "copilot retrieval_ms=%s total_ms=%s mode=%s fallback_reason=%s",
+        "copilot retrieval_ms=%s total_ms=%s mode=%s fallback_reason=%s "
+        "inventory_rows=%s flights_fetched=%s",
         retrieval_ms,
         int((time.monotonic() - ctx["started"]) * 1000),
         mode,
         reason,
+        len(inventory),
+        wants_flights,
     )
     return read_turn(row)
 

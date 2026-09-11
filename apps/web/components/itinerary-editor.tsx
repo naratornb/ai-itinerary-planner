@@ -1224,10 +1224,10 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
           </Panel>
           <CopilotPanel
             client={copilotClient}
+            city={pkg.destination_city ?? ""}
             mobileOpen={copilotOpen}
             onClose={() => setCopilotOpen(false)}
             dayLabel={`Day ${activeDay + 1}`}
-            city={activeDayCity}
             onAddSuggestion={addCopilotSuggestion}
           />
           <Panel title="Pricing & earnings" className="pricing-panel"><span>Total package price</span><strong>${packagePrice.toLocaleString()}</strong><hr/><span>Your commission (20%)</span><strong className="commission">${Math.round(packagePrice * .2).toLocaleString()}</strong></Panel>
