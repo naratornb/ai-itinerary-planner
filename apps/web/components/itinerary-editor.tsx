@@ -1164,6 +1164,7 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
           </Panel>
           <CopilotPanel
             client={copilotClient}
+            city={pkg.destination_city ?? ""}
             mobileOpen={copilotOpen}
             onClose={() => setCopilotOpen(false)}
             dayLabel={`Day ${activeDay + 1}`}

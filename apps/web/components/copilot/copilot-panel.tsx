@@ -7,17 +7,12 @@ import { useCopilot } from "./use-copilot";
 
 type CopilotPanelProps = {
   client: CopilotClient;
+  city: string;
   dayLabel: string;
   onAddSuggestion: (suggestion: CopilotSuggestionV1) => void;
   onClose: () => void;
   mobileOpen: boolean;
 };
-
-const EXAMPLE_PROMPTS = [
-  "Find me a food activity in Tokyo",
-  "Something adventurous next",
-  "Tell me more about that one",
-];
 
 function CopilotMark() {
   return (
@@ -29,7 +24,16 @@ function CopilotMark() {
   );
 }
 
-export default function CopilotPanel({ client, dayLabel, onAddSuggestion, onClose, mobileOpen }: CopilotPanelProps) {
+export default function CopilotPanel({ client, city, dayLabel, onAddSuggestion, onClose, mobileOpen }: CopilotPanelProps) {
+  // Built from the package's destination. A hardcoded city sends the traveler
+  // asking about somewhere that is not their trip, and the Co-Pilot then
+  // correctly answers that it has nothing there.
+  const examplePrompts = [
+    city ? `Find me a food activity in ${city}` : "Find me a food activity",
+    "Something adventurous next",
+    "Tell me more about that one",
+  ];
+
   const [input, setInput] = useState("");
   const [addedSuggestionIds, setAddedSuggestionIds] = useState<string[]>([]);
   const [dismissedIds, setDismissedIds] = useState<string[]>([]);
@@ -164,7 +168,7 @@ export default function CopilotPanel({ client, dayLabel, onAddSuggestion, onClos
 
       <form className="copilot-form" onSubmit={submit}>
         <div className="copilot-prompt-list">
-          {EXAMPLE_PROMPTS.map((prompt) => (
+          {examplePrompts.map((prompt) => (
             <button key={prompt} type="button" onClick={() => setInput(prompt)}>
               {prompt}
             </button>
@@ -176,7 +180,7 @@ export default function CopilotPanel({ client, dayLabel, onAddSuggestion, onClos
             aria-label="Your request"
             value={input}
             maxLength={1000}
-            placeholder="e.g. Find me a cheaper food experience"
+            placeholder={city ? `e.g. Find me a cheaper food experience in ${city}` : "e.g. Find me a cheaper food experience"}
             onChange={(event) => setInput(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter" && !event.shiftKey) {

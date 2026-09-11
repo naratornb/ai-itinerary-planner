@@ -163,7 +163,7 @@ def test_fallback_is_persisted_and_prices_are_authoritative(db):
     assert body["suggestions"][0]["price_unit"] == "per_person"
     assert "secret" not in response.text
     assert len(db.turns) == 1
-    assert db.model.call_args.kwargs["max_tokens"] == 1500
+    assert db.model.call_args.kwargs["max_tokens"] == 3000
 
 
 def test_verified_model_selects_ids_only(db):
