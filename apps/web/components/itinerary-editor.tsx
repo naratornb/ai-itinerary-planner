@@ -653,12 +653,11 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
     setEditingItem({ id: item.id, title: item.title, time: item.time, price: item.price.replace(/[^0-9.]/g, ""), category: item.category ?? "Activity", address: item.address ?? "", duration: item.duration ?? "60", notes: item.notes ?? "", photos: item.photos ?? [] });
   };
 
-  const timeConflict = editingItem ? findTimeConflict(items, editingItem.id, editingItem.time, editingItem.duration) : null;
-
   const saveEditedItem = () => {
-    if (!editingItem || !editingItem.title.trim() || timeConflict) return;
-    setItems((current) => current.map((item) => item.id === editingItem.id ? {
-      ...item,
+    if (!editingItem || !editingItem.title.trim()) return;
+
+    const updatedItem: TimelineItem = {
+      ...items.find((item) => item.id === editingItem.id)!,
       title: editingItem.title.trim(),
       time: editingItem.time,
       price: editingItem.price ? `$${editingItem.price}` : "$0",
@@ -667,9 +666,20 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
       duration: editingItem.duration,
       notes: editingItem.notes.trim(),
       photos: editingItem.photos,
-    } : item));
+    };
+    const previousIndex = items.findIndex((item) => item.id === editingItem.id);
+    const withUpdate = items.map((item) => item.id === editingItem.id ? updatedItem : item);
+    // A changed start time moves the stop to wherever it now falls
+    // chronologically, instead of blocking the save until neighbors are
+    // rearranged by hand.
+    const resorted = REAL_TIME_PATTERN.test(updatedItem.time)
+      ? [...withUpdate].sort((a, b) => a.time.localeCompare(b.time))
+      : withUpdate;
+
+    setItems(resorted);
     setEditingItem(null);
-    showNotice("Stop updated");
+    const newIndex = resorted.findIndex((item) => item.id === editingItem.id);
+    showNotice(newIndex !== previousIndex ? `${updatedItem.title} moved to position ${newIndex + 1}` : "Stop updated");
   };
 
   const insertItem = (after: number, item: Omit<TimelineItem, "id">) => {
@@ -1097,7 +1107,6 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
                         <div className="activity-card-duration"><span className="activity-card-duration-label">{editingItem.duration} min</span></div>
                         <div className="activity-card-stat"><Icon name="clock" size={16} /><span><small>Ends at</small><strong>{getEndTime(editingItem.time, editingItem.duration)}</strong></span></div>
                       </div>
-                      {timeConflict && <p className="activity-card-time-error" role="alert">{timeConflict}</p>}
                     </div>
                     <label className="activity-card-notes"><span>Notes</span><div className="activity-card-notes-field"><textarea value={editingItem.notes} maxLength={500} onChange={(event) => setEditingItem({ ...editingItem, notes: event.target.value })} placeholder="Share why this is worth a stop" /><small>{editingItem.notes.length} / 500</small></div></label>
                   </> : <>
@@ -1111,7 +1120,6 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
                       <label><span>Ends at</span><input value={getEndTime(editingItem.time, editingItem.duration)} readOnly /></label>
                       <label className="edit-notes"><span>Notes</span><textarea value={editingItem.notes} onChange={(event) => setEditingItem({ ...editingItem, notes: event.target.value })} placeholder="Share why this is worth a stop" /></label>
                     </div>
-                    {timeConflict && <p className="activity-card-time-error" role="alert">{timeConflict}</p>}
                   </>}
                   {/* ponytail: per-activity photos stay local blob URLs — the media API
                       attaches files to a package, not to a timeline item. */}
@@ -1128,7 +1136,7 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
                       <label><input type="file" accept="image/png,image/jpeg" multiple onChange={(event) => { const files = Array.from(event.target.files ?? []); if (files.length) setEditingItem({ ...editingItem, photos: [...editingItem.photos, ...files.map((file) => URL.createObjectURL(file))] }); event.target.value = ""; }} /><Icon name="plus" size={18} />Add photo</label>
                     </div>
                   </div>
-                  <div className="inline-edit-actions"><button className="item-delete" onClick={() => requestDeleteItem(item)}>Delete</button><button className="quiet-button" onClick={() => setEditingItem(null)}>Cancel</button><button className="publish-button" disabled={!editingItem.title.trim() || Boolean(timeConflict)} onClick={saveEditedItem}>Save changes</button></div>
+                  <div className="inline-edit-actions"><button className="item-delete" onClick={() => requestDeleteItem(item)}>Delete</button><button className="quiet-button" onClick={() => setEditingItem(null)}>Cancel</button><button className="publish-button" disabled={!editingItem.title.trim()} onClick={saveEditedItem}>Save changes</button></div>
                 </section>}
                 <AddStopFlow index={index} {...addFlowProps} />
               </div>})}
