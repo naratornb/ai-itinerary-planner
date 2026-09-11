@@ -294,7 +294,9 @@ def normalize_city(value) -> str:
             return city
 
     # City (CODE)
-    match = re.match(r"^(.*?)\s*\(([A-Za-z]{3})\)\s*$", text)
+    # [^(]* rather than (.*?)\s* : the latter overlaps with \s* and
+    # backtracks polynomially on long whitespace runs (CodeQL).
+    match = re.match(r"^([^(]*)\(([A-Za-z]{3})\)\s*$", text)
 
     if match:
         city_part = match.group(1).strip()
@@ -670,7 +672,9 @@ def parse_user_request(
     # ------------------------------------------------------------
 
     duration_match = re.search(
-        r"(\d+)\s*(day|days|night|nights|week|weeks)",
+        # Bounded {1,4}: unbounded \d+ is retried from every start
+        # position, which CodeQL flags as polynomial backtracking.
+        r"(\d{1,4})\s*(day|days|night|nights|week|weeks)",
         text,
     )
 
@@ -711,7 +715,7 @@ def parse_user_request(
     # ------------------------------------------------------------
 
     group_match = re.search(
-        r"(\d+)\s*(?:people|person|travellers?|travelers?|adults?|pax)",
+        r"(\d{1,4})\s*(?:people|person|travellers?|travelers?|adults?|pax)",
         text,
     )
 
