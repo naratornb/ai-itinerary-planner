@@ -57,6 +57,37 @@ const AVAILABLE_FLIGHTS = [
 
 const ACTIVITY_CATEGORIES = ["Activity", "Restaurant", "Shopping", "Attraction", "Other"];
 const DURATION_OPTIONS = ["30", "60", "90", "120", "180"];
+
+// Quick-add suggestions for the "Add stop" flow. Keyed by the active day's
+// city so a Paris day doesn't get offered Tokyo landmarks; FALLBACK_ACTIVITIES
+// covers any city without its own entry here.
+const ACTIVITIES_BY_CITY: Record<string, { title: string; meta: string; price: string }[]> = {
+  Tokyo: [
+    { title: "Shibuya Sky", meta: "Observation deck · 60 min", price: "$22" },
+    { title: "Tsukiji Market", meta: "Food tour · 120 min", price: "Free" },
+    { title: "teamLab Planets", meta: "Immersive art · 90 min", price: "$38" },
+  ],
+  Paris: [
+    { title: "Eiffel Tower Summit", meta: "Observation deck · 90 min", price: "$35" },
+    { title: "Louvre Museum", meta: "Art & history · 150 min", price: "$22" },
+    { title: "Seine River Cruise", meta: "Sightseeing cruise · 60 min", price: "$18" },
+  ],
+  Sydney: [
+    { title: "Sydney Opera House Tour", meta: "Guided tour · 60 min", price: "$45" },
+    { title: "Bondi to Coogee Walk", meta: "Coastal walk · 120 min", price: "Free" },
+    { title: "Taronga Zoo", meta: "Wildlife park · 180 min", price: "$51" },
+  ],
+  Bali: [
+    { title: "Ubud Monkey Forest", meta: "Nature park · 60 min", price: "$10" },
+    { title: "Tegallalang Rice Terraces", meta: "Scenic walk · 90 min", price: "Free" },
+    { title: "Uluwatu Temple & Kecak Dance", meta: "Cultural show · 120 min", price: "$15" },
+  ],
+};
+const FALLBACK_ACTIVITIES = [
+  { title: "City Walking Tour", meta: "Guided tour · 120 min", price: "$25" },
+  { title: "Local Food Tasting", meta: "Food tour · 90 min", price: "$30" },
+  { title: "Museum Visit", meta: "Art & history · 90 min", price: "$18" },
+];
 const NEW_DAY_OPTION_ID = "__new-day__";
 
 type AddFlowStep = "type" | "activities" | "create" | "flight" | "hotel" | "creator";
@@ -220,6 +251,7 @@ type AddStopFlowProps = {
   setActivityDraft: Dispatch<SetStateAction<ActivityDraft>>;
   createActivity: () => void;
   activeDayData: BuilderDay | undefined;
+  activeDayCity: string | null;
   openAddFlow: (after: number) => void;
 };
 
@@ -331,8 +363,8 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
 
                   {p.addFlow === "activities" && <>
                     <div className="inline-add-head"><button className="inline-back" onClick={() => p.setAddFlow("type")} aria-label="Back to item types">‹</button><h4>Activity</h4><button onClick={() => p.setAddingAfter(null)}>Cancel</button></div>
-                    <label className="activity-search"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input value={p.activitySearch} onChange={(event) => p.setActivitySearch(event.target.value)} placeholder="Search Tokyo activities" /></label>
-                    <h5>Recommended for Tokyo</h5>
+                    <label className="activity-search"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input value={p.activitySearch} onChange={(event) => p.setActivitySearch(event.target.value)} placeholder={`Search ${p.activeDayCity ?? "local"} activities`} /></label>
+                    <h5>Recommended for {p.activeDayCity ?? "this trip"}</h5>
                     <div className="activity-results">
                       {p.recommendedActivities.map((activity) => <button key={activity.title} onClick={() => p.addRecommendedActivity(activity.title, activity.meta, activity.price)}><span className="result-plus">+</span><strong>{activity.title}</strong><small>{activity.meta}</small><b>{activity.price}</b></button>)}
                       {p.recommendedActivities.length === 0 && <p>No activities found. Try another search or create your own.</p>}
@@ -412,6 +444,10 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
   const items = activeDayData?.items ?? [];
   const story = activeDayData?.story ?? "";
   const photos = activeDayData?.photos ?? [];
+  // Activities carry a plain city name in `address` (buildDaysFromPackage);
+  // hotels sometimes carry a full street address instead, so activities are
+  // the more reliable signal for "what city is this day actually in."
+  const activeDayCity = items.find((item) => item.type === "ACTIVITY" && item.address)?.address ?? null;
   // buildDaysFromPackage stamps every row of a stay with `hotel-<id|name>`,
   // so the API hotel is looked up by that key rather than by counting rows —
   // the item list here is one day's worth, not the whole trip.
@@ -856,11 +892,8 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
     setCreatorDraft({ title: "", category: "Activity", address: "", time: "12:00", duration: "60", price: "", reason: "" });
   };
 
-  const recommendedActivities = [
-    { title: "Shibuya Sky", meta: "Observation deck · 60 min", price: "$22" },
-    { title: "Tsukiji Market", meta: "Food tour · 120 min", price: "Free" },
-    { title: "teamLab Planets", meta: "Immersive art · 90 min", price: "$38" },
-  ].filter((activity) => activity.title.toLowerCase().includes(activitySearch.trim().toLowerCase()));
+  const recommendedActivities = (activeDayCity && ACTIVITIES_BY_CITY[activeDayCity] || FALLBACK_ACTIVITIES)
+    .filter((activity) => activity.title.toLowerCase().includes(activitySearch.trim().toLowerCase()));
 
   const addCopilotSuggestion = (suggestion: CopilotSuggestionV1) => {
     if (!activeDayData) return;
@@ -934,6 +967,7 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
     activityDraft, setActivityDraft,
     createActivity,
     activeDayData,
+    activeDayCity,
     openAddFlow,
   };
 
