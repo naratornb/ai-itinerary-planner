@@ -8,16 +8,23 @@ import { useCopilot } from "./use-copilot";
 type CopilotPanelProps = {
   client: CopilotClient;
   dayLabel: string;
+  city: string | null;
   onAddSuggestion: (suggestion: CopilotSuggestionV1) => void;
   onClose: () => void;
   mobileOpen: boolean;
 };
 
-const EXAMPLE_PROMPTS = [
-  "Find me a food activity in Tokyo",
-  "Something adventurous next",
-  "Tell me more about that one",
-];
+// "Tokyo" was a leftover from whichever trip this panel was first built
+// against — every package now gets the same three chips regardless of its
+// actual destination, so the food-activity example has to take the city as
+// a parameter instead of hardcoding one.
+function examplePrompts(city: string | null) {
+  return [
+    `Find me a food activity in ${city ?? "this trip"}`,
+    "Something adventurous next",
+    "Tell me more about that one",
+  ];
+}
 
 function CopilotMark() {
   return (
@@ -29,7 +36,7 @@ function CopilotMark() {
   );
 }
 
-export default function CopilotPanel({ client, dayLabel, onAddSuggestion, onClose, mobileOpen }: CopilotPanelProps) {
+export default function CopilotPanel({ client, dayLabel, city, onAddSuggestion, onClose, mobileOpen }: CopilotPanelProps) {
   const [input, setInput] = useState("");
   const [addedSuggestionIds, setAddedSuggestionIds] = useState<string[]>([]);
   const [dismissedIds, setDismissedIds] = useState<string[]>([]);
@@ -164,7 +171,7 @@ export default function CopilotPanel({ client, dayLabel, onAddSuggestion, onClos
 
       <form className="copilot-form" onSubmit={submit}>
         <div className="copilot-prompt-list">
-          {EXAMPLE_PROMPTS.map((prompt) => (
+          {examplePrompts(city).map((prompt) => (
             <button key={prompt} type="button" onClick={() => setInput(prompt)}>
               {prompt}
             </button>
