@@ -102,7 +102,12 @@ def retrieve(
         context["item_type"] = next_type
     context.setdefault("item_type", next_type)
     price = re.search(
-        r"(?:under|below|up to|max(?:imum)?|budget(?: of)?)\s*(?:AUD\s*)?\$?\s*(\d+(?:\.\d+)?)|\$\s*(\d+(?:\.\d+)?)",
+        # Bounded \s{0,20} and \d{1,9}: three adjacent unbounded optional
+        # whitespace groups made this backtrack on "under" plus a long
+        # run of spaces (CodeQL).
+        r"(?:under|below|up to|max(?:imum)?|budget(?: of)?)\s{0,20}"
+        r"(?:AUD\s{0,20})?\$?\s{0,20}(\d{1,9}(?:\.\d{1,2})?)"
+        r"|\$\s{0,20}(\d{1,9}(?:\.\d{1,2})?)",
         prompt,
         re.I,
     )

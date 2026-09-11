@@ -40,8 +40,10 @@ class RecommendRequest(BaseModel):
     # rather than an expensive Supabase + Gemini round trip.
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    query: str = Field(..., min_length=1, description="Natural-language trip request")
-    origin_city: str = "Sydney"
+    # Capped to match the Co-Pilot's PromptInput. Without an upper bound a
+    # 32k-character query costs ~13s of CPU in the parsing regexes.
+    query: str = Field(..., min_length=1, max_length=1000, description="Natural-language trip request")
+    origin_city: str = Field("Sydney", max_length=100)
 
 
 class _EngineModel(BaseModel):
