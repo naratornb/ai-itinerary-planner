@@ -11,6 +11,7 @@ import {
   computePackagePrice,
   copilotSuggestionToTimelineItem,
   daySubtitle,
+  extractClockTimeInZone,
   getEndTime,
   insertItemInDay,
   removeDay,
@@ -26,6 +27,7 @@ import {
   listPackageMedia,
   updatePackage,
   uploadPackageMedia,
+  type CreatorFlightDetail,
   type CreatorHotelDetail,
   type CreatorPackageDetail,
 } from "../lib/creator-api";
@@ -47,12 +49,6 @@ function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
   };
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
 }
-
-const AVAILABLE_FLIGHTS = [
-  { id: "qf25", airline: "Qantas", number: "QF25", from: "Sydney (SYD)", to: "Tokyo Haneda (HND)", departure: "20:55", arrival: "05:55", duration: "10h", price: 850 },
-  { id: "jl52", airline: "Japan Airlines", number: "JL52", from: "Sydney (SYD)", to: "Tokyo Haneda (HND)", departure: "08:15", arrival: "17:05", duration: "9h 50m", price: 920 },
-  { id: "qf79", airline: "Qantas", number: "QF79", from: "Melbourne (MEL)", to: "Tokyo Narita (NRT)", departure: "09:25", arrival: "18:45", duration: "10h 20m", price: 780 },
-];
 
 const ACTIVITY_CATEGORIES = ["Activity", "Restaurant", "Shopping", "Attraction", "Other"];
 const DURATION_OPTIONS = ["30", "60", "90", "120", "180"];
@@ -220,9 +216,9 @@ type AddStopFlowProps = {
   setAddFlow: Dispatch<SetStateAction<AddFlowStep>>;
   flightSearch: string;
   setFlightSearch: Dispatch<SetStateAction<string>>;
-  matchingFlights: (typeof AVAILABLE_FLIGHTS)[number][];
-  selectedFlightId: string | null;
-  setSelectedFlightId: Dispatch<SetStateAction<string | null>>;
+  matchingFlights: CreatorFlightDetail[];
+  selectedFlightIndex: number | null;
+  setSelectedFlightIndex: Dispatch<SetStateAction<number | null>>;
   addSelectedFlight: () => void;
   availableHotels: CreatorHotelDetail[];
   selectedHotelIndex: number | null;
@@ -269,17 +265,21 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
                     <label className="activity-search"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input value={p.flightSearch} onChange={(event) => p.setFlightSearch(event.target.value)} placeholder="Search by airport, airline, or flight number" /></label>
                     <p className="database-note">Flights are supplied by Travel Marketplace and cannot be edited here.</p>
                     <div className="flight-results" role="radiogroup" aria-label="Available flights">
-                      {p.matchingFlights.map((flight) => <button key={flight.id} type="button" role="radio" aria-checked={p.selectedFlightId === flight.id} className={p.selectedFlightId === flight.id ? "selected" : ""} onClick={() => p.setSelectedFlightId(flight.id)}>
-                        <span className="flight-brand"><strong>{flight.airline}</strong><small>{flight.number}</small></span>
-                        <span className="flight-route"><strong>{flight.departure}</strong><small>{flight.from}</small></span>
-                        <span className="flight-duration"><small>{flight.duration}</small><i aria-hidden="true"><Icon name="plane" size={20} /></i></span>
-                        <span className="flight-route"><strong>{flight.arrival}</strong><small>{flight.to}</small></span>
-                        <span className="flight-fare"><small>From</small><strong>${flight.price}</strong></span>
-                        <span className="flight-select" aria-hidden="true">{p.selectedFlightId === flight.id ? <Icon name="check" size={18} /> : ""}</span>
-                      </button>)}
+                      {p.matchingFlights.map((flight, index) => {
+                        const departureTime = extractClockTimeInZone(flight.departure_datetime, timezoneForIata(flight.origin_iata)) ?? "--:--";
+                        const arrivalTime = extractClockTimeInZone(flight.arrival_datetime, timezoneForIata(flight.destination_iata)) ?? "--:--";
+                        return <button key={flight.flight_id ?? index} type="button" role="radio" aria-checked={p.selectedFlightIndex === index} className={p.selectedFlightIndex === index ? "selected" : ""} onClick={() => p.setSelectedFlightIndex(index)}>
+                          <span className="flight-brand"><strong>{flight.airline ?? "Airline not provided"}</strong><small>{flight.flight_number ?? ""}</small></span>
+                          <span className="flight-route"><strong>{departureTime}</strong><small>{flight.origin_iata ?? "Not provided"}</small></span>
+                          <span className="flight-duration"><i aria-hidden="true"><Icon name="plane" size={20} /></i></span>
+                          <span className="flight-route"><strong>{arrivalTime}</strong><small>{flight.destination_iata ?? "Not provided"}</small></span>
+                          <span className="flight-fare"><small>From</small><strong>{flight.price_aud != null ? `$${flight.price_aud.toLocaleString("en-US")}` : "Not provided"}</strong></span>
+                          <span className="flight-select" aria-hidden="true">{p.selectedFlightIndex === index ? <Icon name="check" size={18} /> : ""}</span>
+                        </button>;
+                      })}
                       {p.matchingFlights.length === 0 && <p>No matching flights found.</p>}
                     </div>
-                    <div className="activity-form-actions"><button className="publish-button" disabled={!p.selectedFlightId} onClick={p.addSelectedFlight}>Add selected flight</button></div>
+                    <div className="activity-form-actions"><button className="publish-button" disabled={p.selectedFlightIndex === null} onClick={p.addSelectedFlight}>Add selected flight</button></div>
                   </>}
 
                   {p.addFlow === "hotel" && <>
@@ -417,7 +417,7 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
   const [activitySearch, setActivitySearch] = useState("");
   const [activityDraft, setActivityDraft] = useState({ title: "", price: "", address: "", startTime: "12:00", duration: "30", notes: "" });
   const [flightSearch, setFlightSearch] = useState("");
-  const [selectedFlightId, setSelectedFlightId] = useState<string | null>(null);
+  const [selectedFlightIndex, setSelectedFlightIndex] = useState<number | null>(null);
   const [selectedHotelIndex, setSelectedHotelIndex] = useState<number | null>(null);
   const [hotelNotes, setHotelNotes] = useState("");
   const [hotelCheckInDayId, setHotelCheckInDayId] = useState<string | null>(null);
@@ -779,22 +779,23 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
   };
 
   const addSelectedFlight = () => {
-    const flight = AVAILABLE_FLIGHTS.find((option) => option.id === selectedFlightId);
+    const flight = selectedFlightIndex !== null ? matchingFlights[selectedFlightIndex] : undefined;
     if (addingAfter === null || !flight) return;
+    const scheduleDatetime = flight.arrival_datetime ?? flight.departure_datetime;
     insertItem(addingAfter, {
-      time: flight.departure,
+      time: extractClockTimeInZone(scheduleDatetime, timezoneForIata(flight.destination_iata ?? flight.origin_iata)) ?? "09:00",
       type: "FLIGHT",
-      title: `${flight.from} to ${flight.to} · ${flight.airline} ${flight.number}`,
-      price: `$${flight.price}`,
+      title: [flight.origin_iata, flight.destination_iata].filter(Boolean).join(" to ") || flight.airline || "Flight",
+      price: flight.price_aud != null ? `$${flight.price_aud.toLocaleString("en-US")}` : "$0",
       icon: "plane",
       status: "pass",
     });
     setFlightSearch("");
-    setSelectedFlightId(null);
+    setSelectedFlightIndex(null);
   };
 
-  const matchingFlights = AVAILABLE_FLIGHTS.filter((flight) =>
-    [flight.airline, flight.number, flight.from, flight.to].join(" ").toLowerCase().includes(flightSearch.trim().toLowerCase()),
+  const matchingFlights = flights.filter((flight) =>
+    [flight.airline, flight.flight_number, flight.origin_iata, flight.destination_iata].join(" ").toLowerCase().includes(flightSearch.trim().toLowerCase()),
   );
   const selectedHotelOption = selectedHotelIndex !== null ? hotels[selectedHotelIndex] : undefined;
 
@@ -930,7 +931,7 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
     addFlow, setAddFlow,
     flightSearch, setFlightSearch,
     matchingFlights,
-    selectedFlightId, setSelectedFlightId,
+    selectedFlightIndex, setSelectedFlightIndex,
     addSelectedFlight,
     availableHotels: hotels,
     selectedHotelIndex, setSelectedHotelIndex,
