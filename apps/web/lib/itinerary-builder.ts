@@ -361,7 +361,7 @@ export function buildDaysFromPackage(pkg: CreatorPackageDetail): BuilderDay[] {
     (a, b) => (a.departure_datetime ?? "").localeCompare(b.departure_datetime ?? ""),
   );
 
-  // The first airport the traveller leaves from is "home".
+  // The first airport the traveller leaves from is treated as home.
   const homeIata = sortedFlights[0]?.origin_iata ?? null;
 
   const isReturnLeg = (flight: CreatorPackageDetail["flights"][number]) =>
@@ -383,19 +383,31 @@ export function buildDaysFromPackage(pkg: CreatorPackageDetail): BuilderDay[] {
     sortedFlights.find((flight) => isReturnLeg(flight))
     ?? null;
 
-  // Day 1 is based on the LOCAL ARRIVAL DATE at the destination.
-  // This is the key rule that prevents a flight landing on Apr 28 New York
-  // time from being placed on Apr 29 just because the stored UTC instant is
-  // already Apr 29.
+  // ---------------------------------------------------------------------------
+  // TRIP WINDOW
+  //
+  // Day 1      = LOCAL date the outbound flight ARRIVES at the destination.
+  // Last day   = LOCAL date the return flight DEPARTS the destination.
+  //
+  // Example:
+  //   Arrive New York: 2026-04-28 21:15 local  -> Day 1 = Apr 28
+  //   Leave  New York: 2026-05-11 18:45 local  -> Last Day = May 11
+  //
+  // Origin departure date is NOT used as Day 1.
+  // Return arrival-home date is NOT counted as another itinerary day.
+  // ---------------------------------------------------------------------------
+
   const outboundArrivalZone = timezoneForIata(
     outboundFlight?.destination_iata ?? outboundFlight?.origin_iata,
   );
+
   const outboundArrivalDate = outboundFlight
     ? extractDateInZone(
         outboundFlight.arrival_datetime ?? outboundFlight.departure_datetime,
         outboundArrivalZone,
       )
     : null;
+
   const outboundArrivalTime = outboundFlight
     ? extractClockTimeInZone(
         outboundFlight.arrival_datetime ?? outboundFlight.departure_datetime,
@@ -403,16 +415,17 @@ export function buildDaysFromPackage(pkg: CreatorPackageDetail): BuilderDay[] {
       )
     : null;
 
-  // Return planning uses LOCAL DEPARTURE DATE/TIME at the destination.
   const returnDepartureZone = timezoneForIata(
     returnFlight?.origin_iata ?? returnFlight?.destination_iata,
   );
+
   const returnDepartureDate = returnFlight
     ? extractDateInZone(
         returnFlight.departure_datetime ?? returnFlight.arrival_datetime,
         returnDepartureZone,
       )
     : null;
+
   const returnDepartureTime = returnFlight
     ? extractClockTimeInZone(
         returnFlight.departure_datetime ?? returnFlight.arrival_datetime,
@@ -425,106 +438,194 @@ export function buildDaysFromPackage(pkg: CreatorPackageDetail): BuilderDay[] {
     ...pkg.hotels.map((hotel) => parseDay(hotel.check_in_date)),
   ].filter((value): value is number => value !== null);
 
-  const scheduledFlightDates = pkg.flights
+  const outboundAnchor = parseDay(outboundArrivalDate);
+
+  const fallbackFlightDates = pkg.flights
     .map((flight) => {
       const returnLeg = isReturnLeg(flight);
+
       const value = returnLeg
         ? (flight.departure_datetime ?? flight.arrival_datetime)
         : (flight.arrival_datetime ?? flight.departure_datetime);
+
       const iata = returnLeg
         ? (flight.origin_iata ?? flight.destination_iata)
         : (flight.destination_iata ?? flight.origin_iata);
-      return parseDay(extractDateInZone(value, timezoneForIata(iata)));
+
+      return parseDay(
+        extractDateInZone(
+          value,
+          timezoneForIata(iata),
+        ),
+      );
     })
     .filter((value): value is number => value !== null);
-
-  const outboundAnchor = parseDay(outboundArrivalDate);
-  const fallbackFlightAnchor = scheduledFlightDates.length
-    ? Math.min(...scheduledFlightDates)
-    : null;
 
   const anchor =
     outboundAnchor
     ?? (stayDates.length ? Math.min(...stayDates) : null)
-    ?? fallbackFlightAnchor
+    ?? (fallbackFlightDates.length ? Math.min(...fallbackFlightDates) : null)
     ?? Date.now();
 
-  // Do not squash an actual later return flight / hotel checkout onto the
-  // requested last day. If the backend picked a flight beyond duration_days,
-  // show the real extra calendar day instead of creating a false collision.
-  const latestCandidates = [
-    ...pkg.activities.map((activity) => parseDay(activity.activity_date)),
-    ...pkg.hotels.map((hotel) => parseDay(hotel.check_out_date ?? hotel.check_in_date)),
-    ...scheduledFlightDates,
-  ].filter((value): value is number => value !== null);
+  const returnDayValue = parseDay(returnDepartureDate);
 
-  const minimumLastDay =
-    anchor + (Math.max(pkg.duration_days || 1, 1) - 1) * DAY_MS;
+  // When both real flight endpoints exist, the flight window owns the calendar.
+  // Otherwise fall back to the stored/requested duration.
+  const dayCount =
+    outboundAnchor !== null
+    && returnDayValue !== null
+    && returnDayValue >= outboundAnchor
+      ? Math.max(
+          1,
+          Math.round(
+            (returnDayValue - outboundAnchor) / DAY_MS,
+          ) + 1,
+        )
+      : Math.max(
+          pkg.duration_days || 1,
+          1,
+        );
 
-  const latest = latestCandidates.length
-    ? Math.max(minimumLastDay, ...latestCandidates)
-    : minimumLastDay;
+  const dayMeta = new Map(
+    pkg.days.map(
+      (day) => [
+        day.day_number,
+        day,
+      ],
+    ),
+  );
 
-  const calendarSpan = Math.max(1, Math.round((latest - anchor) / DAY_MS) + 1);
-  const dayCount = Math.max(pkg.duration_days || 1, calendarSpan);
+  const days: BuilderDay[] = Array.from(
+    { length: dayCount },
+    (_, index) => {
+      const dayNumber = index + 1;
+      const meta = dayMeta.get(dayNumber);
 
-  const dayMeta = new Map(pkg.days.map((day) => [day.day_number, day]));
+      return {
+        id: `day-${dayNumber}`,
+        day: dayNumber,
+        title: meta?.title || `Day ${dayNumber}`,
+        meta: "",
+        items: [],
+        story: meta?.summary || "",
+        photos: [],
+      };
+    },
+  );
 
-  const days: BuilderDay[] = Array.from({ length: dayCount }, (_, index) => {
-    const dayNumber = index + 1;
-    const meta = dayMeta.get(dayNumber);
-
-    return {
-      id: `day-${dayNumber}`,
-      day: dayNumber,
-      title: meta?.title || `Day ${dayNumber}`,
-      meta: "",
-      items: [],
-      story: meta?.summary || "",
-      photos: [],
-    };
-  });
-
-  const dayIndexForDate = (dateStr: string | null, fallback = 0) => {
+  // Unlike the old implementation, dates outside the trip are NOT clamped
+  // onto Day 1 or the last day. They return null and are ignored.
+  const dayIndexForDate = (
+    dateStr: string | null,
+  ): number | null => {
     const parsed = parseDay(dateStr);
-    if (parsed === null) return fallback;
-    const raw = Math.round((parsed - anchor) / DAY_MS);
-    return Math.min(Math.max(raw, 0), days.length - 1);
+
+    if (parsed === null) {
+      return null;
+    }
+
+    const raw = Math.round(
+      (parsed - anchor) / DAY_MS,
+    );
+
+    if (
+      raw < 0
+      || raw >= days.length
+    ) {
+      return null;
+    }
+
+    return raw;
   };
 
   // ---------------------------------------------------------------------------
   // ACTIVITIES
   //
-  // start_time is not stored in the package activity table. Therefore the
-  // editor MUST NOT hard-code every activity to 09:00. Rebuild the clock from:
+  // start_time is not persisted in the current package activity schema.
+  // Rebuild the editor timeline deterministically:
   //
-  //   real local arrival -> arrival buffer -> activities
-  //   normal days        -> 09:00 onward
-  //   return day         -> activities must finish before departure - 3h
+  //   arrival day:
+  //      max(09:00, arrival + 2h)
   //
-  // The activity date and duration already exist in the package, so this
-  // requires no database schema change.
+  //   normal day:
+  //      09:00 -> 20:00
+  //
+  //   departure day:
+  //      activities must finish by departure - 3h
+  //
+  // Activities before arrival day or after departure day are ignored.
   // ---------------------------------------------------------------------------
 
   const cursorByDay = new Map<number, number>();
 
-  const sortedActivities = [...pkg.activities].sort((a, b) => {
-    const dateCompare = (a.activity_date ?? "").localeCompare(b.activity_date ?? "");
-    if (dateCompare !== 0) return dateCompare;
-    return (a.sequence_order ?? 0) - (b.sequence_order ?? 0);
-  });
+  const sortedActivities = [...pkg.activities].sort(
+    (a, b) => {
+      const dateCompare = (
+        a.activity_date
+        ?? ""
+      ).localeCompare(
+        b.activity_date
+        ?? "",
+      );
+
+      if (dateCompare !== 0) {
+        return dateCompare;
+      }
+
+      return (
+        (a.sequence_order ?? 0)
+        - (b.sequence_order ?? 0)
+      );
+    },
+  );
 
   let nextId = 0;
 
   for (const activity of sortedActivities) {
-    const dayIndex = dayIndexForDate(activity.activity_date);
-    const activityDate = activity.activity_date?.slice(0, 10) ?? null;
+    const activityDate =
+      activity.activity_date?.slice(0, 10)
+      ?? null;
 
-    let windowStart = NORMAL_DAY_START_HOUR;
-    let windowEnd = NORMAL_DAY_END_HOUR;
+    // Physically impossible: activity is before the traveller arrives.
+    if (
+      activityDate
+      && outboundArrivalDate
+      && activityDate < outboundArrivalDate
+    ) {
+      continue;
+    }
 
-    if (activityDate && activityDate === outboundArrivalDate) {
-      const arrivalHour = clockToHours(outboundArrivalTime);
+    // Physically outside the trip: activity is after the traveller leaves.
+    if (
+      activityDate
+      && returnDepartureDate
+      && activityDate > returnDepartureDate
+    ) {
+      continue;
+    }
+
+    const dayIndex = dayIndexForDate(
+      activity.activity_date,
+    );
+
+    if (dayIndex === null) {
+      continue;
+    }
+
+    let windowStart =
+      NORMAL_DAY_START_HOUR;
+
+    let windowEnd =
+      NORMAL_DAY_END_HOUR;
+
+    if (
+      activityDate
+      && activityDate === outboundArrivalDate
+    ) {
+      const arrivalHour = clockToHours(
+        outboundArrivalTime,
+      );
+
       if (arrivalHour !== null) {
         windowStart = Math.max(
           windowStart,
@@ -533,8 +634,14 @@ export function buildDaysFromPackage(pkg: CreatorPackageDetail): BuilderDay[] {
       }
     }
 
-    if (activityDate && activityDate === returnDepartureDate) {
-      const departureHour = clockToHours(returnDepartureTime);
+    if (
+      activityDate
+      && activityDate === returnDepartureDate
+    ) {
+      const departureHour = clockToHours(
+        returnDepartureTime,
+      );
+
       if (departureHour !== null) {
         windowEnd = Math.min(
           windowEnd,
@@ -543,27 +650,44 @@ export function buildDaysFromPackage(pkg: CreatorPackageDetail): BuilderDay[] {
       }
     }
 
-    // Nothing fits on this day (for example: land at 21:15 + 2h buffer).
-    if (windowStart >= windowEnd) continue;
+    // Example:
+    // arrive 21:15 + 2h buffer = 23:15
+    // normal day end = 20:00
+    // -> no activity can be displayed on Day 1.
+    if (
+      windowStart >= windowEnd
+    ) {
+      continue;
+    }
 
     const durationHours =
       typeof activity.duration_hours === "number"
       && Number.isFinite(activity.duration_hours)
       && activity.duration_hours > 0
-        ? Math.min(Math.max(activity.duration_hours, 0.5), 8)
+        ? Math.min(
+            Math.max(
+              activity.duration_hours,
+              0.5,
+            ),
+            8,
+          )
         : 2;
 
     const cursor = Math.max(
       windowStart,
-      cursorByDay.get(dayIndex) ?? windowStart,
+      cursorByDay.get(dayIndex)
+      ?? windowStart,
     );
 
-    const activityEnd = cursor + durationHours;
+    const activityEnd =
+      cursor + durationHours;
 
-    // Do not display an impossible activity that would overlap the airport
-    // window. The backend package data remains untouched; this only prevents
-    // the editor from presenting a physically impossible timeline.
-    if (activityEnd > windowEnd) continue;
+    // Don't display an activity that would extend past the usable day window.
+    if (
+      activityEnd > windowEnd
+    ) {
+      continue;
+    }
 
     nextId += 1;
 
@@ -571,13 +695,24 @@ export function buildDaysFromPackage(pkg: CreatorPackageDetail): BuilderDay[] {
       id: nextId,
       time: hoursToClock(cursor),
       type: "ACTIVITY",
-      title: activity.activity_name || "Activity",
-      price: `$${activity.price_aud ?? 0}`,
+      title:
+        activity.activity_name
+        || "Activity",
+      price:
+        `$${activity.price_aud ?? 0}`,
       icon: "star",
       status: "pass",
-      address: activity.city || undefined,
-      duration: String(Math.round(durationHours * 60)),
-      notes: activity.description || undefined,
+      address:
+        activity.city
+        || undefined,
+      duration: String(
+        Math.round(
+          durationHours * 60,
+        ),
+      ),
+      notes:
+        activity.description
+        || undefined,
     });
 
     cursorByDay.set(
@@ -589,30 +724,68 @@ export function buildDaysFromPackage(pkg: CreatorPackageDetail): BuilderDay[] {
   // ---------------------------------------------------------------------------
   // FLIGHTS
   //
-  // Outbound is displayed at local ARRIVAL time/date.
-  // Return is displayed at local DEPARTURE time/date.
+  // Outbound:
+  //   show on LOCAL ARRIVAL DAY at LOCAL ARRIVAL TIME.
+  //
+  // Return:
+  //   show on LOCAL DEPARTURE DAY at LOCAL DEPARTURE TIME.
   // ---------------------------------------------------------------------------
 
-  for (const [flightIndex, flight] of pkg.flights.entries()) {
-    nextId += 1;
+  for (
+    const [flightIndex, flight]
+    of pkg.flights.entries()
+  ) {
+    const returnLeg =
+      isReturnLeg(flight);
 
-    const returnLeg = isReturnLeg(flight);
+    const scheduleDatetime =
+      returnLeg
+        ? (
+            flight.departure_datetime
+            ?? flight.arrival_datetime
+          )
+        : (
+            flight.arrival_datetime
+            ?? flight.departure_datetime
+          );
 
-    const scheduleDatetime = returnLeg
-      ? (flight.departure_datetime ?? flight.arrival_datetime)
-      : (flight.arrival_datetime ?? flight.departure_datetime);
+    const zoneIata =
+      returnLeg
+        ? (
+            flight.origin_iata
+            ?? flight.destination_iata
+          )
+        : (
+            flight.destination_iata
+            ?? flight.origin_iata
+          );
 
-    const zoneIata = returnLeg
-      ? (flight.origin_iata ?? flight.destination_iata)
-      : (flight.destination_iata ?? flight.origin_iata);
-
-    const timeZone = timezoneForIata(zoneIata);
+    const timeZone =
+      timezoneForIata(
+        zoneIata,
+      );
 
     const localDate =
-      extractDateInZone(scheduleDatetime, timeZone);
+      extractDateInZone(
+        scheduleDatetime,
+        timeZone,
+      );
+
+    const dayIndex =
+      dayIndexForDate(
+        localDate,
+      );
+
+    // Don't force a flight outside the trip window onto a visible day.
+    if (dayIndex === null) {
+      continue;
+    }
 
     const time =
-      extractClockTimeInZone(scheduleDatetime, timeZone)
+      extractClockTimeInZone(
+        scheduleDatetime,
+        timeZone,
+      )
       ?? "09:00";
 
     const route = [
@@ -627,14 +800,20 @@ export function buildDaysFromPackage(pkg: CreatorPackageDetail): BuilderDay[] {
               ? `Depart ${route[0]} for ${route[1]}`
               : `Arrive ${route[1]} from ${route[0]}`
           )
-        : (flight.airline || "Flight");
+        : (
+            flight.airline
+            || "Flight"
+          );
 
-    days[dayIndexForDate(localDate)].items.push({
+    nextId += 1;
+
+    days[dayIndex].items.push({
       id: nextId,
       time,
       type: "FLIGHT",
       title,
-      price: `$${flight.price_aud ?? 0}`,
+      price:
+        `$${flight.price_aud ?? 0}`,
       icon: "plane",
       status: "pass",
       flightIndex,
@@ -643,22 +822,90 @@ export function buildDaysFromPackage(pkg: CreatorPackageDetail): BuilderDay[] {
 
   // ---------------------------------------------------------------------------
   // HOTELS
+  //
+  // Hotel rows are clipped to the same arrival -> departure calendar window.
+  // Nothing before Day 1 or after the last day gets forced onto the timeline.
   // ---------------------------------------------------------------------------
 
   for (const hotel of pkg.hotels) {
-    const checkInIndex = dayIndexForDate(hotel.check_in_date);
-    const checkOutIndex = hotel.check_out_date
-      ? dayIndexForDate(hotel.check_out_date)
-      : checkInIndex;
+    const rawCheckIn =
+      parseDay(
+        hotel.check_in_date,
+      );
 
-    const nights = Math.max(1, checkOutIndex - checkInIndex);
-    const stayGroupId = `hotel-${hotel.hotel_id ?? hotel.hotel_name ?? nextId}`;
+    const rawCheckOut =
+      parseDay(
+        hotel.check_out_date
+        ?? hotel.check_in_date,
+      );
 
-    for (let offset = 0; offset <= nights; offset += 1) {
-      const dayIndex = checkInIndex + offset;
-      if (dayIndex >= days.length) break;
+    if (
+      rawCheckIn === null
+      || rawCheckOut === null
+    ) {
+      continue;
+    }
 
-      const isCheckOut = offset === nights;
+    const firstVisible =
+      Math.max(
+        rawCheckIn,
+        anchor,
+      );
+
+    const tripLastDay =
+      anchor
+      + (days.length - 1) * DAY_MS;
+
+    const lastVisible =
+      Math.min(
+        rawCheckOut,
+        tripLastDay,
+      );
+
+    if (
+      lastVisible < firstVisible
+    ) {
+      continue;
+    }
+
+    const checkInIndex =
+      Math.round(
+        (firstVisible - anchor)
+        / DAY_MS,
+      );
+
+    const checkOutIndex =
+      Math.round(
+        (lastVisible - anchor)
+        / DAY_MS,
+      );
+
+    const nights = Math.max(
+      1,
+      checkOutIndex - checkInIndex,
+    );
+
+    const stayGroupId =
+      `hotel-${hotel.hotel_id ?? hotel.hotel_name ?? nextId}`;
+
+    for (
+      let offset = 0;
+      offset <= nights;
+      offset += 1
+    ) {
+      const dayIndex =
+        checkInIndex + offset;
+
+      if (
+        dayIndex < 0
+        || dayIndex >= days.length
+      ) {
+        break;
+      }
+
+      const isCheckOut =
+        offset === nights;
+
       nextId += 1;
 
       days[dayIndex].items.push({
@@ -675,15 +922,30 @@ export function buildDaysFromPackage(pkg: CreatorPackageDetail): BuilderDay[] {
             ? `${hotel.hotel_name ?? "Hotel"} (Check-out)`
             : nights > 1
               ? `${hotel.hotel_name ?? "Hotel"} (Night ${offset + 1} of ${nights})`
-              : hotel.hotel_name ?? "Hotel",
-        price: `$${hotel.price_per_night_aud ?? 0}/night`,
+              : (
+                  hotel.hotel_name
+                  ?? "Hotel"
+                ),
+        price:
+          `$${hotel.price_per_night_aud ?? 0}/night`,
         icon: "hotel",
         status: "pass",
-        address: hotel.address || hotel.city || undefined,
-        checkIn: hotel.check_in_date || undefined,
-        checkOut: hotel.check_out_date || undefined,
-        roomType: hotel.room_type || undefined,
-        starRating: hotel.star_rating || undefined,
+        address:
+          hotel.address
+          || hotel.city
+          || undefined,
+        checkIn:
+          hotel.check_in_date
+          || undefined,
+        checkOut:
+          hotel.check_out_date
+          || undefined,
+        roomType:
+          hotel.room_type
+          || undefined,
+        starRating:
+          hotel.star_rating
+          || undefined,
         stayMarker:
           offset === 0
             ? "check-in"
@@ -695,15 +957,29 @@ export function buildDaysFromPackage(pkg: CreatorPackageDetail): BuilderDay[] {
     }
   }
 
-  // Real clock rows sort chronologically. Non-clock hotel markers follow them.
-  const sortKey = (item: TimelineItem) => {
-    const hours = clockToHours(item.time);
-    return hours === null ? Number.POSITIVE_INFINITY : hours;
+  // Real-time rows first in chronological order.
+  // Hotel text markers such as "Check-in" follow them.
+  const sortKey = (
+    item: TimelineItem,
+  ) => {
+    const hours =
+      clockToHours(
+        item.time,
+      );
+
+    return hours === null
+      ? Number.POSITIVE_INFINITY
+      : hours;
   };
 
   for (const day of days) {
-    day.items.sort((a, b) => sortKey(a) - sortKey(b));
+    day.items.sort(
+      (a, b) =>
+        sortKey(a)
+        - sortKey(b),
+    );
   }
 
   return days;
 }
+

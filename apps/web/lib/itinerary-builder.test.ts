@@ -155,11 +155,6 @@ test("a suggestion with no price, duration, or category renders blanks instead o
 });
 
 test("a flight lands on its arrival day, at its arrival time in the destination's zone", () => {
-  // Departure and arrival fall on different UTC calendar days on purpose —
-  // the flight must key off arrival, not departure, for both its day and
-  // its displayed clock time. Day 1 is anchored on the first activity/hotel
-  // date (not the earlier departure): AI-selected flights are matched by
-  // route, not date, so departures can't be trusted to start the timeline.
   const pkg: CreatorPackageDetail = {
     package_id: "pkg-1",
     title: "Tokyo Street Food & Culture Week",
@@ -171,7 +166,11 @@ test("a flight lands on its arrival day, at its arrival time in the destination'
         activity_id: "act-1",
         sequence_order: 1,
         activity_name: "Tokyo Cooking Class",
+
+        // This activity is before the traveller arrives in Tokyo.
+        // It must NOT be forced onto Day 1.
         activity_date: "2026-07-12",
+
         city: "Tokyo",
         duration_hours: 3,
         price_aud: 128,
@@ -186,10 +185,12 @@ test("a flight lands on its arrival day, at its arrival time in the destination'
         flight_number: "QF25",
         origin_iata: "SYD",
         destination_iata: "NRT",
+
         departure_datetime: "2026-07-12T20:00:00Z",
-        // JST (UTC+9, no DST in Japan) — lands 14:00 local on July 13, a day
-        // after it departed and a day after the anchoring activity.
+
+        // 2026-07-13 14:00 in Tokyo.
         arrival_datetime: "2026-07-13T05:00:00Z",
+
         cabin_class: null,
         price_aud: 850,
       },
@@ -198,10 +199,15 @@ test("a flight lands on its arrival day, at its arrival time in the destination'
 
   const days = buildDaysFromPackage(pkg);
 
+  // Day 1 is the LOCAL arrival date: 13 July.
+  // The July 12 activity is outside the trip window and is removed.
   assert.equal(days[0].items.length, 1);
-  assert.equal(days[0].items[0].type, "ACTIVITY");
-  const flightItem = days[1].items.find((item) => item.type === "FLIGHT");
-  assert.equal(flightItem?.time, "14:00");
+
+  const flightItem = days[0].items[0];
+
+  assert.equal(flightItem.type, "FLIGHT");
+  assert.equal(flightItem.time, "14:00");
+  assert.equal(flightItem.title, "Arrive NRT from SYD");
 });
 
 test("extractClockTimeInZone renders a flight's real instant in the given zone, not a raw ISO substring", () => {
