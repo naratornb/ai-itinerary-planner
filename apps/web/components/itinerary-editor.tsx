@@ -53,36 +53,6 @@ function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
 const ACTIVITY_CATEGORIES = ["Activity", "Restaurant", "Shopping", "Attraction", "Other"];
 const DURATION_OPTIONS = ["30", "60", "90", "120", "180"];
 
-// Quick-add suggestions for the "Add stop" flow. Keyed by the active day's
-// city so a Paris day doesn't get offered Tokyo landmarks; FALLBACK_ACTIVITIES
-// covers any city without its own entry here.
-const ACTIVITIES_BY_CITY: Record<string, { title: string; meta: string; price: string }[]> = {
-  Tokyo: [
-    { title: "Shibuya Sky", meta: "Observation deck · 60 min", price: "$22" },
-    { title: "Tsukiji Market", meta: "Food tour · 120 min", price: "Free" },
-    { title: "teamLab Planets", meta: "Immersive art · 90 min", price: "$38" },
-  ],
-  Paris: [
-    { title: "Eiffel Tower Summit", meta: "Observation deck · 90 min", price: "$35" },
-    { title: "Louvre Museum", meta: "Art & history · 150 min", price: "$22" },
-    { title: "Seine River Cruise", meta: "Sightseeing cruise · 60 min", price: "$18" },
-  ],
-  Sydney: [
-    { title: "Sydney Opera House Tour", meta: "Guided tour · 60 min", price: "$45" },
-    { title: "Bondi to Coogee Walk", meta: "Coastal walk · 120 min", price: "Free" },
-    { title: "Taronga Zoo", meta: "Wildlife park · 180 min", price: "$51" },
-  ],
-  Bali: [
-    { title: "Ubud Monkey Forest", meta: "Nature park · 60 min", price: "$10" },
-    { title: "Tegallalang Rice Terraces", meta: "Scenic walk · 90 min", price: "Free" },
-    { title: "Uluwatu Temple & Kecak Dance", meta: "Cultural show · 120 min", price: "$15" },
-  ],
-};
-const FALLBACK_ACTIVITIES = [
-  { title: "City Walking Tour", meta: "Guided tour · 120 min", price: "$25" },
-  { title: "Local Food Tasting", meta: "Food tour · 90 min", price: "$30" },
-  { title: "Museum Visit", meta: "Art & history · 90 min", price: "$18" },
-];
 const NEW_DAY_OPTION_ID = "__new-day__";
 
 type AddFlowStep = "type" | "activities" | "create" | "flight" | "hotel" | "creator";
@@ -408,6 +378,7 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
   const [expandedFeasibility, setExpandedFeasibility] = useState<"critical" | "suggestions" | "passed" | null>(null);
   const [addFlow, setAddFlow] = useState<AddFlowStep>("type");
   const [activitySearch, setActivitySearch] = useState("");
+  const [recommendedActivities, setRecommendedActivities] = useState<{ title: string; meta: string; price: string }[]>([]);
   const [activityDraft, setActivityDraft] = useState({ title: "", price: "", address: "", startTime: "12:00", duration: "30", notes: "" });
   const [flightSearch, setFlightSearch] = useState("");
   const [selectedFlightIndex, setSelectedFlightIndex] = useState<number | null>(null);
@@ -498,6 +469,31 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [pendingDeleteItemId]);
+
+  // Debounced so a fast typist doesn't fire a query per keystroke; queries the
+  // real activities catalog directly (RLS grants public SELECT — see
+  // supabase/migrations/0003_rls_policies.sql), not just a handful of AI-picked
+  // rows the package already carries.
+  useEffect(() => {
+    if (addFlow !== "activities") return;
+    const timer = window.setTimeout(async () => {
+      let query = supabase
+        .from("activities")
+        .select("activity_name,category,duration_hours,price_aud")
+        .order("rating", { ascending: false })
+        .limit(12);
+      if (activeDayCity) query = query.eq("city", activeDayCity);
+      const search = activitySearch.trim();
+      if (search) query = query.ilike("activity_name", `%${search}%`);
+      const { data, error } = await query;
+      setRecommendedActivities(error || !data ? [] : data.map((row) => ({
+        title: row.activity_name,
+        meta: [row.category, row.duration_hours ? `${Math.round(row.duration_hours * 60)} min` : null].filter(Boolean).join(" · "),
+        price: row.price_aud ? `$${row.price_aud}` : "Free",
+      })));
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [addFlow, activeDayCity, activitySearch]);
 
   const showNotice = (message: string) => {
     setNotice(message);
@@ -868,9 +864,6 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
     });
     setCreatorDraft({ title: "", category: "Activity", address: "", time: "12:00", duration: "60", price: "", reason: "" });
   };
-
-  const recommendedActivities = (activeDayCity && ACTIVITIES_BY_CITY[activeDayCity] || FALLBACK_ACTIVITIES)
-    .filter((activity) => activity.title.toLowerCase().includes(activitySearch.trim().toLowerCase()));
 
   const addCopilotSuggestion = (suggestion: CopilotSuggestionV1) => {
     if (!activeDayData) return;
