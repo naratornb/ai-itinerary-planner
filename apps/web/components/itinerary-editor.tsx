@@ -1229,7 +1229,7 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
             dayLabel={`Day ${activeDay + 1}`}
             onAddSuggestion={addCopilotSuggestion}
           />
-          <Panel title="Pricing & earnings" className="pricing-panel"><span>Total package price</span><strong>${packagePrice.toLocaleString()}</strong><hr/><span>Your commission (20%)</span><strong className="commission">${Math.round(packagePrice * .2).toLocaleString()}</strong><small>Est. 5–8 bookings/month</small></Panel>
+          <Panel title="Pricing & earnings" className="pricing-panel"><span>Total package price</span><strong>${packagePrice.toLocaleString()}</strong><hr/><span>Your commission (20%)</span><strong className="commission">${Math.round(packagePrice * .2).toLocaleString()}</strong></Panel>
           <Panel title="Route map" className="route-panel"><RouteMap stops={routeStops} /></Panel>
         </aside>
       </div>
