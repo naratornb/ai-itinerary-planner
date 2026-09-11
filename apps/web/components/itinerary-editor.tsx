@@ -288,7 +288,7 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
                             <b>{p.selectedHotelOption.star_rating}</b><span>/ 5</span>
                           </span>}
                         </div>
-                        <dl className="hotel-confirm-stats">
+                        <dl className="hotel-confirm-stats stat-grid">
                           <div><dt>Per night</dt><dd>{p.selectedHotelOption.price_per_night_aud != null ? `$${p.selectedHotelOption.price_per_night_aud.toLocaleString("en-US")}` : "Not provided"}</dd></div>
                           <div className="full"><dt>Address</dt><dd>{p.selectedHotelOption.address || p.selectedHotelOption.city || "Not provided"}</dd></div>
                         </dl>
