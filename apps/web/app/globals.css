@@ -490,6 +490,17 @@ figure .remove-photo-btn:focus-visible { outline: 2px solid var(--fc-focus-ring)
 .activity-results strong { font-size: 14px; line-height: 20px; }.activity-results small { color: var(--fc-secondary); font-size: 12px; line-height: 16px; }.activity-results b { font-size: 12px; line-height: 16px; }
 .result-plus { position: absolute; top: 8px; right: 10px; color: var(--fc-blue); font-size: 20px; }
 .activity-results > p { grid-column: 1 / -1; margin: 0; padding: 24px; color: var(--fc-secondary); text-align: center; }
+.activity-more-toggle { width: 100%; min-height: 40px; margin-top: 12px; display: flex; align-items: center; justify-content: center; gap: 6px; border: 0; background: transparent; color: var(--fc-blue); font-size: 14px; font-weight: 600; cursor: pointer; }
+.activity-more-toggle:hover { text-decoration: underline; }
+.activity-more-toggle[aria-expanded="true"] .status-chevron { transform: rotate(90deg); }
+.activity-list { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.activity-list > li > button { width: 100%; padding: 12px 14px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 1px solid var(--fc-border); border-radius: 8px; background: #fff; text-align: left; cursor: pointer; }
+.activity-list > li > button:hover { border-color: var(--fc-blue); }
+.activity-list-name { min-width: 0; }
+.activity-list-name strong { display: block; color: var(--fc-ink); font-size: 14px; line-height: 20px; font-weight: 600; }
+.activity-list-name small { color: var(--fc-secondary); font-size: 12px; line-height: 16px; }
+.activity-list-trail { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; color: var(--fc-blue); }
+.activity-list-trail b { color: var(--fc-ink); font-size: 12px; line-height: 16px; font-weight: 500; }
 .create-activity-link { width: 100%; min-height: 48px; margin-top: 14px; display: flex; align-items: center; justify-content: center; gap: 7px; border: 1px dashed #bdbdbd; border-radius: 8px; background: #fff; color: var(--fc-blue); font-size: 14px; font-weight: 600; cursor: pointer; }
 .create-activity-link:hover { background: #f7fbff; }
 .activity-form { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 16px 12px; }

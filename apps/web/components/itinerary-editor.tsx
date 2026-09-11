@@ -203,6 +203,8 @@ type AddStopFlowProps = {
   setActivitySearch: Dispatch<SetStateAction<string>>;
   recommendedActivities: { title: string; meta: string; price: string }[];
   addRecommendedActivity: (title: string, meta: string, price: string) => void;
+  moreActivitiesOpen: boolean;
+  setMoreActivitiesOpen: Dispatch<SetStateAction<boolean>>;
   activityDraft: ActivityDraft;
   setActivityDraft: Dispatch<SetStateAction<ActivityDraft>>;
   createActivity: () => void;
@@ -316,9 +318,23 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
                     <label className="activity-search"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input value={p.activitySearch} onChange={(event) => p.setActivitySearch(event.target.value)} placeholder={`Search ${p.activeDayCity ?? "local"} activities`} /></label>
                     <h5>Recommended for {p.activeDayCity ?? "this trip"}</h5>
                     <div className="activity-results">
-                      {p.recommendedActivities.map((activity) => <button key={activity.title} onClick={() => p.addRecommendedActivity(activity.title, activity.meta, activity.price)}><span className="result-plus">+</span><strong>{activity.title}</strong><small>{activity.meta}</small><b>{activity.price}</b></button>)}
+                      {p.recommendedActivities.slice(0, 3).map((activity) => <button key={activity.title} onClick={() => p.addRecommendedActivity(activity.title, activity.meta, activity.price)}><span className="result-plus">+</span><strong>{activity.title}</strong><small>{activity.meta}</small><b>{activity.price}</b></button>)}
                       {p.recommendedActivities.length === 0 && <p>No activities found. Try another search or create your own.</p>}
                     </div>
+                    {p.recommendedActivities.length > 3 && <>
+                      <button className="activity-more-toggle" onClick={() => p.setMoreActivitiesOpen((open) => !open)} aria-expanded={p.moreActivitiesOpen}>
+                        <span className="status-chevron"><Icon name="chevron" size={14} /></span>
+                        {p.moreActivitiesOpen ? "Show fewer activities" : `See ${p.recommendedActivities.length - 3} more`}
+                      </button>
+                      {p.moreActivitiesOpen && <ul className="activity-list">
+                        {p.recommendedActivities.slice(3).map((activity) => <li key={activity.title}>
+                          <button onClick={() => p.addRecommendedActivity(activity.title, activity.meta, activity.price)}>
+                            <span className="activity-list-name"><strong>{activity.title}</strong><small>{activity.meta}</small></span>
+                            <span className="activity-list-trail"><b>{activity.price}</b><Icon name="plus" size={14} /></span>
+                          </button>
+                        </li>)}
+                      </ul>}
+                    </>}
                     <button className="create-activity-link" onClick={() => p.setAddFlow("create")}><Icon name="plus" size={16} /> Create new activity</button>
                   </>}
 
@@ -379,6 +395,7 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
   const [addFlow, setAddFlow] = useState<AddFlowStep>("type");
   const [activitySearch, setActivitySearch] = useState("");
   const [recommendedActivities, setRecommendedActivities] = useState<{ title: string; meta: string; price: string }[]>([]);
+  const [moreActivitiesOpen, setMoreActivitiesOpen] = useState(false);
   const [activityDraft, setActivityDraft] = useState({ title: "", price: "", address: "", startTime: "12:00", duration: "30", notes: "" });
   const [flightSearch, setFlightSearch] = useState("");
   const [selectedFlightIndex, setSelectedFlightIndex] = useState<number | null>(null);
@@ -479,16 +496,26 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
     const timer = window.setTimeout(async () => {
       let query = supabase
         .from("activities")
-        .select("activity_name,category,duration_hours,price_aud")
+        .select("activity_name,city,category,duration_hours,price_aud")
         .order("rating", { ascending: false })
-        .limit(12);
+        .limit(24);
       if (activeDayCity) query = query.eq("city", activeDayCity);
       const search = activitySearch.trim();
       if (search) query = query.ilike("activity_name", `%${search}%`);
       const { data, error } = await query;
-      setRecommendedActivities(error || !data ? [] : data.map((row) => ({
+      if (error || !data) { setRecommendedActivities([]); return; }
+      // The catalog carries some exact-duplicate rows (same activity re-seeded
+      // under a different id) — collapse those to one card by name.
+      const seen = new Set<string>();
+      const deduped = data.filter((row) => {
+        const key = row.activity_name.trim().toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      setRecommendedActivities(deduped.map((row) => ({
         title: row.activity_name,
-        meta: [row.category, row.duration_hours ? `${Math.round(row.duration_hours * 60)} min` : null].filter(Boolean).join(" · "),
+        meta: [row.category, row.duration_hours ? `${Math.round(row.duration_hours * 60)} min` : null, row.city].filter(Boolean).join(" · "),
         price: row.price_aud ? `$${row.price_aud}` : "Free",
       })));
     }, 250);
@@ -934,6 +961,8 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
     activitySearch, setActivitySearch,
     recommendedActivities,
     addRecommendedActivity,
+    moreActivitiesOpen,
+    setMoreActivitiesOpen,
     activityDraft, setActivityDraft,
     createActivity,
     activeDayData,
