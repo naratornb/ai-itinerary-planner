@@ -44,7 +44,7 @@ export default function CopilotPanel({ client, city, dayLabel, onAddSuggestion, 
     const prompt = input.trim();
     if (!prompt || loading) return;
     setInput("");
-    void send(prompt);
+    void send(prompt, city);
   };
 
   const addSuggestion = (suggestion: CopilotSuggestionV1, turnId?: string) => {

@@ -9,7 +9,13 @@ export function useCopilot(client: CopilotClient) {
   const [sending, setSending] = useState(false);
   const [requestError, setRequestError] = useState("");
 
-  const send = async (prompt: string) => {
+  // The retrieval endpoint only knows a destination if it can find a
+  // catalog city's name inside the prompt text — it has no separate "which
+  // day is this" field. Silently appending the current day's city lets
+  // "find me a food activity" work without the traveler having to name a
+  // place themselves; the displayed bubble still shows what they actually
+  // typed.
+  const send = async (prompt: string, city?: string | null) => {
     const content = prompt.trim();
     if (!content || sending) return;
 
@@ -20,8 +26,12 @@ export function useCopilot(client: CopilotClient) {
     setSending(true);
     setRequestError("");
 
+    const augmented = city && !content.toLowerCase().includes(city.toLowerCase())
+      ? `${content} in ${city}`
+      : content;
+
     try {
-      const turn = await client.send(content);
+      const turn = await client.send(augmented);
       setMessages((current) => [
         ...current,
         {
