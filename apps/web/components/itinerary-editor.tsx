@@ -148,30 +148,6 @@ function withWrapBeforeSlash(text: string) {
   return <>{text.slice(0, index)}<wbr /><span className="item-price-unit">{text.slice(index)}</span></>;
 }
 
-function formatStayDate(value: string | null) {
-  if (!value) return "Not provided";
-  const date = new Date(`${value}T00:00:00Z`);
-  if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat("en-AU", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }).format(date);
-}
-
-// Departure renders in the origin airport's zone, arrival in the
-// destination's — the traveler's actual local clock at each end, not the
-// viewer's own timezone.
-function formatFlightDateTime(value: string | null, timeZone: string) {
-  if (!value) return "Not provided";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat("en-AU", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    timeZone,
-  }).format(date);
-}
-
 const TOKYO_LANDMARKS: { keywords: string[]; coordinate: [number, number] }[] = [
   { keywords: ["narita", "nrt"], coordinate: [35.7719, 140.3929] },
   { keywords: ["haneda", "hnd"], coordinate: [35.5494, 139.7798] },
@@ -1079,8 +1055,8 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
                       <div><dt>Cabin</dt><dd>{flight.cabin_class || "Not provided"}</dd></div>
                       <div><dt>From</dt><dd>{flight.origin_iata || "Not provided"}</dd></div>
                       <div><dt>To</dt><dd>{flight.destination_iata || "Not provided"}</dd></div>
-                      <div><dt>Departure</dt><dd>{formatFlightDateTime(flight.departure_datetime, timezoneForIata(flight.origin_iata))}</dd></div>
-                      <div><dt>Arrival</dt><dd>{formatFlightDateTime(flight.arrival_datetime, timezoneForIata(flight.destination_iata))}</dd></div>
+                      <div><dt>Departure</dt><dd>{extractClockTimeInZone(flight.departure_datetime, timezoneForIata(flight.origin_iata)) ?? "Not provided"}</dd></div>
+                      <div><dt>Arrival</dt><dd>{extractClockTimeInZone(flight.arrival_datetime, timezoneForIata(flight.destination_iata)) ?? "Not provided"}</dd></div>
                     </dl>
                   </div>
                   <button className="item-delete" onClick={() => requestDeleteItem(item)}>Delete</button>
@@ -1102,15 +1078,11 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
                       {hotel ? <>
                         <div><dt>Room type</dt><dd>{hotel.room_type || "Not provided"}</dd></div>
                         <div><dt>Stay</dt><dd>{nights ? `${nights} night${nights === 1 ? "" : "s"}` : "Not provided"}</dd></div>
-                        <div><dt>Check-in</dt><dd>{formatStayDate(hotel.check_in_date)}</dd></div>
-                        <div><dt>Check-out</dt><dd>{formatStayDate(hotel.check_out_date)}</dd></div>
                         <div><dt>Rating</dt><dd className="rating-value">{hotel.star_rating ? <><Icon name="star" size={14} />{hotel.star_rating} / 5</> : "Not provided"}</dd></div>
                         <div><dt>Per night</dt><dd>{hotel.price_per_night_aud === null ? "Not provided" : `$${hotel.price_per_night_aud.toLocaleString("en-AU")} AUD`}</dd></div>
                         <div className="full"><dt>Address</dt><dd>{hotel.address || [hotel.city].filter(Boolean).join(", ") || "Not provided"}</dd></div>
                       </> : <>
                         <div><dt>Room type</dt><dd>{item.roomType || "Not provided"}</dd></div>
-                        <div><dt>Check-in</dt><dd>{item.checkIn || "Not provided"}</dd></div>
-                        <div><dt>Check-out</dt><dd>{item.checkOut || "Not provided"}</dd></div>
                         <div><dt>Rating</dt><dd className="rating-value">{item.starRating ? <><Icon name="star" size={14} />{item.starRating} / 5</> : "Not provided"}</dd></div>
                         <div className="full"><dt>Address</dt><dd>{item.address || "Not provided"}</dd></div>
                         {item.notes && <div className="full"><dt>Notes</dt><dd>{item.notes}</dd></div>}
