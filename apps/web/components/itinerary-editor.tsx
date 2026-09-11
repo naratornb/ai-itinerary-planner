@@ -148,6 +148,12 @@ function withWrapBeforeSlash(text: string) {
   return <>{text.slice(0, index)}<wbr /><span className="item-price-unit">{text.slice(index)}</span></>;
 }
 
+// Placeholder until hotels carry a real check-in/check-out time — the
+// inventory only has dates, never a time of day. Industry-standard hours,
+// not a per-hotel fact; swap for real data once the backend has it.
+const STANDARD_HOTEL_CHECKIN_TIME = "15:00";
+const STANDARD_HOTEL_CHECKOUT_TIME = "11:00";
+
 const TOKYO_LANDMARKS: { keywords: string[]; coordinate: [number, number] }[] = [
   { keywords: ["narita", "nrt"], coordinate: [35.7719, 140.3929] },
   { keywords: ["haneda", "hnd"], coordinate: [35.5494, 139.7798] },
@@ -1078,11 +1084,15 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
                       {hotel ? <>
                         <div><dt>Room type</dt><dd>{hotel.room_type || "Not provided"}</dd></div>
                         <div><dt>Stay</dt><dd>{nights ? `${nights} night${nights === 1 ? "" : "s"}` : "Not provided"}</dd></div>
+                        <div><dt>Check-in</dt><dd>{STANDARD_HOTEL_CHECKIN_TIME}</dd></div>
+                        <div><dt>Check-out</dt><dd>{STANDARD_HOTEL_CHECKOUT_TIME}</dd></div>
                         <div><dt>Rating</dt><dd className="rating-value">{hotel.star_rating ? <><Icon name="star" size={14} />{hotel.star_rating} / 5</> : "Not provided"}</dd></div>
                         <div><dt>Per night</dt><dd>{hotel.price_per_night_aud === null ? "Not provided" : `$${hotel.price_per_night_aud.toLocaleString("en-AU")} AUD`}</dd></div>
                         <div className="full"><dt>Address</dt><dd>{hotel.address || [hotel.city].filter(Boolean).join(", ") || "Not provided"}</dd></div>
                       </> : <>
                         <div><dt>Room type</dt><dd>{item.roomType || "Not provided"}</dd></div>
+                        <div><dt>Check-in</dt><dd>{STANDARD_HOTEL_CHECKIN_TIME}</dd></div>
+                        <div><dt>Check-out</dt><dd>{STANDARD_HOTEL_CHECKOUT_TIME}</dd></div>
                         <div><dt>Rating</dt><dd className="rating-value">{item.starRating ? <><Icon name="star" size={14} />{item.starRating} / 5</> : "Not provided"}</dd></div>
                         <div className="full"><dt>Address</dt><dd>{item.address || "Not provided"}</dd></div>
                         {item.notes && <div className="full"><dt>Notes</dt><dd>{item.notes}</dd></div>}
