@@ -1285,7 +1285,7 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
           </div></div>
 
           <section className="story-section">
-            <div className="section-label"><h3>Tell your story</h3><span>{photos.length} uploaded</span></div>
+            <div className="section-label"><h3>Day photos</h3><span>{photos.length} uploaded</span></div>
             <div className="photo-grid">
               {photos.map((photo) => <figure key={photo.src}>
                 <img src={toSafeImageSrc(photo.src)} alt={photo.alt} />
