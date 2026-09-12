@@ -1432,7 +1432,7 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
                           <small>Start time</small>
                           <span className="activity-timeline-value"><Icon name="clock" size={15} /><div className="activity-card-time-field"><input type="time" className="activity-card-time-input" aria-label="Start time" value={editingItem.time} onChange={(event) => setEditingItem({ ...editingItem, time: event.target.value })} onClick={(event) => { try { event.currentTarget.showPicker(); } catch { /* unsupported browser: native click behavior still works */ } }} /></div></span>
                         </div>
-                        <div className="activity-timeline-track" aria-hidden="true"><span className="activity-timeline-duration" title={`${editingItem.duration} min`}>{formatDuration(editingItem.duration)}</span></div>
+                        <div className="activity-timeline-track"><span className="activity-timeline-duration" title={`${editingItem.duration} min`}>Duration &middot; {formatDuration(editingItem.duration)}</span></div>
                         <div className="activity-timeline-point end">
                           <small>End time</small>
                           <span className="activity-timeline-value"><Icon name="clock" size={15} /><strong>{getEndTime(editingItem.time, editingItem.duration)}</strong></span>
