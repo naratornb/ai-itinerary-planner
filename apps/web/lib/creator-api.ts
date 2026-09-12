@@ -347,6 +347,23 @@ export async function updatePackage(
   return response.json() as Promise<{ package_id: string }>;
 }
 
+export async function deletePackage(
+  fetcher: typeof fetch,
+  apiUrl: string,
+  accessToken: string,
+  packageId: string,
+) {
+  const response = await fetcher(
+    `${apiUrl.replace(/\/$/, "")}/packages/${encodeURIComponent(packageId)}`,
+    { method: "DELETE", headers: { Authorization: `Bearer ${accessToken}` } },
+  );
+  if (response.status === 401) throw new Error("Your session expired. Please sign in again.");
+  if (response.status === 204 || response.ok) return;
+  // e.g. 409 PACKAGE_NOT_DELETABLE if the status changed since the page loaded.
+  const body = await response.json().catch(() => null);
+  throw new Error(body?.message || "Unable to delete this package. Please try again.");
+}
+
 // Mirrors MediaItem/MediaUploadResponse in apps/api/app/media/schemas.py.
 export type PackageMedia = {
   media_id: string;

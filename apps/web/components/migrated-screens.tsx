@@ -6,6 +6,7 @@ import type { Session } from "@supabase/supabase-js";
 
 import {
   createPackage,
+  deletePackage,
   fetchOwnPackages,
   formatCreatorPackage,
   resolveCreatorProfile,
@@ -1095,7 +1096,43 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
   const [activeTab, setActiveTab] = useState("All");
   const [hovRow, setHovRow] = useState<string | null>(null);
   const [searchQ, setSearchQ] = useState("");
+  const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string } | null>(null);
+  const [deleteError, setDeleteError] = useState("");
+  const [isDeleting, setIsDeleting] = useState(false);
   const tabs = ["All", "Approved", "Under review", "Drafts"];
+
+  useEffect(() => {
+    if (!pendingDelete) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setPendingDelete(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [pendingDelete]);
+
+  const confirmDeletePackage = async () => {
+    if (!pendingDelete) return;
+    setIsDeleting(true);
+    setDeleteError("");
+    try {
+      const { data } = await supabase.auth.getSession();
+      const accessToken = data.session?.access_token;
+      if (!accessToken) {
+        router.replace("/login");
+        return;
+      }
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      await deletePackage(fetch, apiUrl, accessToken, pendingDelete.id);
+      setPendingDelete(null);
+      await loadPackages();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to delete this package.";
+      setDeleteError(message);
+      if (message.includes("sign in again")) router.replace("/login");
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   const loadPackages = async () => {
     setIsLoading(true);
@@ -1162,7 +1199,7 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
   ];
 
   const cols = {
-    grid: "minmax(0,1.8fr) minmax(140px,1fr) 100px 120px 140px 150px",
+    grid: "minmax(0,1.8fr) minmax(140px,1fr) 100px 120px 140px 220px",
     headers: [
       { h: "Package",        align: "left"  },
       { h: "Destination",    align: "left"  },
@@ -1371,7 +1408,7 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
                 </div>
 
                 {/* Row action */}
-                <div style={{ textAlign: "right" }}>
+                <div style={{ textAlign: "right", display: "flex", justifyContent: "flex-end", gap: 8 }}>
                   <button style={{
                     fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 500,
                     color: C.ink, background: "none",
@@ -1384,6 +1421,20 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
                     onMouseEnter={(e) => { e.currentTarget.style.borderColor = "#9E9E9E"; }}
                     onMouseLeave={(e) => { e.currentTarget.style.borderColor = C.border; }}
                   >{pkg.rowAction}</button>
+                  {pkg.statusKey === "draft" && (
+                    <button style={{
+                      fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 500,
+                      color: C.red, background: "none",
+                      border: `1px solid ${C.border}`,
+                      borderRadius: 6, padding: "5px 14px", cursor: "pointer",
+                      whiteSpace: "nowrap",
+                      opacity: hov ? 1 : 0.75, transition: "opacity 140ms, border-color 140ms",
+                    }}
+                      onClick={() => { setDeleteError(""); setPendingDelete({ id: pkg.id, name: pkg.name }); }}
+                      onMouseEnter={(e) => { e.currentTarget.style.borderColor = C.red; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.borderColor = C.border; }}
+                    >Delete</button>
+                  )}
                 </div>
               </div>
             );
@@ -1391,6 +1442,29 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
         </div>
 
       </div>
+
+      {pendingDelete && (
+        <div className="delete-day-backdrop" role="presentation" onMouseDown={() => !isDeleting && setPendingDelete(null)}>
+          <section
+            className="delete-day-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-package-title"
+            aria-describedby="delete-package-description"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <h2 id="delete-package-title">Delete &ldquo;{pendingDelete.name}&rdquo;?</h2>
+            <p id="delete-package-description">This draft package will be permanently deleted. This cannot be undone.</p>
+            {deleteError && <p role="alert" style={{ color: "#B42318", margin: "0 0 12px", fontSize: 14 }}>{deleteError}</p>}
+            <div className="delete-day-actions">
+              <button className="quiet-button" autoFocus disabled={isDeleting} onClick={() => setPendingDelete(null)}>Cancel</button>
+              <button className="confirm-delete-button" disabled={isDeleting} onClick={() => void confirmDeletePackage()}>
+                {isDeleting ? "Deleting…" : "Delete package"}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }
