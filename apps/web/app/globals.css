@@ -405,7 +405,6 @@ button:focus-visible, textarea:focus-visible { outline: 3px solid var(--fc-focus
 .inline-edit-grid textarea { min-height: 88px; padding: 12px; resize: vertical; }.inline-edit-grid input[readonly] { background: var(--fc-surface-subtle); color: var(--fc-secondary); }
 .inline-edit-grid input:focus,.inline-edit-grid select:focus,.inline-edit-grid textarea:focus { border-color: var(--fc-blue); box-shadow: 0 0 0 3px var(--fc-focus-ring); }
 .edit-photo { margin-top: 18px; padding-top: 18px; display: grid; gap: 9px; border-top: 1px solid var(--fc-border); }
-.edit-photo > span small { margin-left: 4px; color: var(--fc-disabled); font-size: inherit; }
 .edit-photo > div { display: flex; flex-wrap: wrap; gap: 10px; }
 .edit-photo figure { width: 120px; height: 104px; margin: 0; position: relative; overflow: hidden; border-radius: 8px; }.edit-photo figure img { width: 100%; height: 100%; object-fit: cover; }.edit-photo figure b { position: absolute; top: 6px; left: 6px; display: inline-flex; align-items: center; gap: 3px; padding: 2px 6px; border-radius: 4px; background: #fff; color: var(--fc-warning); font-size: 10px; line-height: 14px; text-transform: uppercase; }
 .edit-photo figure b svg { fill: currentColor; }
@@ -430,14 +429,12 @@ figure .remove-photo-btn:focus-visible { outline: 2px solid var(--fc-focus-ring)
 .detail-card-heading h3 { margin: 0; overflow-wrap: anywhere; color: var(--fc-ink); font-size: 20px; line-height: 26px; font-weight: 700; }
 .detail-card-subtitle { margin: 0; display: inline-flex; align-items: center; gap: 4px; color: var(--fc-secondary); font-size: 14px; line-height: 20px; }
 .detail-card-subtitle svg { flex: 0 0 auto; }
-.activity-timeline { margin-top: 24px; padding: 20px 24px; display: flex; align-items: center; gap: 20px; border-radius: 10px; background: var(--fc-surface-subtle); }
-.activity-timeline-point { flex: 0 0 auto; display: grid; gap: 4px; justify-items: start; }
-.activity-timeline-point.end { justify-items: end; }
-.activity-timeline-point small { color: var(--fc-secondary); font-size: 13px; line-height: 17px; }
-.activity-timeline-value { display: inline-flex; align-items: center; gap: 8px; color: var(--fc-secondary); }
-.activity-timeline-value strong { color: var(--fc-ink); font-size: 17px; line-height: 22px; font-weight: 600; }
-.activity-timeline-track { flex: 1; min-width: 32px; position: relative; height: 1px; background: var(--fc-border); display: flex; align-items: center; justify-content: center; }
-.activity-timeline-duration { padding: 0 10px; background: var(--fc-surface-subtle); color: var(--fc-secondary); font-size: 12px; font-weight: 600; white-space: nowrap; }
+.activity-card-stats { margin-top: 24px; padding: 20px 24px; display: grid; grid-template-columns: repeat(3, 1fr); border-radius: 10px; background: var(--fc-surface-subtle); }
+.activity-card-stat { display: grid; gap: 6px; padding: 0 16px; }
+.activity-card-stat:not(:first-child) { border-left: 1px solid var(--fc-border); }
+.activity-card-stat small { color: var(--fc-secondary); font-size: 13px; line-height: 17px; }
+.activity-card-stat-value { display: inline-flex; align-items: center; gap: 8px; color: var(--fc-secondary); }
+.activity-card-stat-value strong { color: var(--fc-ink); font-size: 17px; line-height: 22px; font-weight: 600; }
 .activity-card-time-field { position: relative; display: inline-flex; }
 .activity-card-time-field::after { content: ""; position: absolute; right: 15px; top: 50%; width: 7px; height: 7px; margin-top: -6px; border-right: 2px solid var(--fc-secondary); border-bottom: 2px solid var(--fc-secondary); transform: rotate(45deg); pointer-events: none; }
 .activity-card-time-input { position: relative; width: 118px; min-height: 36px; padding: 4px 30px 4px 10px; border: 1px solid var(--fc-border); border-radius: 8px; background: #fff; color: var(--fc-ink); font: inherit; font-size: 16px; font-weight: 600; line-height: 22px; }
@@ -446,14 +443,12 @@ figure .remove-photo-btn:focus-visible { outline: 2px solid var(--fc-focus-ring)
 .activity-card-notes { margin-top: 24px; display: grid; gap: 8px; }
 .activity-card-notes > span { color: var(--fc-ink); font-size: 15px; line-height: 20px; font-weight: 600; }
 .activity-card-notes-field { position: relative; }
-.activity-card-notes-field textarea { width: 100%; min-height: 48px; padding: 8px 12px 16px; border: 1px solid var(--fc-border); border-radius: 8px; background: #fff; color: var(--fc-ink); font-size: 14px; line-height: 21px; outline: 0; resize: vertical; }
+.activity-card-notes-field textarea { width: 100%; min-height: 48px; padding: 14px 16px 32px; border: 1px solid var(--fc-border); border-radius: 8px; background: #fff; color: var(--fc-ink); font-size: 14px; line-height: 21px; outline: 0; resize: none; overflow: hidden; }
 .activity-card-notes-field textarea:focus { border-color: var(--fc-blue); box-shadow: 0 0 0 3px var(--fc-focus-ring); }
-.activity-card-notes-field small { position: absolute; right: 12px; bottom: 8px; color: var(--fc-disabled); font-size: 11px; line-height: 14px; pointer-events: none; }
-.edit-photo-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
-.edit-photo-title-block { display: grid; gap: 2px; }
-.edit-photo-title-block span { color: var(--fc-ink); font-size: 15px; font-weight: 700; text-transform: none; letter-spacing: normal; }
-.edit-photo-title-block small { color: var(--fc-secondary); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
-.edit-photo-count { flex: 0 0 auto; color: var(--fc-secondary); font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.activity-card-notes-field small { position: absolute; right: 14px; bottom: 12px; color: var(--fc-disabled); font-size: 11px; line-height: 14px; pointer-events: none; }
+.edit-photo-head { display: flex; align-items: baseline; gap: 6px; }
+.edit-photo-head span { color: var(--fc-ink); font-size: 15px; font-weight: 700; }
+.edit-photo-head small { color: var(--fc-secondary); font-size: 13px; font-variant-numeric: tabular-nums; }
 .inline-edit-compact .edit-photo { margin-top: 24px; padding-top: 0; border-top: 0; }
 .inline-edit-compact .edit-photo figure,
 .inline-edit-compact .edit-photo label { width: 104px; height: 104px; }
@@ -729,10 +724,8 @@ figure .remove-photo-btn:focus-visible { outline: 2px solid var(--fc-focus-ring)
   .stat-grid { grid-template-columns: 1fr 1fr; }
   .hotel-confirm-top { flex-wrap: wrap; }
   .detail-card-top { flex-wrap: wrap; }
-  .activity-timeline { flex-direction: column; align-items: stretch; gap: 12px; }
-  .activity-timeline-point.end { justify-items: start; }
-  .activity-timeline-track { width: 1px; height: 24px; margin-left: 7px; }
-  .activity-timeline-duration { padding: 4px 0; }
+  .activity-card-stats { grid-template-columns: 1fr; gap: 12px; }
+  .activity-card-stat:not(:first-child) { border-left: 0; padding-left: 0; border-top: 1px solid var(--fc-border); padding-top: 12px; }
   .inline-add { padding: 16px; }.item-type-grid,.activity-results,.activity-form,.hotel-choice-grid,.room-choice-grid { grid-template-columns: 1fr; }.item-type-grid > button { min-height: 96px; }.activity-form label.full { grid-column: auto; }
   .flight-results > button { grid-template-columns: 1fr auto; gap: 10px 14px; }
   .flight-brand { grid-column: 1; }.flight-fare { grid-column: 2; grid-row: 1; }.flight-route { grid-column: 1; }.flight-duration { display: none; }.flight-select { grid-column: 2; grid-row: 2; }

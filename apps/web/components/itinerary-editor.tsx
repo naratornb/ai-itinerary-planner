@@ -76,6 +76,7 @@ function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
     clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
     chevron: <path d="m9 5 7 7-7 7" />,
     pin: <><path d="M12 21s7-6.1 7-11.5A7 7 0 0 0 5 9.5C5 14.9 12 21 12 21Z" /><circle cx="12" cy="9.5" r="2.3" /></>,
+    hourglass: <><path d="M5 22h14" /><path d="M5 2h14" /><path d="M17 22v-4.17a2 2 0 0 0-.59-1.42L12 12l-4.41 4.41A2 2 0 0 0 7 17.83V22" /><path d="M7 2v4.17a2 2 0 0 0 .59 1.42L12 12l4.41-4.41A2 2 0 0 0 17 6.17V2" /></>,
   };
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
 }
@@ -1427,19 +1428,22 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
                           <p className="detail-card-subtitle"><Icon name="pin" size={14} />{editingItem.address || "Address not provided"}</p>
                         </div>
                       </div>
-                      <div className="activity-timeline">
-                        <div className="activity-timeline-point">
+                      <div className="activity-card-stats">
+                        <div className="activity-card-stat">
                           <small>Start time</small>
-                          <span className="activity-timeline-value"><Icon name="clock" size={15} /><div className="activity-card-time-field"><input type="time" className="activity-card-time-input" aria-label="Start time" value={editingItem.time} onChange={(event) => setEditingItem({ ...editingItem, time: event.target.value })} onClick={(event) => { try { event.currentTarget.showPicker(); } catch { /* unsupported browser: native click behavior still works */ } }} /></div></span>
+                          <span className="activity-card-stat-value"><Icon name="clock" size={16} /><div className="activity-card-time-field"><input type="time" className="activity-card-time-input" aria-label="Start time" value={editingItem.time} onChange={(event) => setEditingItem({ ...editingItem, time: event.target.value })} onClick={(event) => { try { event.currentTarget.showPicker(); } catch { /* unsupported browser: native click behavior still works */ } }} /></div></span>
                         </div>
-                        <div className="activity-timeline-track"><span className="activity-timeline-duration" title={`${editingItem.duration} min`}>Duration &middot; {formatDuration(editingItem.duration)}</span></div>
-                        <div className="activity-timeline-point end">
+                        <div className="activity-card-stat">
+                          <small>Duration</small>
+                          <span className="activity-card-stat-value"><Icon name="hourglass" size={16} /><strong title={`${editingItem.duration} min`}>{formatDuration(editingItem.duration)}</strong></span>
+                        </div>
+                        <div className="activity-card-stat">
                           <small>End time</small>
-                          <span className="activity-timeline-value"><Icon name="clock" size={15} /><strong>{getEndTime(editingItem.time, editingItem.duration)}</strong></span>
+                          <span className="activity-card-stat-value"><Icon name="clock" size={16} /><strong>{getEndTime(editingItem.time, editingItem.duration)}</strong></span>
                         </div>
                       </div>
                     </div>
-                    <label className="activity-card-notes"><span>Notes</span><div className="activity-card-notes-field"><textarea value={editingItem.notes} maxLength={500} onChange={(event) => setEditingItem({ ...editingItem, notes: event.target.value })} placeholder="Share why this is worth a stop" /><small>{editingItem.notes.length} / 500</small></div></label>
+                    <label className="activity-card-notes"><span>Notes</span><div className="activity-card-notes-field"><textarea ref={(el) => { if (el) { el.style.height = "auto"; el.style.height = `${el.scrollHeight}px`; } }} value={editingItem.notes} maxLength={500} onChange={(event) => { event.currentTarget.style.height = "auto"; event.currentTarget.style.height = `${event.currentTarget.scrollHeight}px`; setEditingItem({ ...editingItem, notes: event.target.value }); }} placeholder="Share why this is worth a stop" /><small>{editingItem.notes.length} / 500</small></div></label>
                   </> : <>
                     <div className="edit-categories"><span>Category</span><div>{ACTIVITY_CATEGORIES.map((category) => <button key={category} className={editingItem.category === category ? "selected" : ""} onClick={() => setEditingItem({ ...editingItem, category })}>{category}</button>)}</div></div>
                     <div className="inline-edit-grid activity-details-grid">
@@ -1455,10 +1459,7 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
                   {/* ponytail: per-activity photos stay local blob URLs — the media API
                       attaches files to a package, not to a timeline item. */}
                   <div className="edit-photo">
-                    <div className="edit-photo-head">
-                      <div className="edit-photo-title-block"><span>Photos</span><small>Optional</small></div>
-                      <span className="edit-photo-count">{editingItem.photos.length} / {MAX_ITEM_PHOTOS}</span>
-                    </div>
+                    <div className="edit-photo-head"><span>Photos</span><small>Optional &middot; {editingItem.photos.length} / {MAX_ITEM_PHOTOS}</small></div>
                     <div>
                       {editingItem.photos.map((photo, index) => <figure key={photo}>
                         <img src={photo} alt={index === 0 ? "Activity cover" : "Activity photo"} />
