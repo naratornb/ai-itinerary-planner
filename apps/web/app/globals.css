@@ -624,8 +624,11 @@ figure .remove-photo-btn:focus-visible { outline: 2px solid var(--fc-focus-ring)
 .copilot-form .copilot-composer button:hover { background: #005dc7; border-color: #005dc7; }
 .copilot-form .copilot-composer button:disabled { border-color: var(--fc-disabled); background: var(--fc-disabled); cursor: not-allowed; }
 .quality-panel { padding: 20px; }
-.editor-load-state { min-height: 60vh; padding: 64px 24px; display: grid; place-content: center; gap: 8px; text-align: center; }
+.editor-load-state { min-height: 60vh; padding: 64px 24px; display: grid; justify-items: center; gap: 16px; text-align: center; }
 .editor-load-state h1,.editor-load-state p { margin: 0; }
+.editor-load-spinner { width: 32px; height: 32px; border: 3px solid var(--fc-border); border-top-color: var(--fc-blue); border-radius: 50%; animation: editor-load-spin 800ms linear infinite; }
+@keyframes editor-load-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .editor-load-spinner { animation: none; } }
 .quality-panel > h2 { padding: 0 0 20px; border: 0; }
 .quality-score { display: flex; align-items: baseline; gap: 5px; }
 .quality-score strong { color: var(--fc-success); font-size: 32px; line-height: 1; font-variant-numeric: tabular-nums; }
