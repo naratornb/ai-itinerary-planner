@@ -164,6 +164,21 @@ BEGIN
     v_days := '[]'::jsonb;
   END IF;
 
+  -- A NULL duration_days (legacy rows predating the column, or a direct
+  -- RPC create with none supplied) makes every `> v_duration_days` bound
+  -- check below evaluate to NULL, so relative day placements would silently
+  -- pass validation instead of being rejected. Only block the save when a
+  -- relative placement is actually present; metadata-only saves on a
+  -- NULL-duration row must keep working.
+  IF v_duration_days IS NULL AND (
+    EXISTS (SELECT 1 FROM jsonb_array_elements(v_flights) e WHERE e->>'day_number' IS NOT NULL)
+    OR EXISTS (SELECT 1 FROM jsonb_array_elements(v_activities) e WHERE e->>'day_number' IS NOT NULL)
+    OR EXISTS (SELECT 1 FROM jsonb_array_elements(v_hotels) e
+      WHERE e->>'check_in_day' IS NOT NULL OR e->>'check_out_day' IS NOT NULL)
+  ) THEN
+    v_failures := v_failures || 'duration_days must be set before saving relative day placements';
+  END IF;
+
   IF EXISTS (
     SELECT 1 FROM jsonb_array_elements(v_flights) e
     WHERE e->>'day_number' IS NOT NULL
@@ -231,13 +246,13 @@ BEGIN
       FROM jsonb_array_elements(v_days) elem
       UNION ALL
       SELECT jsonb_array_elements_text(COALESCE(elem->'media_ids', '[]'::jsonb))
-      FROM jsonb_array_elements(COALESCE(p_payload->'flights', '[]'::jsonb)) elem
+      FROM jsonb_array_elements(v_flights) elem
       UNION ALL
       SELECT jsonb_array_elements_text(COALESCE(elem->'media_ids', '[]'::jsonb))
-      FROM jsonb_array_elements(COALESCE(p_payload->'hotels', '[]'::jsonb)) elem
+      FROM jsonb_array_elements(v_hotels) elem
       UNION ALL
       SELECT jsonb_array_elements_text(COALESCE(elem->'media_ids', '[]'::jsonb))
-      FROM jsonb_array_elements(COALESCE(p_payload->'activities', '[]'::jsonb)) elem
+      FROM jsonb_array_elements(v_activities) elem
     ) refs
   ) INTO v_media_ids;
 
@@ -249,8 +264,9 @@ BEGIN
         WHERE pm.media_id = mid AND pm.package_id = v_package_id
       )
     ) THEN
-      v_failures := v_failures ||
-        'media_ids must reference photos already uploaded to this package';
+      v_failures := v_failures || (CASE WHEN p_package_id IS NULL
+        THEN 'media_ids cannot be set on create — upload media after the package exists'
+        ELSE 'media_ids must reference photos already uploaded to this package' END);
     END IF;
   END IF;
 
@@ -276,10 +292,10 @@ BEGIN
       p_payload->>'destination_country', p_payload->>'destination_city',
       v_duration_days, (p_payload->>'base_price_aud')::BIGINT,
       (p_payload->>'max_group_size')::INTEGER,
-      COALESCE(
+      CASE WHEN jsonb_typeof(p_payload->'tags') = 'array' THEN COALESCE(
         (SELECT array_agg(x) FROM jsonb_array_elements_text(p_payload->'tags') x),
         '{}'::text[]
-      ),
+      ) ELSE '{}'::text[] END,
       'draft', now(), now()
     ) RETURNING package_id INTO v_package_id;
   ELSE
@@ -297,7 +313,7 @@ BEGIN
         THEN (p_payload->>'base_price_aud')::BIGINT ELSE base_price_aud END,
       max_group_size = CASE WHEN p_payload ? 'max_group_size'
         THEN (p_payload->>'max_group_size')::INTEGER ELSE max_group_size END,
-      tags = CASE WHEN p_payload ? 'tags' THEN COALESCE(
+      tags = CASE WHEN jsonb_typeof(p_payload->'tags') = 'array' THEN COALESCE(
         (SELECT array_agg(x) FROM jsonb_array_elements_text(p_payload->'tags') x),
         '{}'::text[]
       ) ELSE tags END,

@@ -436,6 +436,98 @@ ROLLBACK TO before_not_editable_delete;
 SELECT count(*) FROM public.package_media WHERE media_id = 'dddddddd-0000-0000-0000-00000000000b';
 -- Expect 1 — delete was rejected, not merely rolled back after succeeding.
 
+-- ─────────────────────────────────────────────
+-- Test 11 (Fix A): {"tags": null} is a JSONB null, not a missing key —
+-- must be gracefully ignored (ELSE arm), not crash trying to
+-- jsonb_array_elements_text a scalar.
+-- ─────────────────────────────────────────────
+SELECT public.save_package_details(
+  '11111111-1111-1111-1111-111111111111'::uuid,
+  'aaaaaaaa-0000-0000-0000-000000000001'::uuid,
+  jsonb_build_object('tags', 'null'::jsonb)
+);
+-- Expect {"outcome": "ok", ...} — no crash; tags left unchanged.
+
+-- ─────────────────────────────────────────────
+-- Test 12 (Fix D): {"flights": null} must not error when extracting
+-- media_ids from the (now v_flights-derived) flights collection — the
+-- stored fallback rows are used instead of the raw JSON null.
+-- ─────────────────────────────────────────────
+SELECT public.save_package_details(
+  '11111111-1111-1111-1111-111111111111'::uuid,
+  'aaaaaaaa-0000-0000-0000-000000000001'::uuid,
+  jsonb_build_object('flights', 'null'::jsonb)
+);
+-- Expect {"outcome": "ok", ...} — no crash; flights left unchanged.
+
+-- ─────────────────────────────────────────────
+-- Fixture for Tests 13-14 (Fix B): a legacy package with NULL
+-- duration_days, predating the column being backfilled.
+-- ─────────────────────────────────────────────
+INSERT INTO public.travel_packages
+  (package_id, creator_id, title, description, destination_country, destination_city,
+   duration_days, base_price_aud, status)
+VALUES
+  ('cccccccc-1111-0000-0000-000000000003', '11111111-1111-1111-1111-111111111111',
+   'Legacy Package', 'desc', 'Japan', 'Tokyo', NULL, 1000, 'draft');
+
+-- ─────────────────────────────────────────────
+-- Test 13 (Fix B): a NULL duration_days package with an out-of-range
+-- day_number must be rejected, not silently accepted (NULL comparisons
+-- in the bound checks would otherwise let any day_number through).
+-- ─────────────────────────────────────────────
+SELECT public.save_package_details(
+  '11111111-1111-1111-1111-111111111111'::uuid,
+  'cccccccc-1111-0000-0000-000000000003'::uuid,
+  jsonb_build_object('activities', jsonb_build_array(jsonb_build_object(
+    'activity_name', 'Should be rejected', 'city', 'Tokyo', 'day_number', 9999
+  )))
+);
+-- Expect {"outcome": "precondition_failed", "details": {"failures":
+--   ["duration_days must be set before saving relative day placements"]}}.
+SELECT count(*) FROM public.package_activities
+  WHERE package_id = 'cccccccc-1111-0000-0000-000000000003';
+-- Expect 0 — rejected, never written.
+
+-- ─────────────────────────────────────────────
+-- Test 14 (Fix B): the same NULL duration_days package must still be able
+-- to save metadata only, with no relative placement supplied — the guard
+-- must not block saves it has no business blocking.
+-- ─────────────────────────────────────────────
+SELECT public.save_package_details(
+  '11111111-1111-1111-1111-111111111111'::uuid,
+  'cccccccc-1111-0000-0000-000000000003'::uuid,
+  jsonb_build_object('title', 'Legacy Package Updated')
+);
+-- Expect {"outcome": "ok", ...}.
+SELECT title, duration_days FROM public.travel_packages
+  WHERE package_id = 'cccccccc-1111-0000-0000-000000000003';
+-- Expect ('Legacy Package Updated', NULL).
+
+-- ─────────────────────────────────────────────
+-- Test 15 (Fix E3): create with media_ids gets the distinct create-time
+-- failure message, not the "already uploaded to this package" message
+-- (which implies a package that already exists).
+-- ─────────────────────────────────────────────
+SELECT public.save_package_details(
+  '11111111-1111-1111-1111-111111111111'::uuid,
+  NULL,
+  jsonb_build_object(
+    'title', 'Should never be created', 'description', 'x',
+    'destination_country', 'Japan', 'destination_city', 'Tokyo',
+    'duration_days', 3, 'base_price_aud', 1000, 'tags', jsonb_build_array(),
+    'flights', jsonb_build_array(), 'hotels', jsonb_build_array(),
+    'activities', jsonb_build_array(),
+    'days', jsonb_build_array(jsonb_build_object(
+      'day_number', 1, 'media_ids', jsonb_build_array('cccccccc-0000-0000-0000-00000000000a')
+    ))
+  )
+);
+-- Expect {"outcome": "precondition_failed", "details": {"failures":
+--   ["media_ids cannot be set on create — upload media after the package exists"]}}.
+SELECT count(*) FROM public.travel_packages WHERE title = 'Should never be created';
+-- Expect 0 — no orphan draft package.
+
 ROLLBACK;
 
 -- ============================================================

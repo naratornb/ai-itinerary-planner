@@ -1949,6 +1949,10 @@ paths:
         The package is not visible in the marketplace until it has been submitted,
         approved, and published.
 
+        Any `media_ids` supplied on flights, hotels, activities, or days are
+        rejected: a new package cannot yet own uploaded media, so it has none to
+        reference. Upload media and attach it via a subsequent `PUT` instead.
+
         **Roles:** `influencer`
         **FR:** FR-I-100, FR-I-101
       operationId: createPackage
@@ -2218,8 +2222,9 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
               example:
                 error_code: "SUBMISSION_PRECONDITION_FAILED"
-                message: "Package cannot be submitted: at least one hotel must be included."
+                message: "Package must have at least one hotel."
                 details:
+                  failures: ["Package must have at least one hotel."]
                   missing: ["hotel"]
 
   # ══════════════════════════════════════════

@@ -743,6 +743,12 @@ def test_put_explicit_null_collection_rejected(fake):
     assert resp.json()["error_code"] == "VALIDATION_ERROR"
 
 
+def test_put_explicit_null_tags_rejected(fake):
+    resp = client.put(f"/packages/{PKG}", json={"tags": None})
+    assert resp.status_code == 422
+    assert resp.json()["error_code"] == "VALIDATION_ERROR"
+
+
 def test_put_not_editable_and_missing(fake):
     fake.route(
         "POST",

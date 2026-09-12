@@ -42,7 +42,10 @@ losing travel details, and submit exactly that saved itinerary for review.
 ## Endpoints and review flow
 
 1. Create a draft with `POST /packages` if there is no package ID yet. It
-   accepts the same detailed component fields as `PUT` (see below).
+   accepts the same detailed component fields as `PUT` (see below), except
+   `media_ids`: a brand-new package cannot yet own any uploaded media, so
+   supplying `media_ids` on create is rejected. Upload media and attach it
+   with a follow-up `PUT` instead.
 2. Upload files with `POST /media/upload` and retain the returned `media_id`.
    Wait for uploads to succeed before saving references to them.
 3. Save edits using `PUT /packages/{package_id}`. Wait for a successful

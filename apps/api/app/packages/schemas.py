@@ -147,7 +147,7 @@ class TravelPackageUpdate(BaseModel):
     """Partial metadata update; flights/hotels/activities replace the
     package's stored collection when supplied. Per section 1 of the plan:
     omission means unchanged, [] clears, explicit null is rejected (422) for
-    flights/hotels/activities. `days: null` stays "no change" for backward
+    tags/flights/hotels/activities. `days: null` stays "no change" for backward
     compatibility; `days: []` clears day narratives.
     """
 
@@ -168,7 +168,7 @@ class TravelPackageUpdate(BaseModel):
     @classmethod
     def _reject_explicit_null_collections(cls, data: Any) -> Any:
         if isinstance(data, dict):
-            for field in ("flights", "hotels", "activities"):
+            for field in ("tags", "flights", "hotels", "activities"):
                 if field in data and data[field] is None:
                     raise ValueError(
                         f"{field} cannot be null; omit to leave unchanged or "
