@@ -850,8 +850,11 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
         source_id: item.sourceId || null,
       }));
 
+    // A creator pick is a manually-authored recommendation, not a catalog
+    // activity, but the backend has one array for both (per the handover
+    // doc's field mapping) — there's no separate "creator pick" concept.
     const activities: ActivityInput[] = flat
-      .filter(({ item }) => item.type === "ACTIVITY")
+      .filter(({ item }) => item.type === "ACTIVITY" || item.type === "CREATOR PICK")
       .map(({ item, day, dayIndex, itemIndex }) => ({
         activity_name: item.title,
         activity_date: item.activityDate || day.date || new Date().toISOString().slice(0, 10),
@@ -1136,6 +1139,9 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
       price: activityDraft.price.trim() ? `$${activityDraft.price.trim()}` : "$0",
       icon: "star",
       status: "pass",
+      address: activityDraft.address.trim() || undefined,
+      duration: activityDraft.duration,
+      notes: activityDraft.notes.trim() || undefined,
     });
     setActivityDraft({ title: "", price: "", address: "", startTime: "12:00", duration: "30", notes: "" });
   };
@@ -1243,6 +1249,10 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
       price: creatorDraft.price.trim() ? `$${creatorDraft.price.trim()}` : "$0",
       icon: "star",
       status: "pass",
+      category: creatorDraft.category,
+      address: creatorDraft.address.trim() || undefined,
+      duration: creatorDraft.duration,
+      notes: creatorDraft.reason.trim() || undefined,
     });
     setCreatorDraft({ title: "", category: "Activity", address: "", time: "12:00", duration: "60", price: "", reason: "" });
   };
