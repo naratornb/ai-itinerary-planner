@@ -1952,13 +1952,18 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
     setStep(requestedStep);
   }, [requestedStep, stepRequestId]);
 
+  // Crawls toward — but never reaches — 92%, so the bar keeps moving for as
+  // long as the real build actually takes instead of finishing on a fixed
+  // fake schedule and then sitting frozen at 100% while the request is
+  // still in flight. The jump to 100% happens only once the package is
+  // actually created, in the effect below.
   useEffect(() => {
     if (!isLoading) return;
     setProgress(0);
     const interval = setInterval(() => {
       setProgress((p) => {
-        if (p >= 100) { clearInterval(interval); return 100; }
-        return p + (p < 60 ? 1.2 : p < 85 ? 0.6 : 0.3);
+        if (p >= 92) return p;
+        return Math.min(92, p + (p < 60 ? 1.2 : p < 85 ? 0.6 : 0.3));
       });
     }, 60);
     return () => clearInterval(interval);
@@ -2009,7 +2014,10 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
         // Set even after cleanup: the package now exists server-side, and the
         // reuse guard in continueWizard needs the id to avoid creating a twin.
         // Skipped only when a newer build for a different setup superseded this one.
-        if (inFlightSetupRef.current === runSetup) setCreatedPackageId(package_id);
+        if (inFlightSetupRef.current === runSetup) {
+          setCreatedPackageId(package_id);
+          setProgress(100); // real completion, not the crawl-to-92 fake schedule
+        }
       } catch (error) {
         if (inFlightSetupRef.current === runSetup) inFlightSetupRef.current = null;
         if (cancelled) return;
