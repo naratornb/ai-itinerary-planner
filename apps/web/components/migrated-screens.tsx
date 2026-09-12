@@ -2011,18 +2011,17 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
     return () => { cancelled = true; };
   }, []);
 
-  // Crawls toward — but never reaches — 92%, so the bar keeps moving for as
-  // long as the real build actually takes instead of finishing on a fixed
-  // fake schedule and then sitting frozen at 100% while the request is
-  // still in flight. The jump to 100% happens only once the package is
-  // actually created, in the effect below.
+  // Climbs to 92% on a fixed schedule, then keeps creeping toward — but
+  // never reaching — 99% for as long as the build actually takes, so a
+  // slow request never sits dead-flat at one number. The jump to 100% only
+  // happens once the package is actually created, in the effect below.
   useEffect(() => {
     if (!isLoading) return;
     setProgress(0);
     const interval = setInterval(() => {
       setProgress((p) => {
-        if (p >= 92) return p;
-        return Math.min(92, p + (p < 60 ? 1.2 : p < 85 ? 0.6 : 0.3));
+        if (p < 92) return Math.min(92, p + (p < 60 ? 1.2 : p < 85 ? 0.6 : 0.3));
+        return p + (99 - p) * 0.0015;
       });
     }, 60);
     return () => clearInterval(interval);
