@@ -59,7 +59,9 @@ export default function RouteMap({ stops }: { stops: RouteStop[] }) {
   return (
     <div className="route-map-live">
       <MapContainer center={center} zoom={12} scrollWheelZoom={false}>
-        <TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>' url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png" />
+        {/* CARTO's basemap tiles now 403 without an API key we don't have —
+            plain OSM tiles need none. */}
+        <TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
         {coordinates.length > 1 && <Polyline positions={coordinates} pathOptions={{ color: "#212121", weight: 3, opacity: 0.8, dashArray: "7 7" }} />}
         {stops.map((stop, index) => (
           <Marker key={index} position={stop.coordinate} icon={numberIcon(index + 1, index)}>

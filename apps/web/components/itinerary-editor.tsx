@@ -1,9 +1,8 @@
 "use client";
 
-import Image from "next/image";
 import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import CopilotPanel from "./copilot/copilot-panel";
-import { formatHotelStarRating, HOTEL_OPTIONS, type HotelOption, type HotelRoomOption } from "./hotel-catalog";
+import { formatHotelStarRating } from "./hotel-catalog";
 import RouteMap, { type RouteStop } from "./route-map";
 import { createCopilotClient } from "../lib/copilot-client";
 import {
@@ -12,6 +11,7 @@ import {
   computePackagePrice,
   copilotSuggestionToTimelineItem,
   daySubtitle,
+  extractClockTimeInZone,
   getEndTime,
   insertItemInDay,
   removeDay,
@@ -27,6 +27,7 @@ import {
   listPackageMedia,
   updatePackage,
   uploadPackageMedia,
+  type CreatorFlightDetail,
   type CreatorHotelDetail,
   type CreatorPackageDetail,
 } from "../lib/creator-api";
@@ -49,14 +50,9 @@ function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
 }
 
-const AVAILABLE_FLIGHTS = [
-  { id: "qf25", airline: "Qantas", number: "QF25", from: "Sydney (SYD)", to: "Tokyo Haneda (HND)", departure: "20:55", arrival: "05:55", duration: "10h", price: 850 },
-  { id: "jl52", airline: "Japan Airlines", number: "JL52", from: "Sydney (SYD)", to: "Tokyo Haneda (HND)", departure: "08:15", arrival: "17:05", duration: "9h 50m", price: 920 },
-  { id: "qf79", airline: "Qantas", number: "QF79", from: "Melbourne (MEL)", to: "Tokyo Narita (NRT)", departure: "09:25", arrival: "18:45", duration: "10h 20m", price: 780 },
-];
-
 const ACTIVITY_CATEGORIES = ["Activity", "Restaurant", "Shopping", "Attraction", "Other"];
 const DURATION_OPTIONS = ["30", "60", "90", "120", "180"];
+
 const NEW_DAY_OPTION_ID = "__new-day__";
 
 type AddFlowStep = "type" | "activities" | "create" | "flight" | "hotel" | "creator";
@@ -122,29 +118,11 @@ function withWrapBeforeSlash(text: string) {
   return <>{text.slice(0, index)}<wbr /><span className="item-price-unit">{text.slice(index)}</span></>;
 }
 
-function formatStayDate(value: string | null) {
-  if (!value) return "Not provided";
-  const date = new Date(`${value}T00:00:00Z`);
-  if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat("en-AU", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }).format(date);
-}
-
-// Departure renders in the origin airport's zone, arrival in the
-// destination's — the traveler's actual local clock at each end, not the
-// viewer's own timezone.
-function formatFlightDateTime(value: string | null, timeZone: string) {
-  if (!value) return "Not provided";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat("en-AU", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    timeZone,
-  }).format(date);
-}
+// Placeholder until hotels carry a real check-in/check-out time — the
+// inventory only has dates, never a time of day. Industry-standard hours,
+// not a per-hotel fact; swap for real data once the backend has it.
+const STANDARD_HOTEL_CHECKIN_TIME = "15:00";
+const STANDARD_HOTEL_CHECKOUT_TIME = "11:00";
 
 const TOKYO_LANDMARKS: { keywords: string[]; coordinate: [number, number] }[] = [
   { keywords: ["narita", "nrt"], coordinate: [35.7719, 140.3929] },
@@ -164,15 +142,26 @@ const TOKYO_LANDMARKS: { keywords: string[]; coordinate: [number, number] }[] = 
   { keywords: ["harajuku"], coordinate: [35.6702, 139.7026] },
   { keywords: ["tokyo"], coordinate: [35.6812, 139.7671] },
 ];
-const TOKYO_STATION: [number, number] = [35.6812, 139.7671];
+// Landmark-level precision only exists for Tokyo; anywhere else, stops
+// scatter around the day's actual city center instead of always Tokyo
+// Station, which put every non-Tokyo trip's map in the wrong country.
+const CITY_CENTERS: Record<string, [number, number]> = {
+  Tokyo: [35.6812, 139.7671],
+  Paris: [48.8566, 2.3522],
+  Sydney: [-33.8688, 151.2093],
+  Bali: [-8.6705, 115.2126],
+};
 
-function resolveStopCoordinate(hint: string, fallbackIndex: number): [number, number] {
+function resolveStopCoordinate(hint: string, fallbackIndex: number, city: string | null): [number, number] {
   const lower = hint.toLowerCase();
-  const match = TOKYO_LANDMARKS.find(({ keywords }) => keywords.some((keyword) => lower.includes(keyword)));
-  if (match) return match.coordinate;
+  if (city === null || city === "Tokyo") {
+    const match = TOKYO_LANDMARKS.find(({ keywords }) => keywords.some((keyword) => lower.includes(keyword)));
+    if (match) return match.coordinate;
+  }
+  const center = (city && CITY_CENTERS[city]) || CITY_CENTERS.Tokyo;
   const angle = (fallbackIndex * 47 * Math.PI) / 180;
   const radius = 0.012;
-  return [TOKYO_STATION[0] + radius * Math.cos(angle), TOKYO_STATION[1] + radius * Math.sin(angle)];
+  return [center[0] + radius * Math.cos(angle), center[1] + radius * Math.sin(angle)];
 }
 
 function Panel({ title, children, className = "" }: { title: string; children: React.ReactNode; className?: string }) {
@@ -183,6 +172,18 @@ function StatusToggle({ tone, count, label, expanded, onClick }: { tone: "critic
   return <button className="status-toggle" aria-expanded={expanded} onClick={onClick}><span className={`${tone}-icon`}><Icon name={tone === "pass" ? "check" : "alert"} size={16} /></span><strong>{count}</strong><span>{label}</span><span className="status-chevron"><Icon name="chevron" size={17} /></span></button>;
 }
 
+// Hover (desktop) or tab-focus (keyboard/touch) reveals rating and
+// suitable-for — the two catalog fields that don't fit on the card face —
+// without an extra click. The "+" stays a separate button, so a tap that
+// only opens the popover never also adds the stop.
+function ActivityDetailPopover({ activity }: { activity: { title: string; rating: number | null; suitableFor: string | null } }) {
+  if (activity.rating == null && !activity.suitableFor) return null;
+  return <div className="activity-detail-popover">
+    {activity.rating != null && <span className="activity-detail-rating"><Icon name="star" size={12} />{activity.rating.toFixed(1)}</span>}
+    {activity.suitableFor && <span>Good for {activity.suitableFor}</span>}
+  </div>;
+}
+
 type AddStopFlowProps = {
   addingAfter: number | null;
   setAddingAfter: Dispatch<SetStateAction<number | null>>;
@@ -190,16 +191,14 @@ type AddStopFlowProps = {
   setAddFlow: Dispatch<SetStateAction<AddFlowStep>>;
   flightSearch: string;
   setFlightSearch: Dispatch<SetStateAction<string>>;
-  matchingFlights: (typeof AVAILABLE_FLIGHTS)[number][];
-  selectedFlightId: string | null;
-  setSelectedFlightId: Dispatch<SetStateAction<string | null>>;
+  matchingFlights: CreatorFlightDetail[];
+  selectedFlightIndex: number | null;
+  setSelectedFlightIndex: Dispatch<SetStateAction<number | null>>;
   addSelectedFlight: () => void;
-  selectedHotelOptionId: string | null;
-  setSelectedHotelOptionId: Dispatch<SetStateAction<string | null>>;
-  selectedRoomOptionId: string | null;
-  setSelectedRoomOptionId: Dispatch<SetStateAction<string | null>>;
-  selectedHotelOption: HotelOption | undefined;
-  selectedRoomOption: HotelRoomOption | undefined;
+  availableHotels: CreatorHotelDetail[];
+  selectedHotelIndex: number | null;
+  setSelectedHotelIndex: Dispatch<SetStateAction<number | null>>;
+  selectedHotelOption: CreatorHotelDetail | undefined;
   hotelCheckInDayId: string | null;
   setHotelCheckInDayId: Dispatch<SetStateAction<string | null>>;
   setHotelCheckOutDayId: Dispatch<SetStateAction<string | null>>;
@@ -214,12 +213,15 @@ type AddStopFlowProps = {
   createCreatorPick: () => void;
   activitySearch: string;
   setActivitySearch: Dispatch<SetStateAction<string>>;
-  recommendedActivities: { title: string; meta: string; price: string }[];
+  recommendedActivities: { title: string; meta: string; price: string; rating: number | null; suitableFor: string | null }[];
   addRecommendedActivity: (title: string, meta: string, price: string) => void;
+  moreActivitiesOpen: boolean;
+  setMoreActivitiesOpen: Dispatch<SetStateAction<boolean>>;
   activityDraft: ActivityDraft;
   setActivityDraft: Dispatch<SetStateAction<ActivityDraft>>;
   createActivity: () => void;
   activeDayData: BuilderDay | undefined;
+  activeDayCity: string | null;
   openAddFlow: (after: number) => void;
 };
 
@@ -240,60 +242,55 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
                     <label className="activity-search"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input value={p.flightSearch} onChange={(event) => p.setFlightSearch(event.target.value)} placeholder="Search by airport, airline, or flight number" /></label>
                     <p className="database-note">Flights are supplied by Travel Marketplace and cannot be edited here.</p>
                     <div className="flight-results" role="radiogroup" aria-label="Available flights">
-                      {p.matchingFlights.map((flight) => <button key={flight.id} type="button" role="radio" aria-checked={p.selectedFlightId === flight.id} className={p.selectedFlightId === flight.id ? "selected" : ""} onClick={() => p.setSelectedFlightId(flight.id)}>
-                        <span className="flight-brand"><strong>{flight.airline}</strong><small>{flight.number}</small></span>
-                        <span className="flight-route"><strong>{flight.departure}</strong><small>{flight.from}</small></span>
-                        <span className="flight-duration"><small>{flight.duration}</small><i aria-hidden="true"><Icon name="plane" size={20} /></i></span>
-                        <span className="flight-route"><strong>{flight.arrival}</strong><small>{flight.to}</small></span>
-                        <span className="flight-fare"><small>From</small><strong>${flight.price}</strong></span>
-                        <span className="flight-select" aria-hidden="true">{p.selectedFlightId === flight.id ? <Icon name="check" size={18} /> : ""}</span>
-                      </button>)}
+                      {p.matchingFlights.map((flight, index) => {
+                        const departureTime = extractClockTimeInZone(flight.departure_datetime, timezoneForIata(flight.origin_iata)) ?? "--:--";
+                        const arrivalTime = extractClockTimeInZone(flight.arrival_datetime, timezoneForIata(flight.destination_iata)) ?? "--:--";
+                        return <button key={flight.flight_id ?? index} type="button" role="radio" aria-checked={p.selectedFlightIndex === index} className={p.selectedFlightIndex === index ? "selected" : ""} onClick={() => p.setSelectedFlightIndex(index)}>
+                          <span className="flight-brand"><strong>{flight.airline ?? "Airline not provided"}</strong><small>{flight.flight_number ?? ""}</small></span>
+                          <span className="flight-route"><strong>{departureTime}</strong><small>{flight.origin_iata ?? "Not provided"}</small></span>
+                          <span className="flight-duration"><i aria-hidden="true"><Icon name="plane" size={20} /></i></span>
+                          <span className="flight-route"><strong>{arrivalTime}</strong><small>{flight.destination_iata ?? "Not provided"}</small></span>
+                          <span className="flight-fare"><small>From</small><strong>{flight.price_aud != null ? `$${flight.price_aud.toLocaleString("en-US")}` : "Not provided"}</strong></span>
+                          <span className="flight-select" aria-hidden="true">{p.selectedFlightIndex === index ? <Icon name="check" size={18} /> : ""}</span>
+                        </button>;
+                      })}
                       {p.matchingFlights.length === 0 && <p>No matching flights found.</p>}
                     </div>
-                    <div className="activity-form-actions"><button className="publish-button" disabled={!p.selectedFlightId} onClick={p.addSelectedFlight}>Add selected flight</button></div>
+                    <div className="activity-form-actions"><button className="publish-button" disabled={p.selectedFlightIndex === null} onClick={p.addSelectedFlight}>Add selected flight</button></div>
                   </>}
 
                   {p.addFlow === "hotel" && <>
                     <div className="inline-add-head"><button className="inline-back" onClick={() => p.setAddFlow("type")} aria-label="Back to item types">‹</button><h4>Add hotel</h4><button onClick={() => p.setAddingAfter(null)}>Cancel</button></div>
+                    <p className="database-note">Hotels are supplied by Travel Marketplace and cannot be edited here.</p>
                     <div className="hotel-choice-grid" role="radiogroup" aria-label="Available hotels">
-                      {HOTEL_OPTIONS.map((hotel) => <button key={hotel.id} type="button" role="radio" aria-checked={p.selectedHotelOptionId === hotel.id} className={`hotel-choice-card${p.selectedHotelOptionId === hotel.id ? " selected" : ""}`} onClick={() => { p.setSelectedHotelOptionId(hotel.id); p.setSelectedRoomOptionId(null); }}>
-                        <span className="hotel-choice-image"><Image src={hotel.image} alt={hotel.imageAlt} fill sizes="(max-width: 720px) 100vw, 33vw" /></span>
-                        <span className="hotel-choice-copy"><strong>{hotel.name}</strong><span className="hotel-star-rating">{formatHotelStarRating(hotel.starRating)}</span><small>{hotel.area}</small><span>{hotel.room}</span><b>${hotel.price.toLocaleString("en-US")} total</b></span>
-                        <span className="hotel-choice-check" aria-hidden="true">{p.selectedHotelOptionId === hotel.id ? <Icon name="check" size={20} /> : ""}</span>
+                      {p.availableHotels.map((hotel, index) => <button key={hotel.hotel_id ?? hotel.hotel_name ?? index} type="button" role="radio" aria-checked={p.selectedHotelIndex === index} className={`hotel-choice-card${p.selectedHotelIndex === index ? " selected" : ""}`} onClick={() => p.setSelectedHotelIndex(index)}>
+                        <span className="hotel-choice-copy">
+                          <strong>{hotel.hotel_name ?? "Hotel"}</strong>
+                          {hotel.star_rating != null && <span className="hotel-star-rating">{formatHotelStarRating(hotel.star_rating)}</span>}
+                          <small>{hotel.city ?? "Not provided"}</small>
+                          {hotel.room_type && <span>{hotel.room_type}</span>}
+                          <b>{hotel.price_per_night_aud != null ? `$${hotel.price_per_night_aud.toLocaleString("en-US")}/night` : "Price not provided"}</b>
+                        </span>
+                        <span className="hotel-choice-check" aria-hidden="true">{p.selectedHotelIndex === index ? <Icon name="check" size={20} /> : ""}</span>
                       </button>)}
+                      {p.availableHotels.length === 0 && <p>No hotels found for this package.</p>}
                     </div>
                     {p.selectedHotelOption && <>
-                      <p className="database-note">Travellers can change this hotel option after booking, from their trip.</p>
-                      <div className="room-choice-grid" role="radiogroup" aria-label={`Room options for ${p.selectedHotelOption.name}`}>
-                        {p.selectedHotelOption.rooms.map((room) => <button key={room.id} type="button" role="radio" aria-checked={p.selectedRoomOptionId === room.id} className={`room-choice-card${p.selectedRoomOptionId === room.id ? " selected" : ""}`} onClick={() => p.setSelectedRoomOptionId(room.id)}>
-                          <strong>{room.name}</strong>
-                          <span>{room.description}</span>
-                          <b>${room.price.toLocaleString("en-US")} total</b>
-                        </button>)}
-                      </div>
-                    </>}
-                    {p.selectedHotelOption && p.selectedRoomOption && <>
                       <div className="hotel-confirm-card">
                         <div className="hotel-confirm-top">
-                          <span className="hotel-confirm-media">
-                            <Image src={p.selectedHotelOption.image} alt={p.selectedHotelOption.imageAlt} fill sizes="96px" />
-                            <span className="hotel-confirm-media-badge">Illustrative room image</span>
-                          </span>
                           <span className="hotel-confirm-heading">
                             <small>Hotel</small>
-                            <strong>{p.selectedHotelOption.name}</strong>
-                            <span>{p.selectedRoomOption.name}</span>
+                            <strong>{p.selectedHotelOption.hotel_name ?? "Hotel"}</strong>
+                            {p.selectedHotelOption.room_type && <span>{p.selectedHotelOption.room_type}</span>}
                           </span>
-                          <span className="hotel-confirm-rating">
+                          {p.selectedHotelOption.star_rating != null && <span className="hotel-confirm-rating">
                             <Icon name="star" size={16} />
-                            <b>{p.selectedHotelOption.starRating}</b><span>/ 5</span>
-                          </span>
+                            <b>{p.selectedHotelOption.star_rating}</b><span>/ 5</span>
+                          </span>}
                         </div>
-                        <dl className="hotel-confirm-stats">
-                          <div><dt>Total price</dt><dd>${p.selectedRoomOption.price.toLocaleString("en-US")}</dd></div>
-                          <div><dt>Check-in</dt><dd>{p.selectedHotelOption.checkIn}</dd></div>
-                          <div><dt>Check-out</dt><dd>{p.selectedHotelOption.checkOut}</dd></div>
-                          <div className="full"><dt>Address</dt><dd>{p.selectedHotelOption.address}</dd></div>
+                        <dl className="hotel-confirm-stats stat-grid">
+                          <div><dt>Per night</dt><dd>{p.selectedHotelOption.price_per_night_aud != null ? `$${p.selectedHotelOption.price_per_night_aud.toLocaleString("en-US")}` : "Not provided"}</dd></div>
+                          <div className="full"><dt>Address</dt><dd>{p.selectedHotelOption.address || p.selectedHotelOption.city || "Not provided"}</dd></div>
                         </dl>
                       </div>
                       <div className="activity-form hotel-fixed-details">
@@ -308,11 +305,10 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
                             {p.hotelCheckOutDayOptions.map((option) => <option key={option.id} value={option.id}>{option.id === NEW_DAY_OPTION_ID ? `Day ${option.index + 1} (new day)` : `Day ${option.index + 1}: ${option.title}`}</option>)}
                           </select>
                         </label>
-                        <label><span>Price</span><input readOnly value={`$${p.selectedRoomOption.price.toLocaleString("en-US")}`} /></label>
                         <label className="full"><span>Notes</span><textarea value={p.hotelNotes} onChange={(event) => p.setHotelNotes(event.target.value)} placeholder="Add check-in or booking details" /></label>
                       </div>
                     </>}
-                    <div className="activity-form-actions"><button className="publish-button" disabled={!p.selectedHotelOption || !p.selectedRoomOption || !p.hotelCheckInDayId} onClick={p.createHotel}>Add hotel</button></div>
+                    <div className="activity-form-actions"><button className="publish-button" disabled={!p.selectedHotelOption || !p.hotelCheckInDayId} onClick={p.createHotel}>Add hotel</button></div>
                   </>}
 
                   {p.addFlow === "creator" && <>
@@ -331,12 +327,31 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
 
                   {p.addFlow === "activities" && <>
                     <div className="inline-add-head"><button className="inline-back" onClick={() => p.setAddFlow("type")} aria-label="Back to item types">‹</button><h4>Activity</h4><button onClick={() => p.setAddingAfter(null)}>Cancel</button></div>
-                    <label className="activity-search"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input value={p.activitySearch} onChange={(event) => p.setActivitySearch(event.target.value)} placeholder="Search Tokyo activities" /></label>
-                    <h5>Recommended for Tokyo</h5>
+                    <label className="activity-search"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input value={p.activitySearch} onChange={(event) => p.setActivitySearch(event.target.value)} placeholder={`Search ${p.activeDayCity ?? "local"} activities`} /></label>
+                    <h5>Recommended for {p.activeDayCity ?? "this trip"}</h5>
                     <div className="activity-results">
-                      {p.recommendedActivities.map((activity) => <button key={activity.title} onClick={() => p.addRecommendedActivity(activity.title, activity.meta, activity.price)}><span className="result-plus">+</span><strong>{activity.title}</strong><small>{activity.meta}</small><b>{activity.price}</b></button>)}
+                      {p.recommendedActivities.slice(0, 3).map((activity) => <div key={activity.title} className="activity-card">
+                        <button className="activity-add-btn" aria-label={`Add ${activity.title}`} onClick={() => p.addRecommendedActivity(activity.title, activity.meta, activity.price)}><Icon name="plus" size={16} /></button>
+                        <strong>{activity.title}</strong>
+                        <small>{activity.meta}</small>
+                        <b>{activity.price}</b>
+                        <ActivityDetailPopover activity={activity} />
+                      </div>)}
                       {p.recommendedActivities.length === 0 && <p>No activities found. Try another search or create your own.</p>}
                     </div>
+                    {p.recommendedActivities.length > 3 && <>
+                      <button className="activity-more-toggle" onClick={() => p.setMoreActivitiesOpen((open) => !open)} aria-expanded={p.moreActivitiesOpen}>
+                        <span className="status-chevron"><Icon name="chevron" size={14} /></span>
+                        {p.moreActivitiesOpen ? "Show fewer activities" : `See ${p.recommendedActivities.length - 3} more`}
+                      </button>
+                      {p.moreActivitiesOpen && <ul className="activity-list">
+                        {p.recommendedActivities.slice(3).map((activity) => <li key={activity.title} className="activity-card">
+                          <span className="activity-list-name"><strong>{activity.title}</strong><small>{activity.meta}</small></span>
+                          <span className="activity-list-trail"><b>{activity.price}</b><button className="activity-add-btn" aria-label={`Add ${activity.title}`} onClick={() => p.addRecommendedActivity(activity.title, activity.meta, activity.price)}><Icon name="plus" size={14} /></button></span>
+                          <ActivityDetailPopover activity={activity} />
+                        </li>)}
+                      </ul>}
+                    </>}
                     <button className="create-activity-link" onClick={() => p.setAddFlow("create")}><Icon name="plus" size={16} /> Create new activity</button>
                   </>}
 
@@ -396,11 +411,12 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
   const [expandedFeasibility, setExpandedFeasibility] = useState<"critical" | "suggestions" | "passed" | null>(null);
   const [addFlow, setAddFlow] = useState<AddFlowStep>("type");
   const [activitySearch, setActivitySearch] = useState("");
+  const [recommendedActivities, setRecommendedActivities] = useState<{ title: string; meta: string; price: string; rating: number | null; suitableFor: string | null }[]>([]);
+  const [moreActivitiesOpen, setMoreActivitiesOpen] = useState(false);
   const [activityDraft, setActivityDraft] = useState({ title: "", price: "", address: "", startTime: "12:00", duration: "30", notes: "" });
   const [flightSearch, setFlightSearch] = useState("");
-  const [selectedFlightId, setSelectedFlightId] = useState<string | null>(null);
-  const [selectedHotelOptionId, setSelectedHotelOptionId] = useState<string | null>(null);
-  const [selectedRoomOptionId, setSelectedRoomOptionId] = useState<string | null>(null);
+  const [selectedFlightIndex, setSelectedFlightIndex] = useState<number | null>(null);
+  const [selectedHotelIndex, setSelectedHotelIndex] = useState<number | null>(null);
   const [hotelNotes, setHotelNotes] = useState("");
   const [hotelCheckInDayId, setHotelCheckInDayId] = useState<string | null>(null);
   const [hotelCheckOutDayId, setHotelCheckOutDayId] = useState<string | null>(null);
@@ -412,6 +428,10 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
   const items = activeDayData?.items ?? [];
   const story = activeDayData?.story ?? "";
   const photos = activeDayData?.photos ?? [];
+  // Activities carry a plain city name in `address` (buildDaysFromPackage);
+  // hotels sometimes carry a full street address instead, so activities are
+  // the more reliable signal for "what city is this day actually in."
+  const activeDayCity = items.find((item) => item.type === "ACTIVITY" && item.address)?.address ?? null;
   // buildDaysFromPackage stamps every row of a stay with `hotel-<id|name>`,
   // so the API hotel is looked up by that key rather than by counting rows —
   // the item list here is one day's worth, not the whole trip.
@@ -425,7 +445,7 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
     const hint = [item.address, item.title, flight?.destination_iata, hotel?.address, hotel?.city]
       .filter((part): part is string => Boolean(part))
       .join(" ");
-    return { label: item.title, time: item.time, coordinate: resolveStopCoordinate(hint, index) };
+    return { label: item.title, time: item.time, coordinate: resolveStopCoordinate(hint, index, activeDayCity) };
   });
   const routeStopLats = routeStopBases.map(({ coordinate }) => coordinate[0]);
   const routeStopLngs = routeStopBases.map(({ coordinate }) => coordinate[1]);
@@ -483,6 +503,43 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [pendingDeleteItemId]);
+
+  // Debounced so a fast typist doesn't fire a query per keystroke; queries the
+  // real activities catalog directly (RLS grants public SELECT — see
+  // supabase/migrations/0003_rls_policies.sql), not just a handful of AI-picked
+  // rows the package already carries.
+  useEffect(() => {
+    if (addFlow !== "activities") return;
+    const timer = window.setTimeout(async () => {
+      let query = supabase
+        .from("activities")
+        .select("activity_name,city,category,duration_hours,price_aud,rating,suitable_for")
+        .order("rating", { ascending: false })
+        .limit(24);
+      if (activeDayCity) query = query.eq("city", activeDayCity);
+      const search = activitySearch.trim();
+      if (search) query = query.ilike("activity_name", `%${search}%`);
+      const { data, error } = await query;
+      if (error || !data) { setRecommendedActivities([]); return; }
+      // The catalog carries some exact-duplicate rows (same activity re-seeded
+      // under a different id) — collapse those to one card by name.
+      const seen = new Set<string>();
+      const deduped = data.filter((row) => {
+        const key = row.activity_name.trim().toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      setRecommendedActivities(deduped.map((row) => ({
+        title: row.activity_name,
+        meta: [row.category, row.duration_hours ? `${Math.round(row.duration_hours * 60)} min` : null, row.city].filter(Boolean).join(" · "),
+        price: row.price_aud ? `$${row.price_aud}` : "Free",
+        rating: row.rating,
+        suitableFor: row.suitable_for,
+      })));
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [addFlow, activeDayCity, activitySearch]);
 
   const showNotice = (message: string) => {
     setNotice(message);
@@ -555,7 +612,7 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
         body: JSON.stringify({
           packageTitle,
           destination: [pkg.destination_city, pkg.destination_country].filter(Boolean).join(", "),
-          selectedHotel: selectedHotelOption?.name ?? pkg.hotels[0]?.hotel_name ?? "",
+          selectedHotel: selectedHotelOption?.hotel_name ?? pkg.hotels[0]?.hotel_name ?? "",
           dayNumber: activeDay + 1,
           dayTitle: days[activeDay]?.title || `Day ${activeDay + 1}`,
           items: activityNames,
@@ -653,12 +710,11 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
     setEditingItem({ id: item.id, title: item.title, time: item.time, price: item.price.replace(/[^0-9.]/g, ""), category: item.category ?? "Activity", address: item.address ?? "", duration: item.duration ?? "60", notes: item.notes ?? "", photos: item.photos ?? [] });
   };
 
-  const timeConflict = editingItem ? findTimeConflict(items, editingItem.id, editingItem.time, editingItem.duration) : null;
-
   const saveEditedItem = () => {
-    if (!editingItem || !editingItem.title.trim() || timeConflict) return;
-    setItems((current) => current.map((item) => item.id === editingItem.id ? {
-      ...item,
+    if (!editingItem || !editingItem.title.trim()) return;
+
+    const updatedItem: TimelineItem = {
+      ...items.find((item) => item.id === editingItem.id)!,
       title: editingItem.title.trim(),
       time: editingItem.time,
       price: editingItem.price ? `$${editingItem.price}` : "$0",
@@ -667,9 +723,20 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
       duration: editingItem.duration,
       notes: editingItem.notes.trim(),
       photos: editingItem.photos,
-    } : item));
+    };
+    const previousIndex = items.findIndex((item) => item.id === editingItem.id);
+    const withUpdate = items.map((item) => item.id === editingItem.id ? updatedItem : item);
+    // A changed start time moves the stop to wherever it now falls
+    // chronologically, instead of blocking the save until neighbors are
+    // rearranged by hand.
+    const resorted = REAL_TIME_PATTERN.test(updatedItem.time)
+      ? [...withUpdate].sort((a, b) => a.time.localeCompare(b.time))
+      : withUpdate;
+
+    setItems(resorted);
     setEditingItem(null);
-    showNotice("Stop updated");
+    const newIndex = resorted.findIndex((item) => item.id === editingItem.id);
+    showNotice(newIndex !== previousIndex ? `${updatedItem.title} moved to position ${newIndex + 1}` : "Stop updated");
   };
 
   const insertItem = (after: number, item: Omit<TimelineItem, "id">) => {
@@ -747,25 +814,25 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
   };
 
   const addSelectedFlight = () => {
-    const flight = AVAILABLE_FLIGHTS.find((option) => option.id === selectedFlightId);
+    const flight = selectedFlightIndex !== null ? matchingFlights[selectedFlightIndex] : undefined;
     if (addingAfter === null || !flight) return;
+    const scheduleDatetime = flight.arrival_datetime ?? flight.departure_datetime;
     insertItem(addingAfter, {
-      time: flight.departure,
+      time: extractClockTimeInZone(scheduleDatetime, timezoneForIata(flight.destination_iata ?? flight.origin_iata)) ?? "09:00",
       type: "FLIGHT",
-      title: `${flight.from} to ${flight.to} · ${flight.airline} ${flight.number}`,
-      price: `$${flight.price}`,
+      title: [flight.origin_iata, flight.destination_iata].filter(Boolean).join(" to ") || flight.airline || "Flight",
+      price: flight.price_aud != null ? `$${flight.price_aud.toLocaleString("en-US")}` : "$0",
       icon: "plane",
       status: "pass",
     });
     setFlightSearch("");
-    setSelectedFlightId(null);
+    setSelectedFlightIndex(null);
   };
 
-  const matchingFlights = AVAILABLE_FLIGHTS.filter((flight) =>
-    [flight.airline, flight.number, flight.from, flight.to].join(" ").toLowerCase().includes(flightSearch.trim().toLowerCase()),
+  const matchingFlights = flights.filter((flight) =>
+    [flight.airline, flight.flight_number, flight.origin_iata, flight.destination_iata].join(" ").toLowerCase().includes(flightSearch.trim().toLowerCase()),
   );
-  const selectedHotelOption = HOTEL_OPTIONS.find(({ id }) => id === selectedHotelOptionId);
-  const selectedRoomOption = selectedHotelOption?.rooms.find(({ id }) => id === selectedRoomOptionId);
+  const selectedHotelOption = selectedHotelIndex !== null ? hotels[selectedHotelIndex] : undefined;
 
   const hotelCheckInDayIndex = hotelCheckInDayId === NEW_DAY_OPTION_ID
     ? days.length
@@ -781,15 +848,13 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
   const hotelNightsCount = Math.max(1, hotelCheckOutDayIndex - hotelCheckInDayIndex);
 
   const createHotel = () => {
-    if (!selectedHotelOption || !selectedRoomOption) return;
+    if (!selectedHotelOption) return;
+    const hotelName = selectedHotelOption.hotel_name ?? "Hotel";
+    const pricePerNight = selectedHotelOption.price_per_night_aud ?? 0;
     const nights = hotelNightsCount;
     const checkInIndex = hotelCheckInDayIndex;
     const checkOutIndex = hotelCheckOutDayIndex;
-    const stayGroupId = `hotel-stay-${Date.now()}`;
-    // Rounding down every night and giving the remainder to the first one
-    // keeps the nightly rows summing to exactly the room total.
-    const nightlyPrice = Math.floor(selectedRoomOption.price / nights);
-    const firstNightPrice = selectedRoomOption.price - nightlyPrice * (nights - 1);
+    const stayGroupId = `hotel-stay-${nextItemId.current + 1}`;
     setDays((current) => {
       const next = [...current];
       while (next.length <= checkOutIndex) {
@@ -801,19 +866,22 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
         const isCheckOutDay = offset === nights;
         const item: TimelineItem = {
           id: nextItemId.current,
-          time: offset === 0 ? selectedHotelOption.checkIn : isCheckOutDay ? selectedHotelOption.checkOut : "Overnight stay",
+          // "Check-in"/"Check-out"/"Overnight stay" instead of a fabricated
+          // clock time — bookings only ever carry a date, never a time.
+          time: offset === 0 ? "Check-in" : isCheckOutDay ? "Check-out" : "Overnight stay",
           type: "HOTEL",
           title: isCheckOutDay
-            ? `${selectedHotelOption.name} (Check-out)`
-            : nights > 1 ? `${selectedHotelOption.name} (Night ${offset + 1} of ${nights})` : selectedHotelOption.name,
-          price: `$${(offset === 0 ? firstNightPrice : nightlyPrice).toLocaleString("en-US")}/night`,
+            ? `${hotelName} (Check-out)`
+            : nights > 1 ? `${hotelName} (Night ${offset + 1} of ${nights})` : hotelName,
+          price: `$${pricePerNight.toLocaleString("en-US")}/night`,
           icon: "hotel",
           status: "pass",
-          address: selectedHotelOption.address,
+          address: selectedHotelOption.address ?? selectedHotelOption.city ?? undefined,
           notes: hotelNotes.trim(),
-          checkOut: selectedHotelOption.checkOut,
-          roomType: selectedRoomOption.name,
-          starRating: selectedHotelOption.starRating,
+          checkIn: selectedHotelOption.check_in_date ?? undefined,
+          checkOut: selectedHotelOption.check_out_date ?? undefined,
+          roomType: selectedHotelOption.room_type ?? undefined,
+          starRating: selectedHotelOption.star_rating ?? undefined,
           stayMarker: offset === 0 ? "check-in" : isCheckOutDay ? "check-out" : undefined,
           stayGroupId,
         };
@@ -825,12 +893,9 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
     setActiveDay(checkInIndex);
     setAddingAfter(null);
     setAddFlow("type");
-    setSelectedHotelOptionId(null);
-    setSelectedRoomOptionId(null);
+    setSelectedHotelIndex(null);
     setHotelNotes("");
-    showNotice(nights > 1
-      ? `${selectedHotelOption.name} added across ${nights} nights`
-      : `${selectedHotelOption.name} added`);
+    showNotice(nights > 1 ? `${hotelName} added across ${nights} nights` : `${hotelName} added`);
   };
 
   const createCreatorPick = () => {
@@ -845,12 +910,6 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
     });
     setCreatorDraft({ title: "", category: "Activity", address: "", time: "12:00", duration: "60", price: "", reason: "" });
   };
-
-  const recommendedActivities = [
-    { title: "Shibuya Sky", meta: "Observation deck · 60 min", price: "$22" },
-    { title: "Tsukiji Market", meta: "Food tour · 120 min", price: "Free" },
-    { title: "teamLab Planets", meta: "Immersive art · 90 min", price: "$38" },
-  ].filter((activity) => activity.title.toLowerCase().includes(activitySearch.trim().toLowerCase()));
 
   const addCopilotSuggestion = (suggestion: CopilotSuggestionV1) => {
     if (!activeDayData) return;
@@ -904,11 +963,11 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
     addFlow, setAddFlow,
     flightSearch, setFlightSearch,
     matchingFlights,
-    selectedFlightId, setSelectedFlightId,
+    selectedFlightIndex, setSelectedFlightIndex,
     addSelectedFlight,
-    selectedHotelOptionId, setSelectedHotelOptionId,
-    selectedRoomOptionId, setSelectedRoomOptionId,
-    selectedHotelOption, selectedRoomOption,
+    availableHotels: hotels,
+    selectedHotelIndex, setSelectedHotelIndex,
+    selectedHotelOption,
     hotelCheckInDayId, setHotelCheckInDayId,
     setHotelCheckOutDayId,
     days,
@@ -921,9 +980,12 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
     activitySearch, setActivitySearch,
     recommendedActivities,
     addRecommendedActivity,
+    moreActivitiesOpen,
+    setMoreActivitiesOpen,
     activityDraft, setActivityDraft,
     createActivity,
     activeDayData,
+    activeDayCity,
     openAddFlow,
   };
 
@@ -1040,8 +1102,8 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
                       <div><dt>Cabin</dt><dd>{flight.cabin_class || "Not provided"}</dd></div>
                       <div><dt>From</dt><dd>{flight.origin_iata || "Not provided"}</dd></div>
                       <div><dt>To</dt><dd>{flight.destination_iata || "Not provided"}</dd></div>
-                      <div><dt>Departure</dt><dd>{formatFlightDateTime(flight.departure_datetime, timezoneForIata(flight.origin_iata))}</dd></div>
-                      <div><dt>Arrival</dt><dd>{formatFlightDateTime(flight.arrival_datetime, timezoneForIata(flight.destination_iata))}</dd></div>
+                      <div><dt>Departure</dt><dd>{extractClockTimeInZone(flight.departure_datetime, timezoneForIata(flight.origin_iata)) ?? "Not provided"}</dd></div>
+                      <div><dt>Arrival</dt><dd>{extractClockTimeInZone(flight.arrival_datetime, timezoneForIata(flight.destination_iata)) ?? "Not provided"}</dd></div>
                     </dl>
                   </div>
                   <button className="item-delete" onClick={() => requestDeleteItem(item)}>Delete</button>
@@ -1062,16 +1124,16 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
                     <dl className="stat-grid">
                       {hotel ? <>
                         <div><dt>Room type</dt><dd>{hotel.room_type || "Not provided"}</dd></div>
+                        <div><dt>Check-in</dt><dd>{STANDARD_HOTEL_CHECKIN_TIME}</dd></div>
+                        <div><dt>Check-out</dt><dd>{STANDARD_HOTEL_CHECKOUT_TIME}</dd></div>
                         <div><dt>Stay</dt><dd>{nights ? `${nights} night${nights === 1 ? "" : "s"}` : "Not provided"}</dd></div>
-                        <div><dt>Check-in</dt><dd>{formatStayDate(hotel.check_in_date)}</dd></div>
-                        <div><dt>Check-out</dt><dd>{formatStayDate(hotel.check_out_date)}</dd></div>
                         <div><dt>Rating</dt><dd className="rating-value">{hotel.star_rating ? <><Icon name="star" size={14} />{hotel.star_rating} / 5</> : "Not provided"}</dd></div>
                         <div><dt>Per night</dt><dd>{hotel.price_per_night_aud === null ? "Not provided" : `$${hotel.price_per_night_aud.toLocaleString("en-AU")} AUD`}</dd></div>
                         <div className="full"><dt>Address</dt><dd>{hotel.address || [hotel.city].filter(Boolean).join(", ") || "Not provided"}</dd></div>
                       </> : <>
                         <div><dt>Room type</dt><dd>{item.roomType || "Not provided"}</dd></div>
-                        <div><dt>Check-in</dt><dd>{item.checkIn || "Not provided"}</dd></div>
-                        <div><dt>Check-out</dt><dd>{item.checkOut || "Not provided"}</dd></div>
+                        <div><dt>Check-in</dt><dd>{STANDARD_HOTEL_CHECKIN_TIME}</dd></div>
+                        <div><dt>Check-out</dt><dd>{STANDARD_HOTEL_CHECKOUT_TIME}</dd></div>
                         <div><dt>Rating</dt><dd className="rating-value">{item.starRating ? <><Icon name="star" size={14} />{item.starRating} / 5</> : "Not provided"}</dd></div>
                         <div className="full"><dt>Address</dt><dd>{item.address || "Not provided"}</dd></div>
                         {item.notes && <div className="full"><dt>Notes</dt><dd>{item.notes}</dd></div>}
@@ -1097,7 +1159,6 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
                         <div className="activity-card-duration"><span className="activity-card-duration-label">{editingItem.duration} min</span></div>
                         <div className="activity-card-stat"><Icon name="clock" size={16} /><span><small>Ends at</small><strong>{getEndTime(editingItem.time, editingItem.duration)}</strong></span></div>
                       </div>
-                      {timeConflict && <p className="activity-card-time-error" role="alert">{timeConflict}</p>}
                     </div>
                     <label className="activity-card-notes"><span>Notes</span><div className="activity-card-notes-field"><textarea value={editingItem.notes} maxLength={500} onChange={(event) => setEditingItem({ ...editingItem, notes: event.target.value })} placeholder="Share why this is worth a stop" /><small>{editingItem.notes.length} / 500</small></div></label>
                   </> : <>
@@ -1111,7 +1172,6 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
                       <label><span>Ends at</span><input value={getEndTime(editingItem.time, editingItem.duration)} readOnly /></label>
                       <label className="edit-notes"><span>Notes</span><textarea value={editingItem.notes} onChange={(event) => setEditingItem({ ...editingItem, notes: event.target.value })} placeholder="Share why this is worth a stop" /></label>
                     </div>
-                    {timeConflict && <p className="activity-card-time-error" role="alert">{timeConflict}</p>}
                   </>}
                   {/* ponytail: per-activity photos stay local blob URLs — the media API
                       attaches files to a package, not to a timeline item. */}
@@ -1128,7 +1188,7 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
                       <label><input type="file" accept="image/png,image/jpeg" multiple onChange={(event) => { const files = Array.from(event.target.files ?? []); if (files.length) setEditingItem({ ...editingItem, photos: [...editingItem.photos, ...files.map((file) => URL.createObjectURL(file))] }); event.target.value = ""; }} /><Icon name="plus" size={18} />Add photo</label>
                     </div>
                   </div>
-                  <div className="inline-edit-actions"><button className="item-delete" onClick={() => requestDeleteItem(item)}>Delete</button><button className="quiet-button" onClick={() => setEditingItem(null)}>Cancel</button><button className="publish-button" disabled={!editingItem.title.trim() || Boolean(timeConflict)} onClick={saveEditedItem}>Save changes</button></div>
+                  <div className="inline-edit-actions"><button className="item-delete" onClick={() => requestDeleteItem(item)}>Delete</button><button className="quiet-button" onClick={() => setEditingItem(null)}>Cancel</button><button className="publish-button" disabled={!editingItem.title.trim()} onClick={saveEditedItem}>Save changes</button></div>
                 </section>}
                 <AddStopFlow index={index} {...addFlowProps} />
               </div>})}
@@ -1170,7 +1230,7 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
             dayLabel={`Day ${activeDay + 1}`}
             onAddSuggestion={addCopilotSuggestion}
           />
-          <Panel title="Pricing & earnings" className="pricing-panel"><span>Total package price</span><strong>${packagePrice.toLocaleString()}</strong><hr/><span>Your commission (20%)</span><strong className="commission">${Math.round(packagePrice * .2).toLocaleString()}</strong><small>Est. 5–8 bookings/month</small></Panel>
+          <Panel title="Pricing & earnings" className="pricing-panel"><span>Total package price</span><strong>${packagePrice.toLocaleString()}</strong><hr/><span>Your commission (20%)</span><strong className="commission">${Math.round(packagePrice * .2).toLocaleString()}</strong></Panel>
           <Panel title="Route map" className="route-panel"><RouteMap stops={routeStops} /></Panel>
         </aside>
       </div>
