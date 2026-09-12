@@ -2229,11 +2229,11 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
           /* ── Step 4: Season ── */
           <div style={{ height: "100%", minHeight: 0, display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gridTemplateRows: "repeat(2, minmax(0, 1fr))", gap: 12 }}>
             {([
-              { id: "spring", label: "Spring", desc: "Blooming scenery and fresh, vibrant energy", img: "https://images.unsplash.com/photo-1622285422722-b1b3eb36c728?w=600&h=320&fit=crop", recommend: true },
+              { id: "spring", label: "Spring", desc: "Blooming scenery and fresh, vibrant energy", img: "https://images.unsplash.com/photo-1622285422722-b1b3eb36c728?w=600&h=320&fit=crop" },
               { id: "summer", label: "Summer", desc: "Warm days and endless outdoor adventures",   img: "https://images.unsplash.com/photo-1461937995729-a2e442122d18?w=600&h=320&fit=crop" },
               { id: "autumn", label: "Autumn",  desc: "Colorful foliage and cozy moments",          img: "https://images.unsplash.com/photo-1542574929305-245cb48f9c87?w=600&h=320&fit=crop" },
               { id: "winter", label: "Winter",  desc: "Cool weather and relaxed experiences",       img: "https://images.unsplash.com/photo-1551927411-95e412943b58?w=600&h=320&fit=crop" },
-            ] as { id: string; label: string; desc: string; img: string; recommend?: boolean }[]).map((s) => {
+            ] as { id: string; label: string; desc: string; img: string }[]).map((s) => {
               const isSel = season === s.id;
               const isHov = hovCard === s.id;
               return (
@@ -2259,11 +2259,6 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
                     {isSel && (
                       <div style={{ position: "absolute", top: 10, right: 10, width: 22, height: 22, borderRadius: "50%", background: C.blue, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 2px 6px rgba(0,0,0,0.2)" }}>
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>
-                      </div>
-                    )}
-                    {s.recommend && (
-                      <div style={{ position: "absolute", top: 10, left: 10 }}>
-                        <span style={{ fontFamily: "var(--fc-font-body)", fontSize: 10, fontWeight: 700, color: C.white, background: C.red, borderRadius: 4, padding: "2px 7px", letterSpacing: "0.05em", textTransform: "uppercase" }}>Recommend</span>
                       </div>
                     )}
                   </div>
