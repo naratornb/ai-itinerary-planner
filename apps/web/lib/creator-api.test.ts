@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  CreatorApiError,
   createPackage,
   fetchOwnPackage,
   fetchOwnPackages,
@@ -10,6 +11,8 @@ import {
   formatCreatorPackage,
   resolveCreatorProfile,
   signInWithEmail,
+  submitPackage,
+  updatePackage,
 } from "./creator-api";
 
 test("fetchOwnPackage loads authenticated hotel details", async () => {
@@ -60,6 +63,48 @@ test("fetchOwnPackage identifies an expired login", async () => {
     fetchOwnPackage(fetcher, "http://localhost:8000", "expired-token", "package-1"),
     /sign in again/i,
   );
+});
+
+test("updatePackage preserves a 409 status so the editor can become read-only", async () => {
+  const fetcher: typeof fetch = async () => new Response(JSON.stringify({
+    message: "This package can no longer be edited.",
+  }), {
+    status: 409,
+    headers: { "Content-Type": "application/json" },
+  });
+
+  await assert.rejects(
+    updatePackage(fetcher, "http://localhost:8000", "token", "package-1", { title: "Updated" }),
+    (error) => error instanceof CreatorApiError
+      && error.status === 409
+      && /no longer be edited/i.test(error.message),
+  );
+});
+
+test("submitPackage sends the saved package for review and surfaces validation details", async () => {
+  let requests = 0;
+  const fetcher: typeof fetch = async (input, init) => {
+    requests += 1;
+    assert.equal(String(input), "http://localhost:8000/packages/package-1/submit");
+    assert.equal(init?.method, "POST");
+    assert.deepEqual(init?.headers, {
+      "Content-Type": "application/json",
+      Authorization: "Bearer token",
+    });
+    assert.equal(init?.body, "{}");
+    return new Response(JSON.stringify({ message: "Add at least one activity." }), {
+      status: 422,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  await assert.rejects(
+    submitPackage(fetcher, "http://localhost:8000", "token", "package-1"),
+    (error) => error instanceof CreatorApiError
+      && error.status === 422
+      && /one activity/i.test(error.message),
+  );
+  assert.equal(requests, 1);
 });
 
 test("createPackage posts the draft and returns the new package id", async () => {

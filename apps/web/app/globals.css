@@ -296,7 +296,7 @@ button:focus-visible, textarea:focus-visible { outline: 3px solid var(--fc-focus
 .trip-length { flex: 0 0 auto; padding-left: 28px; border-left: 1px solid var(--fc-border); display: flex; gap: 9px; font-size: 20px; color: var(--fc-secondary); }
 .trip-length strong { color: var(--fc-ink); }
 
-.editor-shell { max-width: 1440px; margin: 0 auto; padding: 48px 32px 88px; display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 28px; }
+.editor-shell { width: 100%; max-width: 1440px; min-inline-size: 0; margin: 0 auto; padding: 48px 32px 88px; border: 0; display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 28px; }
 .editor-main { min-width: 0; }
 .day-heading { display: flex; justify-content: space-between; align-items: center; margin-bottom: 38px; }
 .day-heading > div { display: flex; align-items: baseline; gap: 14px; }

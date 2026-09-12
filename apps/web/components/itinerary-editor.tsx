@@ -7,6 +7,7 @@ import RouteMap, { type RouteStop } from "./route-map";
 import { createCopilotClient } from "../lib/copilot-client";
 import {
   appendItemToDay,
+  buildPackageUpdate,
   buildDaysFromPackage,
   computePackagePrice,
   copilotSuggestionToTimelineItem,
@@ -29,14 +30,11 @@ import {
   submitPackage,
   updatePackage,
   uploadPackageMedia,
+  CreatorApiError,
   STATUS_LABELS,
-  type ActivityInput,
   type CreatorFlightDetail,
   type CreatorHotelDetail,
   type CreatorPackageDetail,
-  type FlightInput,
-  type HotelInput,
-  type UpdatePackageInput,
 } from "../lib/creator-api";
 import { supabase } from "../lib/supabase/client";
 
@@ -104,6 +102,7 @@ type CreatorDraft = { title: string; category: string; address: string; time: st
 type HotelDayOption = { id: string; index: number; title: string };
 
 function hotelNights(hotel: CreatorHotelDetail) {
+  if (hotel.nights && hotel.nights > 0) return hotel.nights;
   if (!hotel.check_in_date || !hotel.check_out_date) return null;
   const checkIn = Date.parse(`${hotel.check_in_date}T00:00:00Z`);
   const checkOut = Date.parse(`${hotel.check_out_date}T00:00:00Z`);
@@ -517,13 +516,24 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
                 </section> : <button className="timeline-add" onClick={() => p.openAddFlow(index)}><Icon name="plus" size={14} /> Add stop</button>;
 }
 
-export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDetail; onBack: () => void }) {
-  const { flights, hotels } = pkg;
+export default function ItineraryEditor({
+  pkg,
+  onBack,
+  onSessionExpired,
+}: {
+  pkg: CreatorPackageDetail;
+  onBack: () => void;
+  onSessionExpired: () => void;
+}) {
+  const [packageDetail, setPackageDetail] = useState(pkg);
+  const { flights, hotels } = packageDetail;
   const copilotClient = useMemo(
     () => createCopilotClient(API_URL, pkg.package_id),
     [pkg.package_id],
   );
   const nextItemId = useRef(1000);
+  const pendingUploads = useRef<Set<Promise<unknown>>>(new Set());
+  const submittingRef = useRef(false);
   const [packageTitle, setPackageTitle] = useState(pkg.title);
   const [titleDraft, setTitleDraft] = useState(pkg.title);
   const [editingTitle, setEditingTitle] = useState(false);
@@ -537,6 +547,7 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
   const [saving, setSaving] = useState(false);
   const [packageStatus, setPackageStatus] = useState(pkg.status ?? "draft");
   const [submitting, setSubmitting] = useState(false);
+  const [uploadingCount, setUploadingCount] = useState(0);
   // Only draft/rejected packages may be saved or submitted (apps/api/app/packages/service.py) —
   // everything else is a read-only lifecycle state past this editor's control.
   const isLocked = packageStatus !== "draft" && packageStatus !== "rejected";
@@ -559,7 +570,7 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
   const [addingAfter, setAddingAfter] = useState<number | null>(null);
   const [draggedItemId, setDraggedItemId] = useState<number | null>(null);
   const [dropTarget, setDropTarget] = useState<{ index: number; position: "before" | "after" } | null>(null);
-  const [editingItem, setEditingItem] = useState<{ id: number; title: string; time: string; price: string; category: string; address: string; duration: string; notes: string; photos: string[] } | null>(null);
+  const [editingItem, setEditingItem] = useState<{ id: number; title: string; time: string; price: string; category: string; address: string; duration: string; notes: string; photos: DayPhoto[] } | null>(null);
   const [expandedHotelId, setExpandedHotelId] = useState<number | null>(null);
   const [expandedFlightId, setExpandedFlightId] = useState<number | null>(null);
   const [expandedFeasibility, setExpandedFeasibility] = useState<"critical" | "suggestions" | "passed" | null>(null);
@@ -826,125 +837,56 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
 
   const accessToken = async () => (await supabase.auth.getSession()).data.session?.access_token ?? null;
 
-  const priceNumber = (price: string) => Number(price.replace(/[^0-9.]/g, "")) || null;
-
-  // Builds the full save payload from local editor state. Metadata (title,
-  // description, destination, duration, group size, tags) and day title/
-  // summary are already persisted by PUT /packages/{id} today. Day
-  // meta/media_ids and flights/hotels/activities are not — the backend
-  // still silently ignores them (see the save/submit handover doc) — but
-  // sending them now means the editor round-trips real content the moment
-  // that support lands, with no FE change needed. Items that can't be
-  // represented without data the source never carried (e.g. a Co-Pilot
-  // flight/hotel pick, which has no IATA codes or room data) are left out
-  // rather than sent with fabricated values.
-  const buildSavePayload = (): UpdatePackageInput => {
-    const flat = days.flatMap((day, dayIndex) =>
-      day.items.map((item, itemIndex) => ({ item, day, dayIndex, itemIndex })));
-
-    const flights: FlightInput[] = flat
-      .filter(({ item }) => item.type === "FLIGHT" && item.originIata && item.destinationIata && item.departureDatetime && item.arrivalDatetime)
-      .map(({ item, dayIndex, itemIndex }) => ({
-        origin_iata: item.originIata!,
-        destination_iata: item.destinationIata!,
-        airline: item.airline || "Unknown",
-        flight_number: item.flightNumber || null,
-        departure_datetime: item.departureDatetime!,
-        arrival_datetime: item.arrivalDatetime!,
-        cabin_class: item.cabinClass || null,
-        price_aud: priceNumber(item.price),
-        day_number: dayIndex + 1,
-        sequence_order: itemIndex,
-        source_id: item.sourceId || null,
-      }));
-
-    // A creator pick is a manually-authored recommendation, not a catalog
-    // activity, but the backend has one array for both (per the handover
-    // doc's field mapping) — there's no separate "creator pick" concept.
-    const activities: ActivityInput[] = flat
-      .filter(({ item }) => item.type === "ACTIVITY" || item.type === "CREATOR PICK")
-      .map(({ item, day, dayIndex, itemIndex }) => ({
-        activity_name: item.title,
-        activity_date: item.activityDate || day.date || new Date().toISOString().slice(0, 10),
-        city: item.city || pkg.destination_city || "",
-        duration_hours: item.duration ? Number(item.duration) / 60 : null,
-        price_aud: priceNumber(item.price),
-        description: item.notes || null,
-        day_number: dayIndex + 1,
-        sequence_order: itemIndex,
-        start_time: item.time || null,
-        category: item.category || null,
-        address: item.address || null,
-        source_id: item.sourceId || null,
-      }));
-
-    // One stay record per stayGroupId, not one per rendered check-in/night/
-    // check-out row — check-in/out dates come from where those marker rows
-    // now live, since the user can move them independently of the source
-    // booking's original dates.
-    const stayGroupIds = [...new Set(flat.filter(({ item }) => item.type === "HOTEL" && item.stayGroupId).map(({ item }) => item.stayGroupId!))];
-    const hotels: HotelInput[] = stayGroupIds.flatMap((groupId) => {
-      const group = flat.filter(({ item }) => item.stayGroupId === groupId);
-      const checkIn = group.find(({ item }) => item.stayMarker === "check-in") ?? group[0];
-      const checkOut = group.find(({ item }) => item.stayMarker === "check-out") ?? group[group.length - 1];
-      const base = checkIn.item;
-      if (!base.hotelName) return [];
-      return [{
-        hotel_name: base.hotelName,
-        star_rating: base.starRating ?? null,
-        city: base.city || pkg.destination_city || "",
-        address: base.address || null,
-        check_in_date: checkIn.day.date || base.checkIn || new Date().toISOString().slice(0, 10),
-        check_out_date: checkOut.day.date || base.checkOut || new Date().toISOString().slice(0, 10),
-        price_per_night_aud: priceNumber(base.price),
-        room_type: base.roomType || null,
-        day_number: checkIn.dayIndex + 1,
-        source_id: base.sourceId || null,
-      }];
+  const trackUpload = <T,>(operation: Promise<T>): Promise<T> => {
+    const tracked = operation.finally(() => {
+      pendingUploads.current.delete(tracked);
+      setUploadingCount(pendingUploads.current.size);
     });
-
-    return {
-      title: packageTitle,
-      base_price_aud: Math.round(packagePrice),
-      // Not editable on this screen (that's "Edit trip setup"), but the
-      // backend already accepts and persists these on PUT today — round-
-      // tripping the loaded value keeps this save from being metadata-only
-      // by omission.
-      description: pkg.description ?? undefined,
-      destination_country: pkg.destination_country ?? undefined,
-      destination_city: pkg.destination_city ?? undefined,
-      duration_days: pkg.duration_days,
-      max_group_size: pkg.max_group_size ?? undefined,
-      tags: pkg.tags ?? undefined,
-      days: days.map((day, index) => ({
-        day_number: index + 1,
-        // Don't pin the generated "Day N" placeholder as real data.
-        title: day.title === `Day ${index + 1}` ? null : day.title || null,
-        summary: day.story || null,
-        meta: day.meta || null,
-        media_ids: day.photos.flatMap((photo) => photo.media_id ? [photo.media_id] : []),
-      })),
-      flights,
-      hotels,
-      activities,
-    };
+    pendingUploads.current.add(tracked);
+    setUploadingCount(pendingUploads.current.size);
+    return tracked;
   };
 
   const persistDraft = async (token: string) => {
-    await updatePackage(fetch, API_URL, token, pkg.package_id, buildSavePayload());
-    setSavedSnapshot({ days, title: packageTitle });
+    while (pendingUploads.current.size) {
+      await Promise.all([...pendingUploads.current]);
+    }
+    const persisted = await updatePackage(
+      fetch,
+      API_URL,
+      token,
+      pkg.package_id,
+      buildPackageUpdate(packageDetail, days, packageTitle),
+    );
+    const persistedDays = buildDaysFromPackage(persisted);
+    setPackageDetail(persisted);
+    setDays(persistedDays);
+    setPackageTitle(persisted.title);
+    setTitleDraft(persisted.title);
+    setPackageStatus(persisted.status ?? packageStatus);
+    setSavedSnapshot({ days: persistedDays, title: persisted.title });
+    return persisted;
   };
 
   const saveDraft = async () => {
-    if (saving || isLocked) return;
+    if (saving || submitting || uploadingCount > 0 || isLocked) return;
     setSaving(true);
     try {
       const token = await accessToken();
-      if (!token) throw new Error("Your session expired. Please sign in again.");
+      if (!token) {
+        onSessionExpired();
+        throw new Error("Your session expired. Please sign in again.");
+      }
       await persistDraft(token);
       showNotice("Draft saved");
     } catch (error) {
-      showNotice(error instanceof Error ? error.message : "Unable to save this draft.");
+      if (error instanceof CreatorApiError) {
+        if (error.status === 401) onSessionExpired();
+        if (error.status === 404 || error.status === 409) setPackageStatus("not_editable");
+      }
+      showNotice(typeof error === "object" && error !== null && "message" in error
+        ? String(error.message)
+        : "Unable to save this draft.");
     } finally {
       setSaving(false);
     }
@@ -995,9 +937,16 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
       try {
         const media = await listPackageMedia(fetch, API_URL, token, pkg.package_id);
         if (cancelled || !media.length) return;
-        setDays((current) => current.map((day, index) => index === 0
-          ? { ...day, photos: [...media.map((entry) => ({ src: entry.url, alt: entry.caption || "Trip photo", media_id: entry.media_id })), ...day.photos] }
-          : day));
+        setDays((current) => {
+          const associatedIds = new Set(current.flatMap((day) => [
+            ...day.photos.flatMap((photo) => photo.media_id ? [photo.media_id] : []),
+            ...day.items.flatMap((item) => item.photos?.flatMap((photo) => photo.media_id ? [photo.media_id] : []) ?? []),
+          ]));
+          const legacyMedia = media.filter((entry) => !associatedIds.has(entry.media_id));
+          return current.map((day, index) => index === 0 && legacyMedia.length
+            ? { ...day, photos: [...legacyMedia.map((entry) => ({ src: entry.url, alt: entry.caption || "Trip photo", media_id: entry.media_id })), ...day.photos] }
+            : day);
+        });
       } catch {
         // A photo list that won't load isn't worth blocking the editor over.
       }
@@ -1051,6 +1000,51 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
       ? { ...day, photos: day.photos.filter((entry) => entry.src !== photo.src) }
       : day));
     showNotice("Photo removed");
+  };
+
+  const addItemPhotos = async (files: File[]) => {
+    const previews = files.map((file) => ({
+      file,
+      photo: { src: URL.createObjectURL(file), alt: file.name } satisfies DayPhoto,
+    }));
+    setEditingItem((current) => current
+      ? { ...current, photos: [...current.photos, ...previews.map(({ photo }) => photo)] }
+      : current);
+    try {
+      const token = await accessToken();
+      if (!token) throw new Error("Your session expired. Please sign in again.");
+      const uploaded = await Promise.all(previews.map(async ({ file, photo }) => ({
+        preview: photo.src,
+        fileName: file.name,
+        media: await uploadPackageMedia(fetch, API_URL, token, pkg.package_id, file),
+      })));
+      setEditingItem((current) => current ? {
+        ...current,
+        photos: current.photos.map((photo) => {
+          const match = uploaded.find(({ preview }) => preview === photo.src);
+          return match
+            ? { src: match.media.url, alt: match.fileName, media_id: match.media.media_id }
+            : photo;
+        }),
+      } : current);
+      showNotice(`${files.length} photo${files.length === 1 ? "" : "s"} uploaded`);
+    } catch (error) {
+      const previewUrls = new Set(previews.map(({ photo }) => photo.src));
+      setEditingItem((current) => current
+        ? { ...current, photos: current.photos.filter((photo) => !previewUrls.has(photo.src)) }
+        : current);
+      showNotice(error instanceof Error ? error.message : "Unable to upload these photos.");
+    } finally {
+      previews.forEach(({ photo }) => URL.revokeObjectURL(photo.src));
+    }
+  };
+
+  const removeItemPhoto = (photo: DayPhoto) => {
+    // Item edits are cancellable, so remove only the association here. The
+    // package media itself remains available until a later cleanup policy.
+    setEditingItem((current) => current
+      ? { ...current, photos: current.photos.filter((entry) => entry.src !== photo.src) }
+      : current);
   };
 
   const startEditingItem = (item: TimelineItem) => {
@@ -1171,9 +1165,12 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
   const addSelectedFlight = () => {
     const flight = selectedFlightIndex !== null ? matchingFlights[selectedFlightIndex] : undefined;
     if (addingAfter === null || !flight) return;
-    const scheduleDatetime = flight.arrival_datetime ?? flight.departure_datetime;
+    const departureTime = flight.departure_time
+      || extractClockTimeInZone(flight.departure_datetime ?? null, timezoneForIata(flight.origin_iata));
+    const arrivalTime = flight.arrival_time
+      || extractClockTimeInZone(flight.arrival_datetime ?? null, timezoneForIata(flight.destination_iata));
     insertItem(addingAfter, {
-      time: extractClockTimeInZone(scheduleDatetime, timezoneForIata(flight.destination_iata ?? flight.origin_iata)) ?? "09:00",
+      time: departureTime ?? "09:00",
       type: "FLIGHT",
       title: [flight.origin_iata, flight.destination_iata].filter(Boolean).join(" to ") || flight.airline || "Flight",
       price: flight.price_aud != null ? `$${flight.price_aud.toLocaleString("en-US")}` : "$0",
@@ -1185,6 +1182,9 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
       flightNumber: flight.flight_number ?? undefined,
       departureDatetime: flight.departure_datetime ?? undefined,
       arrivalDatetime: flight.arrival_datetime ?? undefined,
+      departureTime: departureTime ?? undefined,
+      arrivalTime: arrivalTime ?? undefined,
+      duration: flight.duration_minutes ? String(flight.duration_minutes) : undefined,
       cabinClass: flight.cabin_class ?? undefined,
     });
     setFlightSearch("");
@@ -1313,6 +1313,8 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
 
   const publishButtonLabel = isLocked
     ? STATUS_LABELS[packageStatus] ?? packageStatus
+    : uploadingCount > 0
+      ? `Uploading ${uploadingCount}…`
     : submitting
       ? "Submitting…"
       : !isReadyToPublish
@@ -1324,7 +1326,7 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
   // that. The saved draft must reach the server before submit reads it, so
   // this always saves first; a save failure must never reach submitPackage.
   const handlePublish = async () => {
-    if (feasLoading || submitting || isLocked) return;
+    if (feasLoading || saving || uploadingCount > 0 || submittingRef.current || isLocked) return;
     setPreviewOpen(false);
     if (!isReadyToPublish) {
       showNotice(!feasResult
@@ -1334,19 +1336,34 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
           : "Fix critical feasibility issues and check content again before publishing.");
       return;
     }
+    submittingRef.current = true;
     setSubmitting(true);
     try {
       const token = await accessToken();
-      if (!token) throw new Error("Your session expired. Please sign in again.");
+      if (!token) {
+        onSessionExpired();
+        throw new Error("Your session expired. Please sign in again.");
+      }
       await persistDraft(token);
       const result = await submitPackage(fetch, API_URL, token, pkg.package_id);
       setPackageStatus(result.status);
+      setEditingTitle(false);
+      setEditingDayField(null);
+      setEditingItem(null);
+      setAddingAfter(null);
       showNotice("Submitted for review");
     } catch (error) {
+      if (error instanceof CreatorApiError) {
+        if (error.status === 401) onSessionExpired();
+        if (error.status === 404 || error.status === 409) setPackageStatus("not_editable");
+      }
       // A failed submit doesn't undo the save above — the draft is safely
       // stored and this can just be retried.
-      showNotice(error instanceof Error ? error.message : "Unable to submit this package for review.");
+      showNotice(typeof error === "object" && error !== null && "message" in error
+        ? String(error.message)
+        : "Unable to submit this package for review.");
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   };
@@ -1412,12 +1429,12 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
   return (
     <main className="itinerary-editor">
       <header className="editor-topbar">
-        <button className="text-action back-action" onClick={onBack} aria-label="Edit destination, travel style, duration, or season"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg> Edit trip setup</button>
-        <div className="editor-title-block"><span className="editor-kicker">AI itinerary editor</span>{editingTitle ? <input className="package-title-input" value={titleDraft} autoFocus maxLength={200} aria-label="Package title" onChange={(event) => setTitleDraft(event.target.value)} onBlur={savePackageTitle} onKeyDown={(event) => { if (event.key === "Enter") savePackageTitle(); if (event.key === "Escape") { setTitleDraft(packageTitle); setEditingTitle(false); } }} /> : <button className="package-title-button" onClick={() => { setTitleDraft(packageTitle); setEditingTitle(true); }} aria-label={`Edit package title, currently ${packageTitle}`} title="Edit package title"><h1>{packageTitle}</h1></button>}</div>
+        <button className="text-action back-action" disabled={isLocked} onClick={onBack} aria-label="Edit destination, travel style, duration, or season"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg> Edit trip setup</button>
+        <div className="editor-title-block"><span className="editor-kicker">AI itinerary editor</span>{editingTitle ? <input className="package-title-input" value={titleDraft} autoFocus maxLength={200} aria-label="Package title" onChange={(event) => setTitleDraft(event.target.value)} onBlur={savePackageTitle} onKeyDown={(event) => { if (event.key === "Enter") savePackageTitle(); if (event.key === "Escape") { setTitleDraft(packageTitle); setEditingTitle(false); } }} /> : <button className="package-title-button" disabled={isLocked} onClick={() => { setTitleDraft(packageTitle); setEditingTitle(true); }} aria-label={`Edit package title, currently ${packageTitle}`} title="Edit package title"><h1>{packageTitle}</h1></button>}</div>
         <div className="editor-actions">
-          <button className="quiet-button" disabled={saving || isLocked} onClick={() => { void saveDraft(); }}>{saving ? "Saving…" : saved ? "Saved" : "Save Draft"}</button>
+          <button className="quiet-button" disabled={saving || submitting || uploadingCount > 0 || isLocked} onClick={() => { void saveDraft(); }}>{uploadingCount > 0 ? `Uploading ${uploadingCount}…` : saving ? "Saving…" : saved ? "Saved" : "Save Draft"}</button>
           <button className="quiet-button" onClick={() => setPreviewOpen(true)}>Preview</button>
-          <button className="publish-button" disabled={feasLoading || submitting || isLocked} onClick={() => { void handlePublish(); }}>
+          <button className="publish-button" disabled={feasLoading || saving || uploadingCount > 0 || submitting || isLocked} onClick={() => { void handlePublish(); }}>
             {publishButtonLabel}
           </button>
         </div>
@@ -1432,15 +1449,15 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
         <div className="day-tabs" ref={dayTabsRef}>
           {days.map((day, index) => <div key={day.day} className={`day-tab-wrap ${activeDay === index ? "active" : ""}`}>
             <button aria-current={activeDay === index ? "page" : undefined} className={`day-tab ${activeDay === index ? "active" : ""}`} onClick={() => setActiveDay(index)}><span>DAY {day.day} <b>{day.items.length}</b></span><strong>{day.title}</strong><small>{daySubtitle(day)}</small></button>
-            <button className="delete-day-tab" disabled={days.length === 1} onClick={() => setPendingDeleteDay(index)} aria-label={`Delete Day ${day.day}`}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M6 6l12 12M18 6 6 18" /></svg></button>
+            <button className="delete-day-tab" disabled={days.length === 1 || isLocked} onClick={() => setPendingDeleteDay(index)} aria-label={`Delete Day ${day.day}`}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M6 6l12 12M18 6 6 18" /></svg></button>
           </div>)}
-          <button className="add-day" onClick={() => { const nextDay = days.length + 1; setDays([...days, { id: `day-${Date.now()}`, day: nextDay, title: "Untitled day", meta: "Add your first stop", items: [], story: "", photos: [], date: nextCalendarDate(days[days.length - 1]?.date) }]); setActiveDay(days.length); showNotice("A new day was added"); }}><Icon name="plus" size={24} /><span>Add Day</span></button>
+          <button className="add-day" disabled={isLocked} onClick={() => { const nextDay = days.length + 1; setDays([...days, { id: `day-${Date.now()}`, day: nextDay, title: "Untitled day", meta: "Add your first stop", items: [], story: "", photos: [], date: nextCalendarDate(days[days.length - 1]?.date) }]); setActiveDay(days.length); showNotice("A new day was added"); }}><Icon name="plus" size={24} /><span>Add Day</span></button>
         </div>
         <button type="button" className="day-scroll-btn" disabled={!dayScroll.canRight} onClick={() => scrollDayTabs(1)} aria-label="Scroll days right"><Icon name="chevron" size={18} /></button>
         <div className="trip-length"><strong>{days.length} days</strong><span>{Math.max(0, days.length - 1)} nights</span></div>
       </nav>
 
-      <div className="editor-shell">
+      <fieldset className="editor-shell" disabled={isLocked} aria-label={isLocked ? "Read-only itinerary" : "Itinerary editor"}>
         <div className="editor-main">
           <div className="day-heading"><div>
             <span>Day {activeDay + 1}</span>
@@ -1456,7 +1473,7 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
                 <img src={toSafeImageSrc(photo.src)} alt={photo.alt} />
                 <button type="button" className="remove-photo-btn" aria-label={`Remove ${photo.alt}`} onClick={() => { void removeDayPhoto(photo); }}><Icon name="plus" size={10} /></button>
               </figure>)}
-              <label className="photo-add"><input type="file" accept="image/png,image/jpeg" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (!file) return; void addDayPhoto(file); }} /><Icon name="plus" size={30} /><span>Add photo</span><small>JPG or PNG</small></label>
+              <label className="photo-add"><input type="file" accept="image/png,image/jpeg" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (!file) return; void trackUpload(addDayPhoto(file)); }} /><Icon name="plus" size={30} /><span>Add photo</span><small>JPG or PNG</small></label>
             </div>
           </section>
 
@@ -1608,19 +1625,17 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
                       <label className="edit-notes"><span>Notes</span><textarea value={editingItem.notes} onChange={(event) => setEditingItem({ ...editingItem, notes: event.target.value })} placeholder="Share why this is worth a stop" /></label>
                     </div>
                   </>}
-                  {/* ponytail: per-activity photos stay local blob URLs — the media API
-                      attaches files to a package, not to a timeline item. */}
                   <div className="edit-photo">
                     <div className="edit-photo-head"><span>Photos</span><small>Optional &middot; {editingItem.photos.length} / {MAX_ITEM_PHOTOS}</small></div>
                     <div>
-                      {editingItem.photos.map((photo, index) => <figure key={photo}>
-                        <img src={photo} alt={index === 0 ? "Activity cover" : "Activity photo"} />
+                      {editingItem.photos.map((photo, index) => <figure key={photo.src}>
+                        <img src={toSafeImageSrc(photo.src)} alt={photo.alt || (index === 0 ? "Activity cover" : "Activity photo")} />
                         {index === 0
                           ? <b><Icon name="star" size={10} />Cover</b>
                           : <button type="button" className="set-cover-btn" onClick={() => setEditingItem({ ...editingItem, photos: [photo, ...editingItem.photos.filter((_, i) => i !== index)] })}>Set as cover</button>}
-                        <button type="button" className="remove-photo-btn" aria-label="Remove photo" onClick={() => setEditingItem({ ...editingItem, photos: editingItem.photos.filter((_, i) => i !== index) })}><Icon name="plus" size={10} /></button>
+                        <button type="button" className="remove-photo-btn" aria-label="Remove photo" onClick={() => removeItemPhoto(photo)}><Icon name="plus" size={10} /></button>
                       </figure>)}
-                      {editingItem.photos.length < MAX_ITEM_PHOTOS && <label><input type="file" accept="image/png,image/jpeg" multiple onChange={(event) => { const files = Array.from(event.target.files ?? []).slice(0, MAX_ITEM_PHOTOS - editingItem.photos.length); if (files.length) setEditingItem({ ...editingItem, photos: [...editingItem.photos, ...files.map((file) => URL.createObjectURL(file))] }); event.target.value = ""; }} /><Icon name="plus" size={18} />Add photo</label>}
+                      {editingItem.photos.length < MAX_ITEM_PHOTOS && <label><input type="file" accept="image/png,image/jpeg" multiple onChange={(event) => { const files = Array.from(event.target.files ?? []).slice(0, MAX_ITEM_PHOTOS - editingItem.photos.length); event.target.value = ""; if (files.length) void trackUpload(addItemPhotos(files)); }} /><Icon name="plus" size={18} />Add photo</label>}
                     </div>
                   </div>
                   <div className="inline-edit-actions"><button className="item-delete" onClick={() => requestDeleteItem(item)}>Delete</button><button className="quiet-button" onClick={() => setEditingItem(null)}>Cancel</button><button className="publish-button" disabled={!editingItem.title.trim()} onClick={saveEditedItem}>Save changes</button></div>
@@ -1713,7 +1728,7 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
           <Panel title="Pricing & earnings" className="pricing-panel"><span>Total package price</span><strong>${packagePrice.toLocaleString()}</strong><hr/><span>Your commission (20%)</span><strong className="commission">${Math.round(packagePrice * .2).toLocaleString()}</strong></Panel>
           <Panel title="Route map" className="route-panel"><RouteMap stops={routeStops} /></Panel>
         </aside>
-      </div>
+      </fieldset>
       {notice && <div className="editor-toast" role="status">{notice}</div>}
       {pendingDeleteDay !== null && <div className="delete-day-backdrop" role="presentation" onMouseDown={() => setPendingDeleteDay(null)}>
         <section className="delete-day-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-day-title" aria-describedby="delete-day-description" onMouseDown={(event) => event.stopPropagation()}>
@@ -1739,7 +1754,7 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
           </div>
         </section>
       </div>}
-      {previewOpen && <div className="preview-backdrop" role="presentation" onMouseDown={() => setPreviewOpen(false)}><section className="preview-dialog" role="dialog" aria-modal="true" aria-labelledby="preview-title" onMouseDown={(event) => event.stopPropagation()}><button className="preview-close" onClick={() => setPreviewOpen(false)} aria-label="Close preview"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg></button><span>Traveller preview</span><h2 id="preview-title">{packageTitle}</h2><p>{story || "Your itinerary story will appear here. Add a personal introduction before publishing."}</p><div><strong>{days.length} days / 2 nights</strong><strong>${packagePrice.toLocaleString()}</strong></div><button className="publish-button" disabled={feasLoading || submitting || isLocked} onClick={() => { void handlePublish(); }}>{publishButtonLabel}</button></section></div>}
+      {previewOpen && <div className="preview-backdrop" role="presentation" onMouseDown={() => setPreviewOpen(false)}><section className="preview-dialog" role="dialog" aria-modal="true" aria-labelledby="preview-title" onMouseDown={(event) => event.stopPropagation()}><button className="preview-close" onClick={() => setPreviewOpen(false)} aria-label="Close preview"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg></button><span>Traveller preview</span><h2 id="preview-title">{packageTitle}</h2><p>{story || "Your itinerary story will appear here. Add a personal introduction before publishing."}</p><div><strong>{days.length} days / 2 nights</strong><strong>${packagePrice.toLocaleString()}</strong></div><button className="publish-button" disabled={feasLoading || saving || uploadingCount > 0 || submitting || isLocked} onClick={() => { void handlePublish(); }}>{publishButtonLabel}</button></section></div>}
     </main>
   );
 }

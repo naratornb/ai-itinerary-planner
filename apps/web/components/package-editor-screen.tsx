@@ -38,5 +38,11 @@ export default function PackageEditorScreen({ packageId }: { packageId: string }
   if (error) return <main className="editor-load-state" role="alert"><h1>Unable to open package</h1><p>{error}</p></main>;
   if (!pkg) return <main className="editor-load-state" aria-busy="true"><span className="editor-load-spinner" aria-hidden="true" /><p>Loading package…</p></main>;
 
-  return <ItineraryEditor pkg={pkg} onBack={() => router.push("/dashboard")} />;
+  return (
+    <ItineraryEditor
+      pkg={pkg}
+      onBack={() => router.push("/dashboard")}
+      onSessionExpired={() => router.replace("/login")}
+    />
+  );
 }

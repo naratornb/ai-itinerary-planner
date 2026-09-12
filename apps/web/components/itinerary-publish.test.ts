@@ -28,8 +28,16 @@ visit(file);
 // is async (it saves then submits over the network), so the guard clauses
 // run synchronously but the real submit path is exercised by awaiting the
 // mocked accessToken/persistDraft/submitPackage calls to resolve.
-async function clickPublish(button: ts.JsxOpeningElement, score: number | undefined, critical = false, loading = false) {
+async function clickPublish(
+  button: ts.JsxOpeningElement,
+  score: number | undefined,
+  critical = false,
+  loading = false,
+  uploadingCount = 0,
+  failure?: "save" | "submit",
+) {
   const notices: string[] = [];
+  const events: string[] = [];
   let submitting = false;
   let packageStatus = "draft";
   const context = {
@@ -38,15 +46,30 @@ async function clickPublish(button: ts.JsxOpeningElement, score: number | undefi
     hardErrors: critical ? [{}] : [],
     isReadyToPublish: score !== undefined && score >= 70 && !critical,
     feasLoading: loading,
+    saving: false,
+    uploadingCount,
     isLocked: false,
     submitting: false,
+    submittingRef: { current: false },
     showNotice: (message: string) => notices.push(message),
     setSubmitting: (value: boolean) => { submitting = value; },
     setPreviewOpen: () => {},
     setPackageStatus: (value: string) => { packageStatus = value; },
+    setEditingTitle: () => {},
+    setEditingDayField: () => {},
+    setEditingItem: () => {},
+    setAddingAfter: () => {},
+    CreatorApiError: class CreatorApiError extends Error { status = 500; },
     accessToken: async () => "token",
-    persistDraft: async () => {},
-    submitPackage: async () => ({ package_id: "pkg-1", status: "pending_review" }),
+    persistDraft: async () => {
+      events.push("save");
+      if (failure === "save") throw new Error("Save failed");
+    },
+    submitPackage: async () => {
+      events.push("submit");
+      if (failure === "submit") throw new Error("Submit failed");
+      return { package_id: "pkg-1", status: "pending_review" };
+    },
     pkg: { package_id: "pkg-1" },
     // Referenced as call arguments to submitPackage(fetch, API_URL, ...) —
     // the mock above ignores them, but they must resolve to something.
@@ -64,7 +87,7 @@ async function clickPublish(button: ts.JsxOpeningElement, score: number | undefi
     context,
   );
   await context.__result;
-  return { notices, submitting, packageStatus };
+  return { notices, submitting, packageStatus, events };
 }
 
 test("both publish buttons explain insufficient scores without publishing", async () => {
@@ -89,6 +112,21 @@ test("publish explains unchecked content and critical issues; only eligible trip
     assert.match(eligible.notices.join(" "), /submitted for review/i);
 
     const loading = await clickPublish(button, 70, false, true);
-    assert.deepEqual(loading, { notices: [], submitting: false, packageStatus: "draft" });
+    assert.deepEqual(loading, { notices: [], submitting: false, packageStatus: "draft", events: [] });
+
+    const uploading = await clickPublish(button, 70, false, false, 1);
+    assert.deepEqual(uploading, { notices: [], submitting: false, packageStatus: "draft", events: [] });
   }
+});
+
+test("a failed save never submits, while a failed submit keeps the saved draft retryable", async () => {
+  const saveFailure = await clickPublish(buttons[0], 70, false, false, 0, "save");
+  assert.deepEqual(saveFailure.events, ["save"]);
+  assert.equal(saveFailure.packageStatus, "draft");
+  assert.match(saveFailure.notices.join(" "), /save failed/i);
+
+  const submitFailure = await clickPublish(buttons[0], 70, false, false, 0, "submit");
+  assert.deepEqual(submitFailure.events, ["save", "submit"]);
+  assert.equal(submitFailure.packageStatus, "draft");
+  assert.match(submitFailure.notices.join(" "), /submit failed/i);
 });
