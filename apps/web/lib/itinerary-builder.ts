@@ -7,7 +7,8 @@ export type IconName =
   | "check"
   | "clock"
   | "chevron"
-  | "pin";
+  | "pin"
+  | "hourglass";
 
 export type TimelineItem = {
   id: number;
@@ -32,6 +33,19 @@ export type TimelineItem = {
   stayGroupId?: string;
   /** Inventory ID from the Co-Pilot suggestion this item was added from. */
   sourceId?: string;
+  // Raw source-record fields, undecorated by display formatting — kept
+  // alongside title/price/time so a save can round-trip real flight/hotel/
+  // activity data instead of re-parsing it back out of display strings.
+  originIata?: string;
+  destinationIata?: string;
+  airline?: string;
+  flightNumber?: string;
+  departureDatetime?: string;
+  arrivalDatetime?: string;
+  cabinClass?: string;
+  hotelName?: string;
+  city?: string;
+  activityDate?: string;
 };
 
 export type BuilderDay = {
@@ -42,6 +56,8 @@ export type BuilderDay = {
   items: TimelineItem[];
   story: string;
   photos: DayPhoto[];
+  /** This day's real calendar date (YYYY-MM-DD), when one is known. */
+  date?: string | null;
 };
 
 /** `media_id` is absent while an optimistic blob preview is still uploading. */
@@ -57,6 +73,12 @@ export function computePackagePrice(days: BuilderDay[]): number {
     .flatMap((day) => day.items)
     .filter((item) => item.stayMarker !== "check-out")
     .reduce((sum, item) => sum + (Number(item.price.replace(/[^0-9.]/g, "")) || 0), 0);
+}
+
+/** The calendar date one day after `dateStr`, or today when there's no prior date to anchor from. */
+export function nextCalendarDate(dateStr?: string | null): string {
+  const base = dateStr ? new Date(`${dateStr}T00:00:00Z`).getTime() : Date.now();
+  return new Date(base + 86_400_000).toISOString().slice(0, 10);
 }
 
 /** Day-tab subtitle: the day's story, clipped for the narrow tab. */
@@ -176,6 +198,7 @@ export function copilotSuggestionToTimelineItem(
     duration: String(Math.round((suggestion.duration_hours ?? 1) * 60)),
     notes: suggestion.why_recommended,
     sourceId: suggestion.item_id,
+    city: suggestion.city,
   };
 }
 import type { CopilotSuggestionV1 } from "./copilot";
@@ -261,6 +284,7 @@ export function buildDaysFromPackage(pkg: CreatorPackageDetail): BuilderDay[] {
       items: [],
       story: meta?.summary || "",
       photos: [],
+      date: new Date(anchor + index * 86_400_000).toISOString().slice(0, 10),
     };
   });
 
@@ -278,6 +302,8 @@ export function buildDaysFromPackage(pkg: CreatorPackageDetail): BuilderDay[] {
       address: activity.city || undefined,
       duration: activity.duration_hours ? String(Math.round(activity.duration_hours * 60)) : undefined,
       notes: activity.description || undefined,
+      city: activity.city || undefined,
+      activityDate: activity.activity_date || undefined,
     });
   }
 
@@ -297,6 +323,13 @@ export function buildDaysFromPackage(pkg: CreatorPackageDetail): BuilderDay[] {
       price: `$${flight.price_aud ?? 0}`,
       icon: "plane",
       status: "pass",
+      originIata: flight.origin_iata ?? undefined,
+      destinationIata: flight.destination_iata ?? undefined,
+      airline: flight.airline ?? undefined,
+      flightNumber: flight.flight_number ?? undefined,
+      departureDatetime: flight.departure_datetime ?? undefined,
+      arrivalDatetime: flight.arrival_datetime ?? undefined,
+      cabinClass: flight.cabin_class ?? undefined,
     });
   }
 
@@ -330,6 +363,8 @@ export function buildDaysFromPackage(pkg: CreatorPackageDetail): BuilderDay[] {
         starRating: hotel.star_rating || undefined,
         stayMarker: offset === 0 ? "check-in" : isCheckOut ? "check-out" : undefined,
         stayGroupId,
+        hotelName: hotel.hotel_name ?? undefined,
+        city: hotel.city ?? undefined,
       });
     }
   }

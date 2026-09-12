@@ -14,6 +14,7 @@ import {
   extractClockTimeInZone,
   getEndTime,
   insertItemInDay,
+  nextCalendarDate,
   removeDay,
   timezoneForIata,
   type BuilderDay,
@@ -27,9 +28,13 @@ import {
   listPackageMedia,
   updatePackage,
   uploadPackageMedia,
+  type ActivityInput,
   type CreatorFlightDetail,
   type CreatorHotelDetail,
   type CreatorPackageDetail,
+  type FlightInput,
+  type HotelInput,
+  type UpdatePackageInput,
 } from "../lib/creator-api";
 import { supabase } from "../lib/supabase/client";
 
@@ -76,6 +81,7 @@ function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
     clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
     chevron: <path d="m9 5 7 7-7 7" />,
     pin: <><path d="M12 21s7-6.1 7-11.5A7 7 0 0 0 5 9.5C5 14.9 12 21 12 21Z" /><circle cx="12" cy="9.5" r="2.3" /></>,
+    hourglass: <><path d="M5 22h14" /><path d="M5 2h14" /><path d="M17 22v-4.17a2 2 0 0 0-.59-1.42L12 12l-4.41 4.41A2 2 0 0 0 7 17.83V22" /><path d="M7 2v4.17a2 2 0 0 0 .59 1.42L12 12l4.41-4.41A2 2 0 0 0 17 6.17V2" /></>,
   };
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
 }
@@ -86,6 +92,7 @@ const LONG_ACTIVITY_MIN = 240;   // minutes — 4 hours
 
 const ACTIVITY_CATEGORIES = ["Activity", "Restaurant", "Shopping", "Attraction", "Other"];
 const DURATION_OPTIONS = ["30", "60", "90", "120", "180"];
+const MAX_ITEM_PHOTOS = 6;
 
 const NEW_DAY_OPTION_ID = "__new-day__";
 
@@ -150,6 +157,17 @@ function withWrapBeforeSlash(text: string) {
   const index = text.indexOf("/");
   if (index === -1) return text;
   return <>{text.slice(0, index)}<wbr /><span className="item-price-unit">{text.slice(index)}</span></>;
+}
+
+// "168 min" reads slower than "2h 48m" — raw minutes stay available as a
+// tooltip for anyone who wants the exact figure.
+function formatDuration(minutesText: string) {
+  const total = Number(minutesText) || 0;
+  const hours = Math.floor(total / 60);
+  const minutes = total % 60;
+  if (hours === 0) return `${minutes}m`;
+  if (minutes === 0) return `${hours}h`;
+  return `${hours}h ${minutes}m`;
 }
 
 // Placeholder until hotels carry a real check-in/check-out time — the
@@ -511,6 +529,8 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
   const [feasLoading, setFeasLoading] = useState(false);
   const [activeDay, setActiveDay] = useState(0);
   const [days, setDays] = useState(() => buildDaysFromPackage(pkg));
+  const dayTabsRef = useRef<HTMLDivElement>(null);
+  const [dayScroll, setDayScroll] = useState({ canLeft: false, canRight: false });
   const [savedSnapshot, setSavedSnapshot] = useState<{ days: BuilderDay[]; title: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const [published, setPublished] = useState(false);
@@ -714,6 +734,26 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [pendingDeleteItemId]);
 
+  // The day strip only scrolls via trackpad/shift-wheel — a plain mouse has
+  // no way to move it sideways, so arrow buttons need to know when there's
+  // anywhere left to scroll.
+  useEffect(() => {
+    const el = dayTabsRef.current;
+    if (!el) return;
+    const update = () => setDayScroll({
+      canLeft: el.scrollLeft > 1,
+      canRight: el.scrollLeft + el.clientWidth < el.scrollWidth - 1,
+    });
+    update();
+    el.addEventListener("scroll", update);
+    window.addEventListener("resize", update);
+    return () => { el.removeEventListener("scroll", update); window.removeEventListener("resize", update); };
+  }, [days.length]);
+
+  const scrollDayTabs = (direction: 1 | -1) => {
+    dayTabsRef.current?.scrollBy({ left: direction * 240, behavior: "smooth" });
+  };
+
   // Debounced so a fast typist doesn't fire a query per keystroke; queries the
   // real activities catalog directly (RLS grants public SELECT — see
   // supabase/migrations/0003_rls_policies.sql), not just a handful of AI-picked
@@ -780,25 +820,117 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
 
   const accessToken = async () => (await supabase.auth.getSession()).data.session?.access_token ?? null;
 
-  // ponytail: only title, price, and the day titles/summaries are synced back —
-  // timeline items, hotels, and flights stay local. The API replaces those by
-  // delete/re-add, which is a separate feature.
+  const priceNumber = (price: string) => Number(price.replace(/[^0-9.]/g, "")) || null;
+
+  // Builds the full save payload from local editor state. Metadata (title,
+  // description, destination, duration, group size, tags) and day title/
+  // summary are already persisted by PUT /packages/{id} today. Day
+  // meta/media_ids and flights/hotels/activities are not — the backend
+  // still silently ignores them (see the save/submit handover doc) — but
+  // sending them now means the editor round-trips real content the moment
+  // that support lands, with no FE change needed. Items that can't be
+  // represented without data the source never carried (e.g. a Co-Pilot
+  // flight/hotel pick, which has no IATA codes or room data) are left out
+  // rather than sent with fabricated values.
+  const buildSavePayload = (): UpdatePackageInput => {
+    const flat = days.flatMap((day, dayIndex) =>
+      day.items.map((item, itemIndex) => ({ item, day, dayIndex, itemIndex })));
+
+    const flights: FlightInput[] = flat
+      .filter(({ item }) => item.type === "FLIGHT" && item.originIata && item.destinationIata && item.departureDatetime && item.arrivalDatetime)
+      .map(({ item, dayIndex, itemIndex }) => ({
+        origin_iata: item.originIata!,
+        destination_iata: item.destinationIata!,
+        airline: item.airline || "Unknown",
+        flight_number: item.flightNumber || null,
+        departure_datetime: item.departureDatetime!,
+        arrival_datetime: item.arrivalDatetime!,
+        cabin_class: item.cabinClass || null,
+        price_aud: priceNumber(item.price),
+        day_number: dayIndex + 1,
+        sequence_order: itemIndex,
+        source_id: item.sourceId || null,
+      }));
+
+    // A creator pick is a manually-authored recommendation, not a catalog
+    // activity, but the backend has one array for both (per the handover
+    // doc's field mapping) — there's no separate "creator pick" concept.
+    const activities: ActivityInput[] = flat
+      .filter(({ item }) => item.type === "ACTIVITY" || item.type === "CREATOR PICK")
+      .map(({ item, day, dayIndex, itemIndex }) => ({
+        activity_name: item.title,
+        activity_date: item.activityDate || day.date || new Date().toISOString().slice(0, 10),
+        city: item.city || pkg.destination_city || "",
+        duration_hours: item.duration ? Number(item.duration) / 60 : null,
+        price_aud: priceNumber(item.price),
+        description: item.notes || null,
+        day_number: dayIndex + 1,
+        sequence_order: itemIndex,
+        start_time: item.time || null,
+        category: item.category || null,
+        address: item.address || null,
+        source_id: item.sourceId || null,
+      }));
+
+    // One stay record per stayGroupId, not one per rendered check-in/night/
+    // check-out row — check-in/out dates come from where those marker rows
+    // now live, since the user can move them independently of the source
+    // booking's original dates.
+    const stayGroupIds = [...new Set(flat.filter(({ item }) => item.type === "HOTEL" && item.stayGroupId).map(({ item }) => item.stayGroupId!))];
+    const hotels: HotelInput[] = stayGroupIds.flatMap((groupId) => {
+      const group = flat.filter(({ item }) => item.stayGroupId === groupId);
+      const checkIn = group.find(({ item }) => item.stayMarker === "check-in") ?? group[0];
+      const checkOut = group.find(({ item }) => item.stayMarker === "check-out") ?? group[group.length - 1];
+      const base = checkIn.item;
+      if (!base.hotelName) return [];
+      return [{
+        hotel_name: base.hotelName,
+        star_rating: base.starRating ?? null,
+        city: base.city || pkg.destination_city || "",
+        address: base.address || null,
+        check_in_date: checkIn.day.date || base.checkIn || new Date().toISOString().slice(0, 10),
+        check_out_date: checkOut.day.date || base.checkOut || new Date().toISOString().slice(0, 10),
+        price_per_night_aud: priceNumber(base.price),
+        room_type: base.roomType || null,
+        day_number: checkIn.dayIndex + 1,
+        source_id: base.sourceId || null,
+      }];
+    });
+
+    return {
+      title: packageTitle,
+      base_price_aud: Math.round(packagePrice),
+      // Not editable on this screen (that's "Edit trip setup"), but the
+      // backend already accepts and persists these on PUT today — round-
+      // tripping the loaded value keeps this save from being metadata-only
+      // by omission.
+      description: pkg.description ?? undefined,
+      destination_country: pkg.destination_country ?? undefined,
+      destination_city: pkg.destination_city ?? undefined,
+      duration_days: pkg.duration_days,
+      max_group_size: pkg.max_group_size ?? undefined,
+      tags: pkg.tags ?? undefined,
+      days: days.map((day, index) => ({
+        day_number: index + 1,
+        // Don't pin the generated "Day N" placeholder as real data.
+        title: day.title === `Day ${index + 1}` ? null : day.title || null,
+        summary: day.story || null,
+        meta: day.meta || null,
+        media_ids: day.photos.flatMap((photo) => photo.media_id ? [photo.media_id] : []),
+      })),
+      flights,
+      hotels,
+      activities,
+    };
+  };
+
   const saveDraft = async () => {
     if (saving) return;
     setSaving(true);
     try {
       const token = await accessToken();
       if (!token) throw new Error("Your session expired. Please sign in again.");
-      await updatePackage(fetch, API_URL, token, pkg.package_id, {
-        title: packageTitle,
-        base_price_aud: Math.round(packagePrice),
-        days: days.map((day, index) => ({
-          day_number: index + 1,
-          // Don't pin the generated "Day N" placeholder as real data.
-          title: day.title === `Day ${index + 1}` ? null : day.title || null,
-          summary: day.story || null,
-        })),
-      });
+      await updatePackage(fetch, API_URL, token, pkg.package_id, buildSavePayload());
       setSavedSnapshot({ days, title: packageTitle });
       showNotice("Draft saved");
     } catch (error) {
@@ -1019,6 +1151,9 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
       price: activityDraft.price.trim() ? `$${activityDraft.price.trim()}` : "$0",
       icon: "star",
       status: "pass",
+      address: activityDraft.address.trim() || undefined,
+      duration: activityDraft.duration,
+      notes: activityDraft.notes.trim() || undefined,
     });
     setActivityDraft({ title: "", price: "", address: "", startTime: "12:00", duration: "30", notes: "" });
   };
@@ -1034,6 +1169,13 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
       price: flight.price_aud != null ? `$${flight.price_aud.toLocaleString("en-US")}` : "$0",
       icon: "plane",
       status: "pass",
+      originIata: flight.origin_iata ?? undefined,
+      destinationIata: flight.destination_iata ?? undefined,
+      airline: flight.airline ?? undefined,
+      flightNumber: flight.flight_number ?? undefined,
+      departureDatetime: flight.departure_datetime ?? undefined,
+      arrivalDatetime: flight.arrival_datetime ?? undefined,
+      cabinClass: flight.cabin_class ?? undefined,
     });
     setFlightSearch("");
     setSelectedFlightIndex(null);
@@ -1069,7 +1211,7 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
       const next = [...current];
       while (next.length <= checkOutIndex) {
         const dayNumber = next.length + 1;
-        next.push({ id: `day-${Date.now()}-${dayNumber}`, day: dayNumber, title: "Untitled day", meta: "Add your first stop", items: [], story: "", photos: [] });
+        next.push({ id: `day-${Date.now()}-${dayNumber}`, day: dayNumber, title: "Untitled day", meta: "Add your first stop", items: [], story: "", photos: [], date: nextCalendarDate(next[next.length - 1]?.date) });
       }
       for (let offset = 0; offset <= nights; offset += 1) {
         nextItemId.current += 1;
@@ -1094,6 +1236,8 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
           starRating: selectedHotelOption.star_rating ?? undefined,
           stayMarker: offset === 0 ? "check-in" : isCheckOutDay ? "check-out" : undefined,
           stayGroupId,
+          hotelName: selectedHotelOption.hotel_name ?? undefined,
+          city: selectedHotelOption.city ?? undefined,
         };
         const dayIndex = checkInIndex + offset;
         next[dayIndex] = { ...next[dayIndex], items: [...next[dayIndex].items, item] };
@@ -1117,6 +1261,10 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
       price: creatorDraft.price.trim() ? `$${creatorDraft.price.trim()}` : "$0",
       icon: "star",
       status: "pass",
+      category: creatorDraft.category,
+      address: creatorDraft.address.trim() || undefined,
+      duration: creatorDraft.duration,
+      notes: creatorDraft.reason.trim() || undefined,
     });
     setCreatorDraft({ title: "", category: "Activity", address: "", time: "12:00", duration: "60", price: "", reason: "" });
   };
@@ -1241,13 +1389,15 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
       </header>
 
       <nav className="day-strip" aria-label="Itinerary days">
-        <div className="day-tabs">
+        <button type="button" className="day-scroll-btn" disabled={!dayScroll.canLeft} onClick={() => scrollDayTabs(-1)} aria-label="Scroll days left"><Icon name="chevron" size={18} /></button>
+        <div className="day-tabs" ref={dayTabsRef}>
           {days.map((day, index) => <div key={day.day} className={`day-tab-wrap ${activeDay === index ? "active" : ""}`}>
             <button aria-current={activeDay === index ? "page" : undefined} className={`day-tab ${activeDay === index ? "active" : ""}`} onClick={() => setActiveDay(index)}><span>DAY {day.day} <b>{day.items.length}</b></span><strong>{day.title}</strong><small>{daySubtitle(day)}</small></button>
             <button className="delete-day-tab" disabled={days.length === 1} onClick={() => setPendingDeleteDay(index)} aria-label={`Delete Day ${day.day}`}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M6 6l12 12M18 6 6 18" /></svg></button>
           </div>)}
-          <button className="add-day" onClick={() => { const nextDay = days.length + 1; setDays([...days, { id: `day-${Date.now()}`, day: nextDay, title: "Untitled day", meta: "Add your first stop", items: [], story: "", photos: [] }]); setActiveDay(days.length); showNotice("A new day was added"); }}><Icon name="plus" size={24} /><span>Add Day</span></button>
+          <button className="add-day" onClick={() => { const nextDay = days.length + 1; setDays([...days, { id: `day-${Date.now()}`, day: nextDay, title: "Untitled day", meta: "Add your first stop", items: [], story: "", photos: [], date: nextCalendarDate(days[days.length - 1]?.date) }]); setActiveDay(days.length); showNotice("A new day was added"); }}><Icon name="plus" size={24} /><span>Add Day</span></button>
         </div>
+        <button type="button" className="day-scroll-btn" disabled={!dayScroll.canRight} onClick={() => scrollDayTabs(1)} aria-label="Scroll days right"><Icon name="chevron" size={18} /></button>
         <div className="trip-length"><strong>{days.length} days</strong><span>{Math.max(0, days.length - 1)} nights</span></div>
       </nav>
 
@@ -1261,7 +1411,7 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
           </div></div>
 
           <section className="story-section">
-            <div className="section-label"><h3>Tell your story</h3><span>{photos.length} uploaded</span></div>
+            <div className="section-label"><h3>Day photos</h3><span>{photos.length} uploaded</span></div>
             <div className="photo-grid">
               {photos.map((photo) => <figure key={photo.src}>
                 <img src={toSafeImageSrc(photo.src)} alt={photo.alt} />
@@ -1278,7 +1428,7 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
 
           <section className="timeline-section">
             <h3>Timeline</h3>
-            <div className="timeline-list">
+            <div className={`timeline-list${items.length === 0 ? " is-empty" : ""}`}>
               {items.map((item, index) => {
                 const flightIndex = items.slice(0, index).filter(({ type }) => type === "FLIGHT").length;
                 const flight = item.type === "FLIGHT" ? flights[flightIndex] : undefined;
@@ -1387,19 +1537,26 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
                       <div className="detail-card-top">
                         <div className="detail-card-heading">
                           <span className="detail-card-badge"><Icon name="star" size={14} />{editingItem.category}</span>
-                          <div className="detail-card-title-row">
-                            <h3>{editingItem.title}</h3>
-                            <p className="detail-card-subtitle"><Icon name="pin" size={14} />{editingItem.address || "Address not provided"}</p>
-                          </div>
+                          <h3>{editingItem.title}</h3>
+                          <p className="detail-card-subtitle"><Icon name="pin" size={14} />{editingItem.address || "Address not provided"}</p>
                         </div>
                       </div>
                       <div className="activity-card-stats">
-                        <div className="activity-card-stat"><Icon name="clock" size={16} /><span><small>Start time</small><div className="activity-card-time-field"><input type="time" className="activity-card-time-input" aria-label="Start time" value={editingItem.time} onChange={(event) => setEditingItem({ ...editingItem, time: event.target.value })} onClick={(event) => { try { event.currentTarget.showPicker(); } catch { /* unsupported browser: native click behavior still works */ } }} /></div></span></div>
-                        <div className="activity-card-duration"><span className="activity-card-duration-label">{editingItem.duration} min</span></div>
-                        <div className="activity-card-stat"><Icon name="clock" size={16} /><span><small>Ends at</small><strong>{getEndTime(editingItem.time, editingItem.duration)}</strong></span></div>
+                        <div className="activity-card-stat">
+                          <small>Start time</small>
+                          <span className="activity-card-stat-value"><Icon name="clock" size={16} /><div className="activity-card-time-field"><input type="time" className="activity-card-time-input" aria-label="Start time" value={editingItem.time} onChange={(event) => setEditingItem({ ...editingItem, time: event.target.value })} onClick={(event) => { try { event.currentTarget.showPicker(); } catch { /* unsupported browser: native click behavior still works */ } }} /></div></span>
+                        </div>
+                        <div className="activity-card-stat">
+                          <small>Duration</small>
+                          <span className="activity-card-stat-value"><Icon name="hourglass" size={16} /><strong title={`${editingItem.duration} min`}>{formatDuration(editingItem.duration)}</strong></span>
+                        </div>
+                        <div className="activity-card-stat">
+                          <small>End time</small>
+                          <span className="activity-card-stat-value"><Icon name="clock" size={16} /><strong>{getEndTime(editingItem.time, editingItem.duration)}</strong></span>
+                        </div>
                       </div>
                     </div>
-                    <label className="activity-card-notes"><span>Notes</span><div className="activity-card-notes-field"><textarea value={editingItem.notes} maxLength={500} onChange={(event) => setEditingItem({ ...editingItem, notes: event.target.value })} placeholder="Share why this is worth a stop" /><small>{editingItem.notes.length} / 500</small></div></label>
+                    <label className="activity-card-notes"><span>Notes</span><div className="activity-card-notes-field"><textarea ref={(el) => { if (el) { el.style.height = "auto"; el.style.height = `${el.scrollHeight}px`; } }} value={editingItem.notes} maxLength={500} onChange={(event) => { event.currentTarget.style.height = "auto"; event.currentTarget.style.height = `${event.currentTarget.scrollHeight}px`; setEditingItem({ ...editingItem, notes: event.target.value }); }} placeholder="Share why this is worth a stop" /><small>{editingItem.notes.length} / 500</small></div></label>
                   </> : <>
                     <div className="edit-categories"><span>Category</span><div>{ACTIVITY_CATEGORIES.map((category) => <button key={category} className={editingItem.category === category ? "selected" : ""} onClick={() => setEditingItem({ ...editingItem, category })}>{category}</button>)}</div></div>
                     <div className="inline-edit-grid activity-details-grid">
@@ -1415,7 +1572,7 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
                   {/* ponytail: per-activity photos stay local blob URLs — the media API
                       attaches files to a package, not to a timeline item. */}
                   <div className="edit-photo">
-                    <span>Photos <small>Optional</small></span>
+                    <div className="edit-photo-head"><span>Photos</span><small>Optional &middot; {editingItem.photos.length} / {MAX_ITEM_PHOTOS}</small></div>
                     <div>
                       {editingItem.photos.map((photo, index) => <figure key={photo}>
                         <img src={photo} alt={index === 0 ? "Activity cover" : "Activity photo"} />
@@ -1424,14 +1581,21 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
                           : <button type="button" className="set-cover-btn" onClick={() => setEditingItem({ ...editingItem, photos: [photo, ...editingItem.photos.filter((_, i) => i !== index)] })}>Set as cover</button>}
                         <button type="button" className="remove-photo-btn" aria-label="Remove photo" onClick={() => setEditingItem({ ...editingItem, photos: editingItem.photos.filter((_, i) => i !== index) })}><Icon name="plus" size={10} /></button>
                       </figure>)}
-                      <label><input type="file" accept="image/png,image/jpeg" multiple onChange={(event) => { const files = Array.from(event.target.files ?? []); if (files.length) setEditingItem({ ...editingItem, photos: [...editingItem.photos, ...files.map((file) => URL.createObjectURL(file))] }); event.target.value = ""; }} /><Icon name="plus" size={18} />Add photo</label>
+                      {editingItem.photos.length < MAX_ITEM_PHOTOS && <label><input type="file" accept="image/png,image/jpeg" multiple onChange={(event) => { const files = Array.from(event.target.files ?? []).slice(0, MAX_ITEM_PHOTOS - editingItem.photos.length); if (files.length) setEditingItem({ ...editingItem, photos: [...editingItem.photos, ...files.map((file) => URL.createObjectURL(file))] }); event.target.value = ""; }} /><Icon name="plus" size={18} />Add photo</label>}
                     </div>
                   </div>
                   <div className="inline-edit-actions"><button className="item-delete" onClick={() => requestDeleteItem(item)}>Delete</button><button className="quiet-button" onClick={() => setEditingItem(null)}>Cancel</button><button className="publish-button" disabled={!editingItem.title.trim()} onClick={saveEditedItem}>Save changes</button></div>
                 </section>}
                 <AddStopFlow index={index} {...addFlowProps} />
               </div>})}
-              {items.length === 0 && <AddStopFlow index={-1} {...addFlowProps} />}
+              {items.length === 0 && (addingAfter === -1
+                ? <AddStopFlow index={-1} {...addFlowProps} />
+                : <div className="timeline-empty">
+                    <span className="timeline-empty-icon"><Icon name="pin" size={22} /></span>
+                    <p>No stops yet</p>
+                    <small>Add a flight, hotel, or activity to start building this day.</small>
+                    <button type="button" className="timeline-empty-add" onClick={() => openAddFlow(-1)}><Icon name="plus" size={14} /> Add stop</button>
+                  </div>)}
             </div>
           </section>
         </div>

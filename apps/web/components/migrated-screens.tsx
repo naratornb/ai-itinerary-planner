@@ -6,6 +6,7 @@ import type { Session } from "@supabase/supabase-js";
 
 import {
   createPackage,
+  deletePackage,
   fetchOwnPackages,
   formatCreatorPackage,
   resolveCreatorProfile,
@@ -1095,7 +1096,43 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
   const [activeTab, setActiveTab] = useState("All");
   const [hovRow, setHovRow] = useState<string | null>(null);
   const [searchQ, setSearchQ] = useState("");
+  const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string } | null>(null);
+  const [deleteError, setDeleteError] = useState("");
+  const [isDeleting, setIsDeleting] = useState(false);
   const tabs = ["All", "Approved", "Under review", "Drafts"];
+
+  useEffect(() => {
+    if (!pendingDelete) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setPendingDelete(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [pendingDelete]);
+
+  const confirmDeletePackage = async () => {
+    if (!pendingDelete) return;
+    setIsDeleting(true);
+    setDeleteError("");
+    try {
+      const { data } = await supabase.auth.getSession();
+      const accessToken = data.session?.access_token;
+      if (!accessToken) {
+        router.replace("/login");
+        return;
+      }
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      await deletePackage(fetch, apiUrl, accessToken, pendingDelete.id);
+      setPendingDelete(null);
+      await loadPackages();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to delete this package.";
+      setDeleteError(message);
+      if (message.includes("sign in again")) router.replace("/login");
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   const loadPackages = async () => {
     setIsLoading(true);
@@ -1162,7 +1199,7 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
   ];
 
   const cols = {
-    grid: "minmax(0,1.8fr) minmax(140px,1fr) 100px 120px 140px 150px",
+    grid: "minmax(0,1.8fr) minmax(140px,1fr) 100px 120px 140px 220px",
     headers: [
       { h: "Package",        align: "left"  },
       { h: "Destination",    align: "left"  },
@@ -1371,7 +1408,7 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
                 </div>
 
                 {/* Row action */}
-                <div style={{ textAlign: "right" }}>
+                <div style={{ textAlign: "right", display: "flex", justifyContent: "flex-end", gap: 8 }}>
                   <button style={{
                     fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 500,
                     color: C.ink, background: "none",
@@ -1384,6 +1421,20 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
                     onMouseEnter={(e) => { e.currentTarget.style.borderColor = "#9E9E9E"; }}
                     onMouseLeave={(e) => { e.currentTarget.style.borderColor = C.border; }}
                   >{pkg.rowAction}</button>
+                  {pkg.statusKey === "draft" && (
+                    <button style={{
+                      fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 500,
+                      color: C.red, background: "none",
+                      border: `1px solid ${C.border}`,
+                      borderRadius: 6, padding: "5px 14px", cursor: "pointer",
+                      whiteSpace: "nowrap",
+                      opacity: hov ? 1 : 0.75, transition: "opacity 140ms, border-color 140ms",
+                    }}
+                      onClick={() => { setDeleteError(""); setPendingDelete({ id: pkg.id, name: pkg.name }); }}
+                      onMouseEnter={(e) => { e.currentTarget.style.borderColor = C.red; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.borderColor = C.border; }}
+                    >Delete</button>
+                  )}
                 </div>
               </div>
             );
@@ -1391,6 +1442,29 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
         </div>
 
       </div>
+
+      {pendingDelete && (
+        <div className="delete-day-backdrop" role="presentation" onMouseDown={() => !isDeleting && setPendingDelete(null)}>
+          <section
+            className="delete-day-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-package-title"
+            aria-describedby="delete-package-description"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <h2 id="delete-package-title">Delete &ldquo;{pendingDelete.name}&rdquo;?</h2>
+            <p id="delete-package-description">This draft package will be permanently deleted. This cannot be undone.</p>
+            {deleteError && <p role="alert" style={{ color: "#B42318", margin: "0 0 12px", fontSize: 14 }}>{deleteError}</p>}
+            <div className="delete-day-actions">
+              <button className="quiet-button" autoFocus disabled={isDeleting} onClick={() => setPendingDelete(null)}>Cancel</button>
+              <button className="confirm-delete-button" disabled={isDeleting} onClick={() => void confirmDeletePackage()}>
+                {isDeleting ? "Deleting…" : "Delete package"}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }
@@ -1882,24 +1956,22 @@ export function BuilderScreen({ onNav }: { onNav: (s: Screen) => void }) {
 }
 
 // ─── AI Wizard Screen ──────────────────────────────────────────────────────────
-const DESTINATIONS = [
-  { name: "Tokyo, Japan",      tags: ["Food & Culture", "City"],   img: "https://images.unsplash.com/photo-1513407030348-c983a97b98d8?w=400&h=180&fit=crop" },
-  { name: "Paris, France",     tags: ["Romance", "Culture"],       img: "https://images.unsplash.com/photo-1511739001486-6bfe10ce785f?w=400&h=180&fit=crop" },
-  { name: "Bali, Indonesia",   tags: ["Beach", "Wellness"],        img: "https://images.unsplash.com/photo-1555400038-63f5ba517a47?w=400&h=180&fit=crop" },
-  { name: "Iceland",           tags: ["Nature", "Adventure"],      img: "https://images.unsplash.com/photo-1488415032361-b7e238421f1b?w=400&h=180&fit=crop" },
-  { name: "New York, USA",     tags: ["City", "Shopping"],         img: "https://images.unsplash.com/photo-1496588152823-86ff7695e68f?w=400&h=180&fit=crop" },
-  { name: "Santorini, Greece", tags: ["Beach", "Romance"],         img: "https://images.unsplash.com/photo-1672622851784-0dbd3df4c088?w=400&h=180&fit=crop" },
-];
-
 const WIZARD_STEPS = ["Destination", "Travel style", "Duration", "Season"];
 
+type DestinationOption = { city: string; country: string; avgRating: number };
+
+// A destination needs at least this many catalog activities before it's
+// eligible for "Recommended" — otherwise a high average rating could be an
+// artifact of two or three activities, not a real signal the creator can build on.
+const MIN_ACTIVITIES_FOR_RECOMMENDATION = 10;
+
 const VIBES = [
-  { id: "chill",      label: "Chill",            desc: "Slow-paced, relaxing travel with minimal planning", img: "https://images.unsplash.com/photo-1602002418816-5c0aeef426aa?w=600&h=320&fit=crop" },
-  { id: "adventure",  label: "Adventure",        desc: "Active experiences and outdoor activities",          img: "https://images.unsplash.com/photo-1533240332313-0db49b459ad6?w=600&h=320&fit=crop" },
-  { id: "luxury",     label: "Luxury",           desc: "Premium stays and high-end, curated experiences",    img: "https://images.unsplash.com/photo-1551918120-9739cb430c6d?w=600&h=320&fit=crop" },
-  { id: "local",      label: "Local Experience", desc: "Authentic, immersive moments with local culture",     img: "https://images.unsplash.com/photo-1747396108528-682b02327818?w=600&h=320&fit=crop" },
-  { id: "foodie",     label: "Foodie",           desc: "Explore destinations through food and drink",         img: "https://images.unsplash.com/photo-1777576506689-d28f3b4cb33a?w=600&h=320&fit=crop" },
-  { id: "scenic",     label: "Scenic",           desc: "Beautiful views, nature, and photo-worthy spots",      img: "https://images.unsplash.com/photo-1626948688703-0136bc0a90da?w=600&h=320&fit=crop" },
+  { id: "chill",      label: "Chill",            desc: "Spa days, yoga sessions, and slow-paced downtime",          img: "https://images.unsplash.com/photo-1602002418816-5c0aeef426aa?w=600&h=320&fit=crop" },
+  { id: "adventure",  label: "Adventure",        desc: "Active experiences and outdoor activities",                 img: "https://images.unsplash.com/photo-1533240332313-0db49b459ad6?w=600&h=320&fit=crop" },
+  { id: "luxury",     label: "Luxury",           desc: "Premium stays and high-end, curated experiences",           img: "https://images.unsplash.com/photo-1551918120-9739cb430c6d?w=600&h=320&fit=crop" },
+  { id: "local",      label: "Local Experience", desc: "Walking tours, museums, and hands-on culture classes",      img: "https://images.unsplash.com/photo-1747396108528-682b02327818?w=600&h=320&fit=crop" },
+  { id: "foodie",     label: "Foodie",           desc: "Street food tours, cooking classes, and night markets",     img: "https://images.unsplash.com/photo-1777576506689-d28f3b4cb33a?w=600&h=320&fit=crop" },
+  { id: "scenic",     label: "Scenic",           desc: "Countryside day trips, river cruises, and scenic viewpoints", img: "https://images.unsplash.com/photo-1626948688703-0136bc0a90da?w=600&h=320&fit=crop" },
 ];
 
 const DURATION_DAYS = { short: 4, mid: 7, long: 12 } as const;
@@ -1922,7 +1994,7 @@ export function wizardDraftToPackageInput(draft: {
     description: `AI-planned ${vibes ? `${vibes} ` : ""}itinerary for ${draft.season}.`,
     destination_city: city,
     destination_country: country,
-    duration_days: draft.duration === "custom" ? Math.max(1, draft.customDurationDays) : DURATION_DAYS[draft.duration],
+    duration_days: draft.duration === "custom" ? Math.max(2, draft.customDurationDays) : DURATION_DAYS[draft.duration],
     base_price_aud: 0,
     max_group_size: null,
   };
@@ -1934,6 +2006,11 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
   const [selected, setSelected] = useState<string | null>(null);
   const [dest, setDest] = useState("");
   const [destinationSearch, setDestinationSearch] = useState("");
+  const [destinations, setDestinations] = useState<DestinationOption[]>([]);
+  const [recommended, setRecommended] = useState<DestinationOption[]>([]);
+  const [destinationsLoading, setDestinationsLoading] = useState(true);
+  const [destinationDropdownOpen, setDestinationDropdownOpen] = useState(false);
+  const [recommendationInfoOpen, setRecommendationInfoOpen] = useState(false);
   const [hovCard, setHovCard] = useState<string | null>(null);
   const [vibes, setVibes] = useState<string[]>([]);
   const [duration, setDuration] = useState<"short" | "mid" | "long" | "custom" | null>(null);
@@ -1952,13 +2029,73 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
     setStep(requestedStep);
   }, [requestedStep, stepRequestId]);
 
+  // The catalog only has ~70 distinct city/country pairs, so one fetch on
+  // mount (RLS grants public SELECT — see supabase/migrations/0003_rls_policies.sql)
+  // covers the whole picker; filtering then happens client-side with no
+  // re-fetch per keystroke. PostgREST caps a single response at 1000 rows,
+  // so page through activities (paginated) until a short page signals the end.
+  // Average rating (used by the recommendation ranking below) comes from
+  // this same pass.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const places = new Map<string, { city: string; country: string }>();
+      const activityCounts = new Map<string, number>();
+      const ratingTotals = new Map<string, { sum: number; count: number }>();
+      const pageSize = 1000;
+      for (let offset = 0; offset < 10_000; offset += pageSize) {
+        const { data, error } = await supabase
+          .from("activities")
+          .select("city,country,rating")
+          .order("city", { ascending: true })
+          .range(offset, offset + pageSize - 1);
+        if (error || !data || cancelled) break;
+        for (const row of data) {
+          const key = `${row.city}|${row.country}`;
+          if (!places.has(key)) places.set(key, { city: row.city, country: row.country });
+          activityCounts.set(key, (activityCounts.get(key) ?? 0) + 1);
+          if (row.rating != null) {
+            const totals = ratingTotals.get(key) ?? { sum: 0, count: 0 };
+            totals.sum += row.rating;
+            totals.count += 1;
+            ratingTotals.set(key, totals);
+          }
+        }
+        if (data.length < pageSize) break;
+      }
+      if (cancelled) return;
+      const found: DestinationOption[] = [...places.entries()].map(([key, place]) => {
+        const totals = ratingTotals.get(key);
+        return { ...place, avgRating: totals && totals.count > 0 ? totals.sum / totals.count : 0 };
+      });
+      found.sort((a, b) => a.city.localeCompare(b.city));
+      setDestinations(found);
+      // Recommended = highest average activity rating in the catalog, so the
+      // creator starts from destinations with genuinely well-reviewed material
+      // to build a package from — not a random sample. Destinations without
+      // enough activities to make that average meaningful are excluded first.
+      setRecommended(
+        found
+          .filter((d) => (activityCounts.get(`${d.city}|${d.country}`) ?? 0) >= MIN_ACTIVITIES_FOR_RECOMMENDATION)
+          .sort((a, b) => b.avgRating - a.avgRating)
+          .slice(0, 6),
+      );
+      setDestinationsLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Climbs to 92% on a fixed schedule, then keeps creeping toward — but
+  // never reaching — 99% for as long as the build actually takes, so a
+  // slow request never sits dead-flat at one number. The jump to 100% only
+  // happens once the package is actually created, in the effect below.
   useEffect(() => {
     if (!isLoading) return;
     setProgress(0);
     const interval = setInterval(() => {
       setProgress((p) => {
-        if (p >= 100) { clearInterval(interval); return 100; }
-        return p + (p < 60 ? 1.2 : p < 85 ? 0.6 : 0.3);
+        if (p < 92) return Math.min(92, p + (p < 60 ? 1.2 : p < 85 ? 0.6 : 0.3));
+        return p + (99 - p) * 0.0015;
       });
     }, 60);
     return () => clearInterval(interval);
@@ -2009,7 +2146,10 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
         // Set even after cleanup: the package now exists server-side, and the
         // reuse guard in continueWizard needs the id to avoid creating a twin.
         // Skipped only when a newer build for a different setup superseded this one.
-        if (inFlightSetupRef.current === runSetup) setCreatedPackageId(package_id);
+        if (inFlightSetupRef.current === runSetup) {
+          setCreatedPackageId(package_id);
+          setProgress(100); // real completion, not the crawl-to-92 fake schedule
+        }
       } catch (error) {
         if (inFlightSetupRef.current === runSetup) inFlightSetupRef.current = null;
         if (cancelled) return;
@@ -2031,15 +2171,26 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
     return () => window.clearTimeout(timeout);
   }, [isLoading, progress, createdPackageId, router]);
 
-  const canContinue = step === 0 ? (selected !== null || dest.trim().length > 0) : step === 1 ? vibes.length > 0 : step === 2 ? duration !== null : step === 3 ? season !== null : true;
-  const filteredDestinations = DESTINATIONS.filter((destination) => {
+  // Step 0 requires an actual pick from the catalog — typing alone (without
+  // selecting a result) must not be enough to continue.
+  const canContinue = step === 0 ? selected !== null : step === 1 ? vibes.length > 0 : step === 2 ? duration !== null : step === 3 ? season !== null : true;
+  const filteredDestinations = destinations.filter((destination) => {
     const query = destinationSearch.trim().toLowerCase();
-    return !query || destination.name.toLowerCase().includes(query) || destination.tags.some((tag) => tag.toLowerCase().includes(query));
+    return !query || destination.city.toLowerCase().includes(query) || destination.country.toLowerCase().includes(query);
   });
+  const selectDestination = (d: DestinationOption) => {
+    const name = `${d.city}, ${d.country}`;
+    setSelected(name);
+    setDest(name);
+    // Leave destinationSearch as-is: setting it to the full "City, Country"
+    // string would stop matching its own city/country substring filter and
+    // make the just-picked card vanish from its own result list.
+    setDestinationDropdownOpen(false);
+  };
   const stepSummaries = [
     selected ?? dest.trim(),
     vibes.map((vibe) => VIBES.find((item) => item.id === vibe)?.label).filter(Boolean).join(", "),
-    duration === "custom" ? `Custom, ${customDurationDays} ${customDurationDays === 1 ? "day" : "days"}` : duration ? `${duration.charAt(0).toUpperCase() + duration.slice(1)} trip` : "",
+    duration === "custom" ? `Custom, ${customDurationDays} days` : duration ? `${duration.charAt(0).toUpperCase() + duration.slice(1)} trip` : "",
     season ? season.charAt(0).toUpperCase() + season.slice(1) : "",
   ];
   const currentSetup = JSON.stringify({
@@ -2151,11 +2302,11 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
           /* ── Step 4: Season ── */
           <div style={{ height: "100%", minHeight: 0, display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gridTemplateRows: "repeat(2, minmax(0, 1fr))", gap: 12 }}>
             {([
-              { id: "spring", label: "Spring", desc: "Blooming scenery and fresh, vibrant energy", img: "https://images.unsplash.com/photo-1622285422722-b1b3eb36c728?w=600&h=320&fit=crop", recommend: true },
+              { id: "spring", label: "Spring", desc: "Blooming scenery and fresh, vibrant energy", img: "https://images.unsplash.com/photo-1622285422722-b1b3eb36c728?w=600&h=320&fit=crop" },
               { id: "summer", label: "Summer", desc: "Warm days and endless outdoor adventures",   img: "https://images.unsplash.com/photo-1461937995729-a2e442122d18?w=600&h=320&fit=crop" },
               { id: "autumn", label: "Autumn",  desc: "Colorful foliage and cozy moments",          img: "https://images.unsplash.com/photo-1542574929305-245cb48f9c87?w=600&h=320&fit=crop" },
               { id: "winter", label: "Winter",  desc: "Cool weather and relaxed experiences",       img: "https://images.unsplash.com/photo-1551927411-95e412943b58?w=600&h=320&fit=crop" },
-            ] as { id: string; label: string; desc: string; img: string; recommend?: boolean }[]).map((s) => {
+            ] as { id: string; label: string; desc: string; img: string }[]).map((s) => {
               const isSel = season === s.id;
               const isHov = hovCard === s.id;
               return (
@@ -2183,11 +2334,6 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>
                       </div>
                     )}
-                    {s.recommend && (
-                      <div style={{ position: "absolute", top: 10, left: 10 }}>
-                        <span style={{ fontFamily: "var(--fc-font-body)", fontSize: 10, fontWeight: 700, color: C.white, background: C.red, borderRadius: 4, padding: "2px 7px", letterSpacing: "0.05em", textTransform: "uppercase" }}>Recommend</span>
-                      </div>
-                    )}
                   </div>
                   <div style={{ flexShrink: 0, padding: "10px 14px 12px", background: isSel ? "#EFF6FF" : C.white, transition: "background 160ms" }}>
                     <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 700, color: isSel ? C.blue : C.ink, margin: "0 0 3px", letterSpacing: "-0.01em", transition: "color 160ms" }}>{s.label}</p>
@@ -2205,7 +2351,7 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
                 { id: "short" as const, range: "3 to 5 days", title: "Short trip", description: "City breaks and quick getaways", path: "M5 7h14M7 4v6m10-6v6M5 11h14v9H5z" },
                 { id: "mid" as const, range: "6 to 8 days", title: "Mid trip", description: "A balanced week in one region", path: "M4 18V6l5-2 6 3 5-2v12l-5 2-6-3zM9 4v12m6-9v12" },
                 { id: "long" as const, range: "9 to 14 days", title: "Long trip", description: "Multi-stop and slower journeys", path: "M4 17l5-5 4 4 7-8M15 8h5v5" },
-                { id: "custom" as const, range: "1 to 14 days", title: "Custom", description: "Choose an exact duration", path: "M4 7h10M18 7h2M4 17h2M10 17h10M16 5v4M8 15v4" },
+                { id: "custom" as const, range: "2 to 14 days", title: "Custom", description: "Choose an exact duration", path: "M4 7h10M18 7h2M4 17h2M10 17h10M16 5v4M8 15v4" },
               ].map((option) => {
                 const active = duration === option.id;
                 return <button key={option.id} role="radio" aria-checked={active} onClick={() => setDuration(option.id)} style={{ minHeight: 154, padding: "18px", position: "relative", display: "grid", gridTemplateColumns: "34px 1fr", alignContent: "center", columnGap: 12, textAlign: "left", border: `2px solid ${active ? C.blue : C.border}`, borderRadius: 14, background: active ? "#EFF6FF" : C.white, boxShadow: active ? `0 0 0 3px rgba(0,114,234,0.10)` : C.shadowCard, cursor: "pointer", transition: "border-color 140ms, background 140ms, box-shadow 140ms" }}>
@@ -2218,10 +2364,10 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
             </div>
 
             {duration === "custom" && <div style={{ marginTop: 10, padding: "20px 22px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 24, border: `1px solid ${C.border}`, borderRadius: 12, background: C.white }}>
-              <div><strong style={{ display: "block", marginBottom: 4, fontSize: 14, color: C.ink }}>Exact duration</strong><span style={{ fontSize: 12, color: C.secondary }}>Choose from 1 to 14 days</span></div>
+              <div><strong style={{ display: "block", marginBottom: 4, fontSize: 14, color: C.ink }}>Exact duration</strong><span style={{ fontSize: 12, color: C.secondary }}>Choose from 2 to 14 days</span></div>
               <div role="group" aria-label="Custom trip duration" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <button type="button" aria-label="Decrease duration" disabled={customDurationDays === 1} onClick={() => setCustomDurationDays((days) => Math.max(1, days - 1))} style={{ width: 52, height: 52, display: "grid", placeItems: "center", border: `1px solid ${C.border}`, borderRadius: 8, background: C.white, color: customDurationDays === 1 ? C.disabled : C.ink, cursor: customDurationDays === 1 ? "not-allowed" : "pointer" }}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M5 12h14"/></svg></button>
-                <div aria-live="polite" style={{ minWidth: 112, height: 52, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, borderRadius: 8, background: C.subtle }}><strong style={{ fontFamily: "var(--fc-font-body)", fontSize: 24, lineHeight: 1, color: C.ink }}>{customDurationDays}</strong><span style={{ fontSize: 13, lineHeight: 1, fontWeight: 600, color: C.secondary }}>{customDurationDays === 1 ? "day" : "days"}</span></div>
+                <button type="button" aria-label="Decrease duration" disabled={customDurationDays === 2} onClick={() => setCustomDurationDays((days) => Math.max(2, days - 1))} style={{ width: 52, height: 52, display: "grid", placeItems: "center", border: `1px solid ${C.border}`, borderRadius: 8, background: C.white, color: customDurationDays === 2 ? C.disabled : C.ink, cursor: customDurationDays === 2 ? "not-allowed" : "pointer" }}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M5 12h14"/></svg></button>
+                <div aria-live="polite" style={{ minWidth: 112, height: 52, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, borderRadius: 8, background: C.subtle }}><strong style={{ fontFamily: "var(--fc-font-body)", fontSize: 24, lineHeight: 1, color: C.ink }}>{customDurationDays}</strong><span style={{ fontSize: 13, lineHeight: 1, fontWeight: 600, color: C.secondary }}>days</span></div>
                 <button type="button" aria-label="Increase duration" disabled={customDurationDays === 14} onClick={() => setCustomDurationDays((days) => Math.min(14, days + 1))} style={{ width: 52, height: 52, display: "grid", placeItems: "center", border: `1px solid ${C.border}`, borderRadius: 8, background: C.white, color: customDurationDays === 14 ? C.disabled : C.ink, cursor: customDurationDays === 14 ? "not-allowed" : "pointer" }}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
               </div>
             </div>}
@@ -2291,8 +2437,12 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
               </svg>
               <input
                 value={destinationSearch}
-                onChange={(e) => { setDestinationSearch(e.target.value); setDest(e.target.value); setSelected(null); }}
-                placeholder="Search by city, country or travel style…"
+                onChange={(e) => { setDestinationSearch(e.target.value); setSelected(null); setDest(""); setDestinationDropdownOpen(true); }}
+                placeholder="Search by city or country…"
+                role="combobox"
+                aria-expanded={destinationDropdownOpen}
+                aria-autocomplete="list"
+                aria-controls="wizard-destination-listbox"
                 style={{
                   width: "100%", boxSizing: "border-box", height: 52,
                   paddingLeft: 48, paddingRight: destinationSearch ? 48 : 16,
@@ -2301,30 +2451,95 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
                   background: C.white, boxShadow: C.shadowCard,
                   transition: "border-color 140ms, box-shadow 140ms",
                 }}
-                onFocus={(e) => { e.currentTarget.style.borderColor = C.blue; e.currentTarget.style.boxShadow = `0 0 0 3px ${C.focusRing}`; }}
-                onBlur={(e) => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.boxShadow = C.shadowCard; }}
+                onFocus={(e) => { e.currentTarget.style.borderColor = C.blue; e.currentTarget.style.boxShadow = `0 0 0 3px ${C.focusRing}`; setDestinationDropdownOpen(true); }}
+                onBlur={(e) => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.boxShadow = C.shadowCard; setDestinationDropdownOpen(false); }}
+                onKeyDown={(e) => { if (e.key === "Escape") e.currentTarget.blur(); }}
               />
-              {destinationSearch && <button type="button" aria-label="Clear destination search" onClick={() => { setDestinationSearch(""); setDest(""); setSelected(null); }} style={{ position: "absolute", right: 6, top: 4, width: 44, height: 44, display: "grid", placeItems: "center", border: 0, background: "transparent", color: C.secondary, cursor: "pointer" }}>
+              {destinationSearch && <button type="button" aria-label="Clear destination search" onClick={() => { setDestinationSearch(""); setSelected(null); setDest(""); }} style={{ position: "absolute", right: 6, top: 4, width: 44, height: 44, display: "grid", placeItems: "center", border: 0, background: "transparent", color: C.secondary, cursor: "pointer" }}>
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
               </button>}
+              {destinationDropdownOpen && (
+                <div id="wizard-destination-listbox" role="listbox" aria-label="City or country results" style={{
+                  position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, zIndex: 20,
+                  maxHeight: 320, overflowY: "auto",
+                  background: C.white, border: `1px solid ${C.border}`, borderRadius: 12,
+                  boxShadow: C.shadowRaised,
+                }}>
+                  {destinationsLoading && <p style={{ margin: 0, padding: "14px 16px", fontFamily: "var(--fc-font-body)", fontSize: 13, color: C.secondary }}>Loading destinations…</p>}
+                  {!destinationsLoading && filteredDestinations.length === 0 && (
+                    <p style={{ margin: 0, padding: "14px 16px", fontFamily: "var(--fc-font-body)", fontSize: 13, color: C.secondary }}>No destinations found{destinationSearch ? ` for “${destinationSearch}”` : ""}.</p>
+                  )}
+                  {filteredDestinations.map((d) => {
+                    const name = `${d.city}, ${d.country}`;
+                    return (
+                      <button key={name} type="button" role="option" aria-selected={selected === name}
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => selectDestination(d)}
+                        style={{
+                          width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
+                          padding: "10px 16px", border: 0, borderBottom: `1px solid ${C.border}`,
+                          background: selected === name ? "#EFF6FF" : "transparent", cursor: "pointer", textAlign: "left",
+                        }}
+                      >
+                        <span>
+                          <span style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 600, color: selected === name ? C.blue : C.ink }}>{d.city}</span>
+                          <span style={{ fontFamily: "var(--fc-font-body)", fontSize: 13, color: C.secondary }}>, {d.country}</span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </label>
           <div style={{ minHeight: 32, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, marginBottom: 10 }}>
-            <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 12, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: C.secondary, margin: 0 }}>
-              {destinationSearch ? `${filteredDestinations.length} matching destinations` : "Popular Destinations"}
+            <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 12, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: C.secondary, margin: 0, display: "flex", alignItems: "center", gap: 6 }}>
+              {destinationSearch ? `${filteredDestinations.length} matching destinations` : "Recommended destinations"}
+              {!destinationSearch && (
+                <span style={{ position: "relative", display: "inline-flex" }}>
+                  <button type="button" aria-label="How destinations are recommended"
+                    onMouseEnter={() => setRecommendationInfoOpen(true)}
+                    onMouseLeave={() => setRecommendationInfoOpen(false)}
+                    onFocus={() => setRecommendationInfoOpen(true)}
+                    onBlur={() => setRecommendationInfoOpen(false)}
+                    onClick={() => setRecommendationInfoOpen((open) => !open)}
+                    style={{
+                      width: 18, height: 18, display: "grid", placeItems: "center", padding: 0,
+                      border: 0, borderRadius: "50%", background: C.subtle,
+                      color: C.secondary, cursor: "pointer",
+                      fontFamily: "var(--fc-font-body)", fontSize: 12, fontWeight: 700, lineHeight: 1,
+                      textTransform: "none", letterSpacing: "normal",
+                    }}
+                  >
+                    ?
+                  </button>
+                  {recommendationInfoOpen && (
+                    <div role="tooltip" style={{
+                      position: "absolute", top: "calc(100% + 8px)", left: "50%", transform: "translateX(-50%)",
+                      width: 240, padding: "10px 12px", zIndex: 30,
+                      background: C.ink, color: "#fff", borderRadius: 8, boxShadow: C.shadowRaised,
+                      fontFamily: "var(--fc-font-body)", fontSize: 12, fontWeight: 400, lineHeight: 1.5,
+                      textTransform: "none", letterSpacing: "normal",
+                    }}>
+                      Ranked by each destination&rsquo;s average activity rating in our catalog.
+                    </div>
+                  )}
+                </span>
+              )}
             </p>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 12, marginBottom: 20 }}>
-            {filteredDestinations.map((d) => {
-              const isSel = selected === d.name;
-              const isHov = hovCard === d.name;
+            {(destinationSearch ? filteredDestinations : recommended).map((d) => {
+              const name = `${d.city}, ${d.country}`;
+              const isSel = selected === name;
+              const isHov = hovCard === name;
               return (
-                <button key={d.name}
-                  onClick={() => { setSelected(d.name); setDest(d.name); }}
-                  onMouseEnter={() => setHovCard(d.name)}
+                <button key={name}
+                  onClick={() => selectDestination(d)}
+                  onMouseEnter={() => setHovCard(name)}
                   onMouseLeave={() => setHovCard(null)}
                   style={{
-                    minHeight: 92, textAlign: "left", padding: "16px 18px", overflow: "hidden",
+                    minHeight: 64, textAlign: "left", padding: "16px 18px", overflow: "hidden",
                     background: C.white,
                     border: `2px solid ${isSel ? C.blue : isHov ? "#BDBDBD" : C.border}`,
                     borderRadius: 12, cursor: "pointer",
@@ -2334,27 +2549,20 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
                   }}
                 >
                   {isSel && <div style={{ position: "absolute", top: 12, right: 12, width: 22, height: 22, borderRadius: "50%", background: C.blue, display: "flex", alignItems: "center", justifyContent: "center" }}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg></div>}
-                  <div>
-                    <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 15, fontWeight: 700, color: isSel ? C.blue : C.ink, margin: "0 0 10px", paddingRight: isSel ? 24 : 0 }}>{d.name}</p>
-                    <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-                      {d.tags.map((tag) => (
-                        <span key={tag} style={{
-                          fontFamily: "var(--fc-font-body)", fontSize: 11, fontWeight: 500,
-                          color: isSel ? C.blue : C.secondary,
-                          background: isSel ? "rgba(0,114,234,0.08)" : C.subtle,
-                          borderRadius: 4, padding: "2px 7px",
-                          transition: "color 140ms, background 140ms",
-                        }}>{tag}</span>
-                      ))}
-                    </div>
-                  </div>
+                  <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 15, fontWeight: 700, color: isSel ? C.blue : C.ink, margin: 0, paddingRight: isSel ? 24 : 0 }}>{d.city}</p>
+                  <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 13, color: isSel ? C.blue : C.secondary, margin: "2px 0 0" }}>{d.country}</p>
                 </button>
               );
             })}
-            {filteredDestinations.length === 0 && (
+            {destinationsLoading && (
               <div style={{ gridColumn: "1 / -1", padding: "28px", border: `1px dashed ${C.border}`, borderRadius: 12, background: C.white, textAlign: "center" }}>
-                <p style={{ margin: "0 0 5px", fontFamily: "var(--fc-font-body)", fontSize: 15, fontWeight: 600, color: C.ink }}>Create a trip to “{destinationSearch}”</p>
-                <p style={{ margin: 0, fontFamily: "var(--fc-font-body)", fontSize: 13, color: C.secondary }}>No preset found, but you can continue and let AI build it.</p>
+                <p style={{ margin: 0, fontFamily: "var(--fc-font-body)", fontSize: 13, color: C.secondary }}>Loading destinations…</p>
+              </div>
+            )}
+            {!destinationsLoading && destinationSearch && filteredDestinations.length === 0 && (
+              <div style={{ gridColumn: "1 / -1", padding: "28px", border: `1px dashed ${C.border}`, borderRadius: 12, background: C.white, textAlign: "center" }}>
+                <p style={{ margin: "0 0 5px", fontFamily: "var(--fc-font-body)", fontSize: 15, fontWeight: 600, color: C.ink }}>No destinations found for “{destinationSearch}”</p>
+                <p style={{ margin: 0, fontFamily: "var(--fc-font-body)", fontSize: 13, color: C.secondary }}>Try a different city or country.</p>
               </div>
             )}
           </div>
