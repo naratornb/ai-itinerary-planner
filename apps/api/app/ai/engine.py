@@ -296,6 +296,7 @@ def normalize_city(value) -> str:
     # City (CODE)
     # [^(]* rather than (.*?)\s* : the latter overlaps with \s* and
     # backtracks polynomially on long whitespace runs (CodeQL).
+    # group(1) is .strip()ed below, so the trailing space is harmless.
     match = re.match(r"^([^(]*)\(([A-Za-z]{3})\)\s*$", text)
 
     if match:
@@ -349,6 +350,175 @@ def normalize_cabin(value) -> str:
 
     return mapping.get(text, str(value).strip())
 
+
+
+# ============================================================================
+# AIRPORT TIMEZONES
+# ============================================================================
+#
+# Flight timestamps in Supabase are true UTC (verified against real elapsed
+# durations). The model reasons in whatever it is shown, so a UTC arrival of
+# 18:00 was being read as an evening arrival when it is in fact 03:00 the
+# next morning in Tokyo - which is how day 1 ended up with a sunset cruise
+# scheduled before the traveller had landed.
+#
+# Local times are computed here and passed alongside the UTC values so the
+# model never has to do timezone arithmetic itself.
+
+AIRPORT_TIMEZONES = {
+    "SYD": "Australia/Sydney",
+    "MEL": "Australia/Melbourne",
+    "BNE": "Australia/Brisbane",
+    "PER": "Australia/Perth",
+    "CNS": "Australia/Brisbane",
+    "AKL": "Pacific/Auckland",
+    "ZQN": "Pacific/Auckland",
+    "NRT": "Asia/Tokyo",
+    "HND": "Asia/Tokyo",
+    "KIX": "Asia/Tokyo",
+    "ITM": "Asia/Tokyo",
+    "CTS": "Asia/Tokyo",
+    "ICN": "Asia/Seoul",
+    "GMP": "Asia/Seoul",
+    "PUS": "Asia/Seoul",
+    "TPE": "Asia/Taipei",
+    "HKG": "Asia/Hong_Kong",
+    "PVG": "Asia/Shanghai",
+    "SIN": "Asia/Singapore",
+    "BKK": "Asia/Bangkok",
+    "DMK": "Asia/Bangkok",
+    "CNX": "Asia/Bangkok",
+    "HKT": "Asia/Bangkok",
+    "KUL": "Asia/Kuala_Lumpur",
+    "DPS": "Asia/Makassar",
+    "CGK": "Asia/Jakarta",
+    "MNL": "Asia/Manila",
+    "HAN": "Asia/Ho_Chi_Minh",
+    "SGN": "Asia/Ho_Chi_Minh",
+    "DAD": "Asia/Ho_Chi_Minh",
+    "DEL": "Asia/Kolkata",
+    "BOM": "Asia/Kolkata",
+    "CMB": "Asia/Colombo",
+    "DXB": "Asia/Dubai",
+    "DOH": "Asia/Qatar",
+    "CAI": "Africa/Cairo",
+    "RAK": "Africa/Casablanca",
+    "CPT": "Africa/Johannesburg",
+    "NBO": "Africa/Nairobi",
+    "LHR": "Europe/London",
+    "LGW": "Europe/London",
+    "STN": "Europe/London",
+    "LTN": "Europe/London",
+    "EDI": "Europe/London",
+    "CDG": "Europe/Paris",
+    "ORY": "Europe/Paris",
+    "NCE": "Europe/Paris",
+    "AMS": "Europe/Amsterdam",
+    "BER": "Europe/Berlin",
+    "VIE": "Europe/Vienna",
+    "PRG": "Europe/Prague",
+    "KRK": "Europe/Warsaw",
+    "ZRH": "Europe/Zurich",
+    "FCO": "Europe/Rome",
+    "CIA": "Europe/Rome",
+    "FLR": "Europe/Rome",
+    "VCE": "Europe/Rome",
+    "BCN": "Europe/Madrid",
+    "MAD": "Europe/Madrid",
+    "VLC": "Europe/Madrid",
+    "LIS": "Europe/Lisbon",
+    "OPO": "Europe/Lisbon",
+    "ATH": "Europe/Athens",
+    "JTR": "Europe/Athens",
+    "IST": "Europe/Istanbul",
+    "SAW": "Europe/Istanbul",
+    "KEF": "Atlantic/Reykjavik",
+    "JFK": "America/New_York",
+    "EWR": "America/New_York",
+    "LGA": "America/New_York",
+    "YYZ": "America/Toronto",
+    "LAX": "America/Los_Angeles",
+    "SFO": "America/Los_Angeles",
+    "YVR": "America/Vancouver",
+    "HNL": "Pacific/Honolulu",
+    "CUN": "America/Cancun",
+    "MEX": "America/Mexico_City",
+    "EZE": "America/Argentina/Buenos_Aires",
+    "GIG": "America/Sao_Paulo",
+    "CUZ": "America/Lima",
+    "MDE": "America/Bogota",
+}
+
+
+def _iata_of(value) -> str:
+    """Pull the three-letter code out of "Tokyo (NRT)" or a bare "NRT"."""
+
+    if value is None:
+        return ""
+
+    text = str(value).strip()
+
+    match = re.search(r"\(([A-Za-z]{3})\)\s*$", text)
+
+    if match:
+        return match.group(1).upper()
+
+    if re.fullmatch(r"[A-Za-z]{3}", text):
+        return text.upper()
+
+    # Fall back to the canonical city's first listed code.
+    city = normalize_city(text)
+    codes = AIRPORT_CODES.get(city)
+
+    return codes[0] if codes else ""
+
+
+def _local_time(utc_value, iata: str) -> str:
+    """
+    Render a UTC timestamp in the airport's local time.
+
+    Returns "" when the zone is unknown rather than guessing, so a missing
+    airport shows nothing instead of a wrong time.
+    """
+
+    zone_name = AIRPORT_TIMEZONES.get(_iata_of(iata))
+
+    if not zone_name or utc_value in (None, ""):
+        return ""
+
+    try:
+        from zoneinfo import ZoneInfo
+
+        stamp = pd.to_datetime(utc_value, utc=True, errors="coerce")
+
+        if pd.isna(stamp):
+            return ""
+
+        return (
+            stamp.tz_convert(ZoneInfo(zone_name))
+            .strftime("%Y-%m-%d %H:%M")
+        )
+
+    except Exception:                                   # noqa: BLE001
+        return ""
+
+
+def _add_local_times(records: list) -> list:
+    """Annotate flight records with local departure and arrival times."""
+
+    for record in records:
+
+        record["departure_local"] = _local_time(
+            record.get("departure_datetime"),
+            record.get("origin"),
+        )
+
+        record["arrival_local"] = _local_time(
+            record.get("arrival_datetime"),
+            record.get("destination"),
+        )
+
+    return records
 
 # ============================================================================
 # THEME
@@ -696,9 +866,10 @@ def parse_user_request(
     budget_aud = None
 
     patterns = [
-        r"budget\s*[:=\-]?\s*\$\s*([\d,]+)",
-        r"budget\s*[:=\-]?\s*([\d,]+)\s*(?:aud|dollars?)",
-        r"\$\s*([\d,]+)",
+        # Bounded for the same reason as the duration pattern above.
+        r"budget\s*[:=\-]?\s*\$\s*([\d,]{1,15})",
+        r"budget\s*[:=\-]?\s*([\d,]{1,15})\s*(?:aud|dollars?)",
+        r"\$\s*([\d,]{1,15})",
     ]
 
     for pattern in patterns:
@@ -824,6 +995,9 @@ def _select_best_flights(
     destination: str,
     cabin_preference: list,
     group_size: int,
+    not_before=None,
+    not_after=None,
+    preferred_local_departure_date=None,
 ) -> pd.DataFrame:
 
     mask = _route_matches(
@@ -836,6 +1010,104 @@ def _select_best_flights(
 
     if candidates.empty:
         return candidates
+
+    # ------------------------------------------------------------
+    # Date window
+    #
+    # Without this the cheapest five flights on a route are returned
+    # regardless of date, so the model receives an outbound in June and
+    # a return in February and cannot build a coherent trip. It then
+    # drops the return leg or puts both on one day.
+    #
+    # Falls back to the unfiltered set rather than returning nothing, so
+    # a thin route still produces a draft.
+    # ------------------------------------------------------------
+
+    if (
+        (not_before is not None or not_after is not None)
+        and "departure_datetime" in candidates.columns
+    ):
+
+        def _utc(value):
+            # Callers may pass a naive or an already-aware timestamp.
+            stamp = pd.Timestamp(value)
+
+            return (
+                stamp.tz_localize("UTC")
+                if stamp.tzinfo is None
+                else stamp.tz_convert("UTC")
+            )
+
+        departures = pd.to_datetime(
+            candidates["departure_datetime"],
+            errors="coerce",
+            utc=True,
+        )
+
+        window = pd.Series(
+            True,
+            index=candidates.index,
+        )
+
+        if not_before is not None:
+            window &= departures >= _utc(not_before)
+
+        if not_after is not None:
+            window &= departures <= _utc(not_after)
+
+        if window.any():
+            candidates = candidates[window]
+
+    # Prefer the requested local return date. If that exact date is not in
+    # inventory, keep only the nearest available local departure date before
+    # applying cabin/price ranking. This prevents a cheap early return from
+    # shortening a long requested trip.
+    if (
+        preferred_local_departure_date
+        and "departure_datetime" in candidates.columns
+        and "origin" in candidates.columns
+    ):
+
+        target_day = pd.to_datetime(
+            preferred_local_departure_date,
+            errors="coerce",
+        )
+
+        if pd.notna(target_day):
+
+            def _local_departure_distance(row):
+                local_value = _local_time(
+                    row.get("departure_datetime"),
+                    row.get("origin"),
+                )
+
+                if not local_value:
+                    return float("inf")
+
+                local_day = pd.to_datetime(
+                    local_value[:10],
+                    errors="coerce",
+                )
+
+                if pd.isna(local_day):
+                    return float("inf")
+
+                return abs((local_day - target_day).days)
+
+            candidates["return_date_distance"] = candidates.apply(
+                _local_departure_distance,
+                axis=1,
+            )
+
+            finite = candidates[
+                candidates["return_date_distance"] != float("inf")
+            ]
+
+            if not finite.empty:
+                nearest = finite["return_date_distance"].min()
+                candidates = candidates[
+                    candidates["return_date_distance"].eq(nearest)
+                ]
 
     # Seats
     if "seats_available" in candidates.columns:
@@ -917,12 +1189,55 @@ def query_inventory(params: dict) -> dict:
     # RETURN
     # ------------------------------------------------------------
 
+    # Anchor the return to the requested trip length. Day 1 is the local
+    # arrival date, so a N-day trip should fly home on local day N rather
+    # than choosing the cheapest return anywhere between day 2 and N+2.
+    _return_from = None
+    _return_to = None
+    _return_target_local_date = None
+
+    if not outbound.empty:
+
+        _outbound_anchor = outbound.iloc[0]
+        _arrival_local = _local_time(
+            _outbound_anchor.get("arrival_datetime"),
+            _outbound_anchor.get("destination"),
+        )
+
+        if _arrival_local:
+            _arrival_day = pd.to_datetime(
+                _arrival_local[:10],
+                errors="coerce",
+            )
+
+            if pd.notna(_arrival_day):
+                _return_target_local_date = (
+                    _arrival_day
+                    + pd.Timedelta(days=max(1, duration_days) - 1)
+                ).strftime("%Y-%m-%d")
+
+        _arrival_utc = pd.to_datetime(
+            _outbound_anchor.get("arrival_datetime"),
+            errors="coerce",
+            utc=True,
+        )
+
+        if pd.notna(_arrival_utc):
+            _target_utc = _arrival_utc + pd.Timedelta(
+                days=max(1, duration_days) - 1
+            )
+            _return_from = _target_utc - pd.Timedelta(days=1)
+            _return_to = _target_utc + pd.Timedelta(days=1)
+
     inbound = _select_best_flights(
         flights_df,
         destinations[-1],
         origin,
         cabin_preference,
         group_size,
+        not_before=_return_from,
+        not_after=_return_to,
+        preferred_local_departure_date=_return_target_local_date,
     )
 
     # ------------------------------------------------------------
@@ -1138,12 +1453,21 @@ def query_inventory(params: dict) -> dict:
             f"{len(activity_options.get(city, []))} activities"
         )
 
+    # Local times alongside the UTC values, so the model can read the day and
+    # hour the traveller actually experiences without converting anything.
+    for leg in inter_city_legs:
+        _add_local_times(leg["options"])
+
     return {
-        "outbound_flight_options": outbound.to_dict(
-            orient="records"
+        "outbound_flight_options": _add_local_times(
+            outbound.to_dict(
+                orient="records"
+            )
         ),
-        "inbound_flight_options": inbound.to_dict(
-            orient="records"
+        "inbound_flight_options": _add_local_times(
+            inbound.to_dict(
+                orient="records"
+            )
         ),
         "inter_city_legs": inter_city_legs,
         "hotel_options": hotel_options,
@@ -1189,12 +1513,93 @@ The database is the source of truth.
 """.strip()
 
 
+
+def _travel_window_block(inventory: dict) -> str:
+    """
+    A plain-language statement of the travel window, in local time, placed at
+    the very top of the prompt.
+
+    The flight times are otherwise buried inside JSON arrays further down, and
+    the model was reading the UTC fields and dating day 1 from the departure.
+    Stating the window first, in the traveller's own clock, gives it the
+    constraint before it starts planning rather than after.
+    """
+
+    outbound = (inventory.get("outbound_flight_options") or [None])[0]
+    inbound = (inventory.get("inbound_flight_options") or [None])[0]
+
+    if not outbound:
+        return (
+            "TRAVEL WINDOW:\n"
+            "No outbound flight is available. Plan activities only; do not "
+            "invent flights."
+        )
+
+    arrive = outbound.get("arrival_local") or ""
+    depart = outbound.get("departure_local") or ""
+
+    lines = [
+        "============================================================",
+        "TRAVEL WINDOW - READ THIS BEFORE PLANNING ANYTHING",
+        "============================================================",
+        "",
+        "All times below are LOCAL clock times at the airport concerned.",
+        "Plan the whole itinerary inside this window.",
+        "",
+        f"  Leave {outbound.get('origin', '?')}    {depart or 'unknown'}",
+        f"  Land  {outbound.get('destination', '?')}    {arrive or 'unknown'}",
+    ]
+
+    if inbound:
+        lines.append(
+            f"  Fly home from {inbound.get('origin', '?')}    "
+            f"{inbound.get('departure_local') or 'unknown'}"
+        )
+
+    if arrive[:10]:
+
+        lines += [
+            "",
+            f"DAY 1 IS {arrive[:10]}. That is the date you land, not the date "
+            "you take off.",
+            "",
+            f"On day 1 the traveller is not free until roughly "
+            f"{arrive[11:16]} plus three hours for immigration, baggage and "
+            "the transfer into the city. Schedule nothing before that. If "
+            "that leaves no usable time, day 1 has no activities at all - an "
+            "empty first day is correct and expected after a long flight.",
+        ]
+
+    if inbound and (inbound.get("departure_local") or "")[:10]:
+
+        home = inbound["departure_local"]
+
+        lines += [
+            "",
+            f"THE LAST DAY IS {home[:10]}. The flight home leaves at "
+            f"{home[11:16]} local, so everything must finish at least three "
+            "hours before that. If the flight is in the morning, the last "
+            "day has no activities.",
+        ]
+
+    lines += [
+        "",
+        "Every start_time you write is local time at the destination.",
+        "Build the days around these flights. Do not plan first and fit the "
+        "flights in afterwards.",
+        "============================================================",
+    ]
+
+    return "\n".join(lines)
+
 def build_ai_prompt(
     params: dict,
     inventory: dict,
 ) -> str:
 
     return f"""
+{_travel_window_block(inventory)}
+
 USER REQUEST:
 {params["raw_input"]}
 
@@ -1215,6 +1620,37 @@ These are normalized internally to:
 "Tokyo"
 
 Do not invent flights if the relevant inventory section is empty.
+
+FLIGHT DATES AND DAY 1:
+The outbound and return flights below are already filtered to a consistent
+travel window.
+
+Every flight record carries two pairs of times:
+
+  departure_datetime / arrival_datetime  - UTC, ignore these for planning
+  departure_local    / arrival_local     - the local clock at each airport
+
+USE THE _local FIELDS AND NOTHING ELSE. They are the day and hour the
+traveller actually experiences. Do not convert timezones yourself.
+
+Day 1 is the date in the outbound flight's arrival_local. A flight showing
+departure_local "2026-06-01 20:00" and arrival_local "2026-06-02 03:00" makes
+2026-06-02 day 1 - not 2026-06-01.
+
+No activity on day 1 may start before the arrival_local time. Landing at
+03:00 means nothing before 03:00, and realistically nothing before late
+morning. If the flight lands late in the evening, day 1 should have no
+activities at all.
+
+On the final day, no activity may end after the return flight's
+departure_local time.
+
+Set depart_date to the outbound departure_local date, and return_date to the
+return departure_local date. The return must depart on a later day than the
+outbound.
+
+All start_time values you write are local time at the destination, matching
+the _local fields.
 
 ACTIVITY NOTES:
 Every activity note must contain exactly these four lines, in this order,
@@ -1790,6 +2226,213 @@ def _enrich_from_inventory(itinerary: dict, inventory: dict) -> dict:
     return itinerary
 
 
+
+# ── Align the model's days to the flights actually selected ─────────────────
+
+# Landing to first activity, and last activity to wheels-up.
+ARRIVAL_BUFFER_HOURS = 2.0
+DEPARTURE_BUFFER_HOURS = 3.0
+
+# Past this hour an activity shifted into the evening is no longer plausible.
+LATEST_SHIFTED_START_HOUR = 20
+
+
+def _clock_to_hours(value) -> float | None:
+    """'14:30' -> 14.5. None when unparseable."""
+
+    match = re.match(r"^\s*(\d{1,2}):(\d{2})", str(value or ""))
+
+    if not match:
+        return None
+
+    return int(match.group(1)) + int(match.group(2)) / 60.0
+
+
+def _hours_to_clock(hours: float) -> str:
+    """14.5 -> '14:30', clamped to the same day."""
+
+    hours = max(0.0, min(23.75, hours))
+    whole = int(hours)
+    minutes = int(round((hours - whole) * 60 / 15) * 15)
+
+    if minutes == 60:
+        whole, minutes = min(23, whole + 1), 0
+
+    return f"{whole:02d}:{minutes:02d}"
+
+
+def _align_days_to_flights(itinerary: dict, warnings: list) -> dict:
+    """
+    Rewrite day dates and activity times from the flights that were actually
+    chosen.
+
+    The model was asked repeatedly, in the prompt, to date day 1 from the
+    local arrival and to keep activities inside the travel window. It does not
+    reliably do either - it returns Tokyo activities dated to the Sydney
+    departure day, and activities scheduled before the plane lands. Timezone
+    arithmetic across the itinerary is deterministic, so the engine does it
+    here rather than asking.
+
+    Day 1 becomes the local arrival date. On day 1 nothing may start before
+    landing plus a transfer buffer; on the departure day nothing may run past
+    check-in time. Activities that cannot be shifted into a plausible slot are
+    dropped, and each change is reported in warnings.
+    """
+
+    days = itinerary.get("days") or []
+
+    if not days:
+        return itinerary
+
+    flights = itinerary.get("flights") or []
+
+    outbound = next(
+        (f for f in flights if str(f.get("leg", "")).lower() == "outbound"),
+        None,
+    )
+
+    inbound = next(
+        (f for f in flights if str(f.get("leg", "")).lower() == "return"),
+        None,
+    )
+
+    # ------------------------------------------------------------
+    # Day 1 is the local arrival date; every later day follows it.
+    # ------------------------------------------------------------
+
+    arrival_local = None
+
+    if outbound:
+        arrival_local = _local_time(
+            outbound.get("arrival_datetime"),
+            outbound.get("destination"),
+        )
+
+    if arrival_local:
+
+        try:
+            day_one = datetime.strptime(
+                arrival_local,
+                "%Y-%m-%d %H:%M",
+            )
+        except ValueError:
+            day_one = None
+
+        if day_one is not None:
+
+            old_first = days[0].get("date")
+
+            for index, day in enumerate(days):
+                day["day_number"] = index + 1
+                day["date"] = str(
+                    (day_one + timedelta(days=index)).date()
+                )
+
+            if old_first and old_first != days[0]["date"]:
+                warnings.append(
+                    f"Day 1 re-dated from {old_first} to "
+                    f"{days[0]['date']} to match the local arrival."
+                )
+
+            # --------------------------------------------------------
+            # Nothing on day 1 before the plane lands.
+            # --------------------------------------------------------
+
+            earliest = (
+                day_one.hour
+                + day_one.minute / 60.0
+                + ARRIVAL_BUFFER_HOURS
+            )
+
+            kept = []
+
+            for activity in days[0].get("activities") or []:
+
+                start = _clock_to_hours(activity.get("start_time"))
+
+                if start is None or start >= earliest:
+                    kept.append(activity)
+                    continue
+
+                if earliest <= LATEST_SHIFTED_START_HOUR:
+                    activity["start_time"] = _hours_to_clock(earliest)
+                    kept.append(activity)
+
+                    warnings.append(
+                        f"\"{activity.get('activity_name', 'Activity')}\" moved "
+                        f"to {activity['start_time']} on day 1: the flight "
+                        f"lands at {day_one.strftime('%H:%M')} local."
+                    )
+
+                else:
+                    warnings.append(
+                        f"\"{activity.get('activity_name', 'Activity')}\" removed "
+                        f"from day 1: the flight lands at "
+                        f"{day_one.strftime('%H:%M')} local, too late to fit it."
+                    )
+
+            days[0]["activities"] = kept
+
+    # ------------------------------------------------------------
+    # Nothing on the departure day that runs past check-in.
+    # ------------------------------------------------------------
+
+    departure_local = None
+
+    if inbound:
+        departure_local = _local_time(
+            inbound.get("departure_datetime"),
+            inbound.get("origin"),
+        )
+
+    if departure_local:
+
+        try:
+            leave_at = datetime.strptime(
+                departure_local,
+                "%Y-%m-%d %H:%M",
+            )
+        except ValueError:
+            leave_at = None
+
+        if leave_at is not None:
+
+            latest_end = (
+                leave_at.hour
+                + leave_at.minute / 60.0
+                - DEPARTURE_BUFFER_HOURS
+            )
+
+            last_day = days[-1]
+            kept = []
+
+            for activity in last_day.get("activities") or []:
+
+                start = _clock_to_hours(activity.get("start_time"))
+
+                duration = pd.to_numeric(
+                    activity.get("duration_hours", 1),
+                    errors="coerce",
+                )
+
+                duration = 1.0 if pd.isna(duration) else float(duration)
+
+                if start is None or start + duration <= latest_end:
+                    kept.append(activity)
+                    continue
+
+                warnings.append(
+                    f"\"{activity.get('activity_name', 'Activity')}\" removed "
+                    f"from the final day: the return flight leaves at "
+                    f"{leave_at.strftime('%H:%M')} local."
+                )
+
+            last_day["activities"] = kept
+
+    itinerary["days"] = days
+
+    return itinerary
+
 def validate_itinerary(
     itinerary: dict,
     params: dict,
@@ -1884,6 +2527,8 @@ def validate_itinerary(
             "destination",
             "departure_datetime",
             "arrival_datetime",
+            "departure_local",
+            "arrival_local",
             "cabin_class",
             "price_aud",
             "seats_available",
@@ -1914,6 +2559,60 @@ def validate_itinerary(
         )
 
     itinerary["flights"] = valid_flights
+
+    # ------------------------------------------------------------
+    # Return must depart after the outbound arrives
+    #
+    # The model picks from the options it is given; a same-day or
+    # reversed pair is a planning error the engine can detect
+    # deterministically, so it is reported rather than left to the
+    # reader to spot.
+    # ------------------------------------------------------------
+
+    _outbound_leg = next(
+        (
+            f for f in valid_flights
+            if str(f.get("leg", "")).lower() == "outbound"
+        ),
+        None,
+    )
+
+    _return_leg = next(
+        (
+            f for f in valid_flights
+            if str(f.get("leg", "")).lower() == "return"
+        ),
+        None,
+    )
+
+    if _outbound_leg and _return_leg:
+
+        _out_arrival = pd.to_datetime(
+            _outbound_leg.get("arrival_datetime"),
+            errors="coerce",
+            utc=True,
+        )
+
+        _ret_departure = pd.to_datetime(
+            _return_leg.get("departure_datetime"),
+            errors="coerce",
+            utc=True,
+        )
+
+        if pd.notna(_out_arrival) and pd.notna(_ret_departure):
+
+            if _ret_departure < _out_arrival:
+
+                errors.append(
+                    "Return flight departs before the outbound flight "
+                    "arrives."
+                )
+
+            elif _ret_departure.date() == _out_arrival.date():
+
+                warnings.append(
+                    "Outbound and return flights are on the same day."
+                )
 
     # ------------------------------------------------------------
     # Determine whether route inventory exists
@@ -2235,6 +2934,391 @@ def validate_itinerary(
 
     return itinerary
 
+
+
+# ============================================================================
+# DETERMINISTIC ACTIVITY SCHEDULER
+# ============================================================================
+#
+# DESIGN:
+#
+# Gemini decides:
+#   - which activities
+#   - which day they belong to
+#   - titles / descriptions / notes
+#
+# Python decides:
+#   - the real day dates
+#   - when activities can start
+#   - whether an activity fits before the next activity / flight
+#
+# Flight times are the source of truth.
+#
+# OUTBOUND:
+#   use arrival_local at destination
+#
+# RETURN:
+#   use departure_local at destination
+#
+# The activity start_time produced by Gemini is NOT trusted.
+# It is rebuilt below.
+
+
+# Traveller needs time after landing for baggage / immigration / transport.
+ACTIVITY_ARRIVAL_BUFFER_HOURS = 2.0
+
+# Traveller must stop sightseeing before the return flight.
+ACTIVITY_DEPARTURE_BUFFER_HOURS = 3.0
+
+# Normal sightseeing window on a full day.
+ACTIVITY_DAY_START_HOUR = 9.0
+ACTIVITY_DAY_END_HOUR = 20.0
+
+# Gap between two activities.
+ACTIVITY_GAP_HOURS = 0.5
+
+
+def _schedule_hours_to_clock(value: float) -> str:
+    """Convert decimal hour to HH:MM, rounded to 15-minute increments."""
+
+    value = max(0.0, min(23.75, float(value)))
+    hour = int(value)
+    minute = int(round((value - hour) * 60 / 15) * 15)
+
+    if minute >= 60:
+        hour += 1
+        minute = 0
+
+    hour = min(hour, 23)
+    return f"{hour:02d}:{minute:02d}"
+
+
+def _schedule_parse_local_datetime(
+    flight: dict | None,
+    local_field: str,
+    utc_field: str,
+    airport_field: str,
+):
+    """
+    Return a local datetime for a flight.
+
+    Prefer the local value already added by _add_local_times(). If it is
+    missing, calculate it from the UTC timestamp and airport timezone.
+    """
+
+    if not flight:
+        return None
+
+    local_value = flight.get(local_field)
+
+    if not local_value:
+        local_value = _local_time(
+            flight.get(utc_field),
+            flight.get(airport_field),
+        )
+
+    if not local_value:
+        return None
+
+    parsed = pd.to_datetime(local_value, errors="coerce")
+
+    if pd.isna(parsed):
+        return None
+
+    return parsed
+
+
+def _schedule_activity_duration(activity: dict) -> float:
+    """Get activity duration from inventory-enriched data."""
+
+    try:
+        duration = float(activity.get("duration_hours") or 2.0)
+    except (TypeError, ValueError):
+        duration = 2.0
+
+    # Defensive limits so bad data cannot break the day planner.
+    return max(0.5, min(duration, 8.0))
+
+
+def _schedule_get_flights(itinerary: dict):
+    """Return the selected outbound and return flights."""
+
+    flights = itinerary.get("flights") or []
+
+    outbound = next(
+        (
+            flight
+            for flight in flights
+            if str(flight.get("leg", "")).lower() == "outbound"
+        ),
+        None,
+    )
+
+    return_flight = next(
+        (
+            flight
+            for flight in flights
+            if str(flight.get("leg", "")).lower() == "return"
+        ),
+        None,
+    )
+
+    return outbound, return_flight
+
+
+def _schedule_day_window(day_date, arrival_dt, departure_dt):
+    """
+    Calculate the usable activity window for one local calendar day.
+
+    Normal day:
+        09:00 -> 20:00
+
+    Arrival day:
+        max(09:00, arrival + arrival buffer)
+
+    Departure day:
+        min(20:00, departure - airport/check-in buffer)
+    """
+
+    window_start = ACTIVITY_DAY_START_HOUR
+    window_end = ACTIVITY_DAY_END_HOUR
+
+    if arrival_dt is not None and day_date == arrival_dt.date():
+        arrival_hour = arrival_dt.hour + arrival_dt.minute / 60.0
+        window_start = max(
+            window_start,
+            arrival_hour + ACTIVITY_ARRIVAL_BUFFER_HOURS,
+        )
+
+    if departure_dt is not None and day_date == departure_dt.date():
+        departure_hour = departure_dt.hour + departure_dt.minute / 60.0
+        window_end = min(
+            window_end,
+            departure_hour - ACTIVITY_DEPARTURE_BUFFER_HOURS,
+        )
+
+    return window_start, window_end
+
+
+def _schedule_activities_from_flights(itinerary: dict) -> dict:
+    """
+    Rebuild activity start times around the REAL local flight times.
+
+    Gemini's activity start_time values are ignored.
+
+    Rules:
+    1. Day 1 starts on the local outbound arrival date.
+    2. Arrival-day activities begin only after arrival + transfer buffer.
+    3. Full sightseeing days normally run 09:00-20:00.
+    4. Departure-day activities must finish before departure - airport buffer.
+    5. No activities may exist after the return-flight date.
+    6. Activities do not overlap.
+    7. Activity durations come from inventory-enriched data.
+    8. If an activity cannot fit, it is removed instead of receiving an
+       impossible time.
+    """
+
+    days = itinerary.get("days") or []
+
+    if not days:
+        return itinerary
+
+    outbound, return_flight = _schedule_get_flights(itinerary)
+
+    arrival_dt = _schedule_parse_local_datetime(
+        outbound,
+        "arrival_local",
+        "arrival_datetime",
+        "destination",
+    )
+
+    departure_dt = _schedule_parse_local_datetime(
+        return_flight,
+        "departure_local",
+        "departure_datetime",
+        "origin",
+    )
+
+    notes = []
+
+    # ------------------------------------------------------------------------
+    # Rebuild all day dates from the real LOCAL arrival date.
+    # ------------------------------------------------------------------------
+
+    if arrival_dt is not None:
+        arrival_date = arrival_dt.date()
+
+        for index, day in enumerate(days):
+            correct_date = arrival_date + timedelta(days=index)
+            old_date = str(day.get("date", ""))[:10]
+
+            day["day_number"] = index + 1
+            day["date"] = correct_date.isoformat()
+
+            if old_date and old_date != day["date"]:
+                notes.append(
+                    f"Day {index + 1} date changed from {old_date} to "
+                    f"{day['date']} to match the real local arrival date."
+                )
+
+    # ------------------------------------------------------------------------
+    # Keep trip metadata aligned with the selected flights.
+    # ------------------------------------------------------------------------
+
+    travel_dates = itinerary.setdefault("trip", {}).setdefault(
+        "travel_dates",
+        {},
+    )
+
+    outbound_departure = _schedule_parse_local_datetime(
+        outbound,
+        "departure_local",
+        "departure_datetime",
+        "origin",
+    )
+
+    if outbound_departure is not None:
+        travel_dates["depart_date"] = outbound_departure.date().isoformat()
+
+    if departure_dt is not None:
+        travel_dates["return_date"] = departure_dt.date().isoformat()
+
+    # If the chosen return flight does not line up with the generated trip
+    # length, report it. This scheduler does not invent extra itinerary days.
+    if departure_dt is not None:
+        generated_dates = {
+            str(day.get("date", ""))[:10]
+            for day in days
+        }
+        return_date_string = departure_dt.date().isoformat()
+
+        if return_date_string not in generated_dates:
+            notes.append(
+                "Return flight departs on "
+                f"{return_date_string}, but the generated activity days do "
+                "not contain that date. Activity timing is still constrained "
+                "to the real local flight times; flight-duration alignment "
+                "must be handled separately."
+            )
+
+    # ------------------------------------------------------------------------
+    # Rebuild every activity start time from the usable day window.
+    # ------------------------------------------------------------------------
+
+    for day in days:
+        day_date_text = str(day.get("date", ""))[:10]
+
+        try:
+            day_date = datetime.strptime(
+                day_date_text,
+                "%Y-%m-%d",
+            ).date()
+        except ValueError:
+            notes.append(
+                f"Could not schedule activities for day "
+                f"{day.get('day_number')}: invalid date '{day_date_text}'."
+            )
+            continue
+
+        activities = list(day.get("activities") or [])
+
+        # Nothing can happen after the traveller has already left.
+        if departure_dt is not None and day_date > departure_dt.date():
+            if activities:
+                notes.append(
+                    f"Removed {len(activities)} activity/activities from "
+                    f"{day_date_text}: the return flight already departed on "
+                    f"{departure_dt.date().isoformat()}."
+                )
+
+            day["activities"] = []
+            continue
+
+        window_start, window_end = _schedule_day_window(
+            day_date,
+            arrival_dt,
+            departure_dt,
+        )
+
+        # Example: arrival 21:15 + 2h buffer = 23:15, but sightseeing ends at
+        # 20:00, so an empty arrival day is the only valid result.
+        if window_start >= window_end:
+            if activities:
+                notes.append(
+                    f"Removed all activities from {day_date_text}: usable "
+                    f"activity window is empty "
+                    f"({_schedule_hours_to_clock(window_start)} to "
+                    f"{_schedule_hours_to_clock(window_end)})."
+                )
+
+            day["activities"] = []
+            continue
+
+        # Ignore every start_time from Gemini. Activities are placed one after
+        # another using real inventory duration + a transfer gap.
+        cursor = window_start
+        scheduled = []
+
+        for activity in activities:
+            duration = _schedule_activity_duration(activity)
+            activity_start = cursor
+            activity_end = activity_start + duration
+
+            if activity_end > window_end:
+                notes.append(
+                    f"Removed '{activity.get('activity_name', 'Activity')}' "
+                    f"from {day_date_text}: it needs {duration:.1f}h but does "
+                    f"not fit before {_schedule_hours_to_clock(window_end)}."
+                )
+                continue
+
+            activity["start_time"] = _schedule_hours_to_clock(activity_start)
+            scheduled.append(activity)
+
+            cursor = activity_end + ACTIVITY_GAP_HOURS
+
+        day["activities"] = scheduled
+
+    # ------------------------------------------------------------------------
+    # Diagnostics.
+    # ------------------------------------------------------------------------
+
+    if arrival_dt is not None:
+        print(
+            "[schedule] local arrival="
+            f"{arrival_dt.strftime('%Y-%m-%d %H:%M')}"
+        )
+
+    if departure_dt is not None:
+        print(
+            "[schedule] local departure="
+            f"{departure_dt.strftime('%Y-%m-%d %H:%M')}"
+        )
+
+    for day in days:
+        activity_log = [
+            (
+                activity.get("start_time"),
+                activity.get("activity_name"),
+            )
+            for activity in (day.get("activities") or [])
+        ]
+
+        print(
+            f"[schedule] day {day.get('day_number')} "
+            f"{day.get('date')} {activity_log}"
+        )
+
+    if notes:
+        validation = itinerary.setdefault("validation", {})
+        existing = validation.get("warnings") or []
+        validation["warnings"] = list(dict.fromkeys(existing + notes))
+
+        for note in notes:
+            print(f"[schedule] {note}")
+
+    itinerary["days"] = days
+    return itinerary
 
 # ============================================================================
 # DETERMINISTIC FALLBACK
@@ -2567,7 +3651,7 @@ def summarize_llm_error(
 
     # HTTP errors
     match = re.search(
-        r"Gemini HTTP (\d+)",
+        r"Gemini HTTP (\d{1,3})",
         text,
         re.IGNORECASE,
     )
@@ -2659,7 +3743,7 @@ def generate_itinerary(
             "\n[2/6] Querying inventory..."
         )
 
- 
+
     t_inv_start = time.perf_counter()
 
     inventory = query_inventory(
@@ -2721,7 +3805,7 @@ def generate_itinerary(
         1,
         MAX_LLM_ATTEMPTS + 1,
     ):
-       
+
         if verbose:
 
             print(
@@ -2738,7 +3822,7 @@ def generate_itinerary(
                 user_prompt
                 + parse_guidance,
             )
-             
+
             t_llm = time.perf_counter() - attempt_llm_start
 
 
@@ -2782,8 +3866,8 @@ def generate_itinerary(
                 f"      response_length="
                 f"{len(raw)} chars"
             )
-       
-        
+
+
 
         try:
 
@@ -2891,6 +3975,23 @@ Do not add text before or after the JSON.
         itinerary,
         params,
         inventory,
+    )
+
+    # Build the activity schedule from the real local flight times.
+    # Gemini chooses the activities, but Python owns their start times.
+    itinerary = _schedule_activities_from_flights(
+        itinerary
+    )
+
+    # Scheduling can remove activities that no longer fit. Recalculate the
+    # deterministic budget so removed activities are not still charged.
+    itinerary["budget_breakdown"] = calculate_deterministic_budget(
+        itinerary,
+        params,
+    )
+
+    itinerary.setdefault("trip", {})["total_cost_aud"] = (
+        itinerary["budget_breakdown"]["total_aud"]
     )
 
     # ------------------------------------------------------------

@@ -37,6 +37,7 @@ export type EngineFlight = {
   flight_id: string; leg: string; airline: string;
   origin: string; destination: string;
   departure_datetime: string; arrival_datetime: string;
+  departure_local?: string; arrival_local?: string;
   cabin_class: string; price_aud: number;
 };
 
@@ -227,20 +228,39 @@ export function itineraryToPackageInput(
         duration_hours: Number.isFinite(activity.duration_hours) ? activity.duration_hours : null,
         price_aud: roundOrNull(activity.price_aud),
         description: activity.notes ?? null,
+
+        // start_time is intentionally not sent here because the existing
+        // package activity schema has no start-time column. itinerary-builder
+        // reconstructs the editor clock deterministically from:
+        // activity_date + duration + local arrival/departure flight windows.
       });
     }
   }
 
   const totalCost = res.trip?.total_cost_aud;
   const engineDuration = res.trip?.duration_days;
-  // The engine can return more dated days than trip.duration_days claims (it
-  // records the mismatch in validation.errors and returns anyway); a too-small
-  // duration makes the editor squash the overflow onto its last day.
+
+  // The generated calendar can be longer than trip.duration_days when the
+  // selected real return flight is later. Keep the whole calendar instead of
+  // forcing later flights / hotel checkout onto the final requested day.
+  const datedDays = (res.days ?? [])
+    .map((day) => dateOf(day.date))
+    .filter((value): value is string => value !== null)
+    .map((value) => Date.parse(`${value}T00:00:00Z`))
+    .filter((value) => Number.isFinite(value));
+
+  const calendarSpan =
+    datedDays.length > 0
+      ? Math.round((Math.max(...datedDays) - Math.min(...datedDays)) / 86_400_000) + 1
+      : 0;
+
   const duration = Math.max(
     Number.isInteger(engineDuration) && (engineDuration as number) >= 1
       ? (engineDuration as number)
       : base.duration_days,
-    new Set(activities.map((a) => a.activity_date)).size,
+    res.days?.length ?? 0,
+    calendarSpan,
+    1,
   );
   return {
     ...base,
