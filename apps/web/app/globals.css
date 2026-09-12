@@ -271,6 +271,10 @@ button:focus-visible, textarea:focus-visible { outline: 3px solid var(--fc-focus
 
 .day-strip { padding: 28px max(32px, calc((100vw - 1440px) / 2 + 32px)); background: #fff; display: flex; justify-content: space-between; align-items: center; gap: 32px; border-bottom: 1px solid var(--fc-border); }
 .day-tabs { display: flex; gap: 12px; min-width: 0; overflow-x: auto; padding-bottom: 2px; }
+.day-scroll-btn { flex: 0 0 auto; width: 36px; height: 36px; display: grid; place-items: center; padding: 0; border: 1px solid var(--fc-border); border-radius: 50%; background: #fff; color: var(--fc-ink); cursor: pointer; transition: background 140ms ease-out,border-color 140ms ease-out; }
+.day-scroll-btn:hover:not(:disabled) { background: var(--fc-surface-subtle); border-color: #bdbdbd; }
+.day-scroll-btn:disabled { color: var(--fc-disabled); cursor: default; }
+.day-strip > .day-scroll-btn:first-child svg { transform: scaleX(-1); }
 .day-tab-wrap { position: relative; width: 210px; height: 120px; flex: 0 0 auto; }
 .day-tab { width: 210px; height: 120px; flex: 0 0 auto; padding: 16px 48px 16px 16px; text-align: left; display: grid; align-content: center; gap: 5px; background: #fff; color: var(--fc-secondary); border: 1px solid var(--fc-border); border-radius: 10px; cursor: pointer; }
 .day-tab span { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }

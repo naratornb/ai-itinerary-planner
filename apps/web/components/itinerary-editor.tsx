@@ -511,6 +511,8 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
   const [feasLoading, setFeasLoading] = useState(false);
   const [activeDay, setActiveDay] = useState(0);
   const [days, setDays] = useState(() => buildDaysFromPackage(pkg));
+  const dayTabsRef = useRef<HTMLDivElement>(null);
+  const [dayScroll, setDayScroll] = useState({ canLeft: false, canRight: false });
   const [savedSnapshot, setSavedSnapshot] = useState<{ days: BuilderDay[]; title: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const [published, setPublished] = useState(false);
@@ -713,6 +715,26 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [pendingDeleteItemId]);
+
+  // The day strip only scrolls via trackpad/shift-wheel — a plain mouse has
+  // no way to move it sideways, so arrow buttons need to know when there's
+  // anywhere left to scroll.
+  useEffect(() => {
+    const el = dayTabsRef.current;
+    if (!el) return;
+    const update = () => setDayScroll({
+      canLeft: el.scrollLeft > 1,
+      canRight: el.scrollLeft + el.clientWidth < el.scrollWidth - 1,
+    });
+    update();
+    el.addEventListener("scroll", update);
+    window.addEventListener("resize", update);
+    return () => { el.removeEventListener("scroll", update); window.removeEventListener("resize", update); };
+  }, [days.length]);
+
+  const scrollDayTabs = (direction: 1 | -1) => {
+    dayTabsRef.current?.scrollBy({ left: direction * 240, behavior: "smooth" });
+  };
 
   // Debounced so a fast typist doesn't fire a query per keystroke; queries the
   // real activities catalog directly (RLS grants public SELECT — see
@@ -1241,13 +1263,15 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
       </header>
 
       <nav className="day-strip" aria-label="Itinerary days">
-        <div className="day-tabs">
+        <button type="button" className="day-scroll-btn" disabled={!dayScroll.canLeft} onClick={() => scrollDayTabs(-1)} aria-label="Scroll days left"><Icon name="chevron" size={18} /></button>
+        <div className="day-tabs" ref={dayTabsRef}>
           {days.map((day, index) => <div key={day.day} className={`day-tab-wrap ${activeDay === index ? "active" : ""}`}>
             <button aria-current={activeDay === index ? "page" : undefined} className={`day-tab ${activeDay === index ? "active" : ""}`} onClick={() => setActiveDay(index)}><span>DAY {day.day} <b>{day.items.length}</b></span><strong>{day.title}</strong><small>{daySubtitle(day)}</small></button>
             <button className="delete-day-tab" disabled={days.length === 1} onClick={() => setPendingDeleteDay(index)} aria-label={`Delete Day ${day.day}`}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M6 6l12 12M18 6 6 18" /></svg></button>
           </div>)}
           <button className="add-day" onClick={() => { const nextDay = days.length + 1; setDays([...days, { id: `day-${Date.now()}`, day: nextDay, title: "Untitled day", meta: "Add your first stop", items: [], story: "", photos: [] }]); setActiveDay(days.length); showNotice("A new day was added"); }}><Icon name="plus" size={24} /><span>Add Day</span></button>
         </div>
+        <button type="button" className="day-scroll-btn" disabled={!dayScroll.canRight} onClick={() => scrollDayTabs(1)} aria-label="Scroll days right"><Icon name="chevron" size={18} /></button>
         <div className="trip-length"><strong>{days.length} days</strong><span>{Math.max(0, days.length - 1)} nights</span></div>
       </nav>
 
