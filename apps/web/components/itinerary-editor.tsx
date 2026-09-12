@@ -1427,10 +1427,16 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
                           <p className="detail-card-subtitle"><Icon name="pin" size={14} />{editingItem.address || "Address not provided"}</p>
                         </div>
                       </div>
-                      <div className="activity-card-stats">
-                        <div className="activity-card-stat"><Icon name="clock" size={16} /><span><small>Start time</small><div className="activity-card-time-field"><input type="time" className="activity-card-time-input" aria-label="Start time" value={editingItem.time} onChange={(event) => setEditingItem({ ...editingItem, time: event.target.value })} onClick={(event) => { try { event.currentTarget.showPicker(); } catch { /* unsupported browser: native click behavior still works */ } }} /></div></span></div>
-                        <div className="activity-card-stat"><Icon name="clock" size={16} /><span><small>Duration</small><strong title={`${editingItem.duration} min`}>{formatDuration(editingItem.duration)}</strong></span></div>
-                        <div className="activity-card-stat"><Icon name="clock" size={16} /><span><small>End time</small><strong>{getEndTime(editingItem.time, editingItem.duration)}</strong></span></div>
+                      <div className="activity-timeline">
+                        <div className="activity-timeline-point">
+                          <small>Start time</small>
+                          <span className="activity-timeline-value"><Icon name="clock" size={15} /><div className="activity-card-time-field"><input type="time" className="activity-card-time-input" aria-label="Start time" value={editingItem.time} onChange={(event) => setEditingItem({ ...editingItem, time: event.target.value })} onClick={(event) => { try { event.currentTarget.showPicker(); } catch { /* unsupported browser: native click behavior still works */ } }} /></div></span>
+                        </div>
+                        <div className="activity-timeline-track" aria-hidden="true"><span className="activity-timeline-duration" title={`${editingItem.duration} min`}>{formatDuration(editingItem.duration)}</span></div>
+                        <div className="activity-timeline-point end">
+                          <small>End time</small>
+                          <span className="activity-timeline-value"><Icon name="clock" size={15} /><strong>{getEndTime(editingItem.time, editingItem.duration)}</strong></span>
+                        </div>
                       </div>
                     </div>
                     <label className="activity-card-notes"><span>Notes</span><div className="activity-card-notes-field"><textarea value={editingItem.notes} maxLength={500} onChange={(event) => setEditingItem({ ...editingItem, notes: event.target.value })} placeholder="Share why this is worth a stop" /><small>{editingItem.notes.length} / 500</small></div></label>
@@ -1449,7 +1455,10 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
                   {/* ponytail: per-activity photos stay local blob URLs — the media API
                       attaches files to a package, not to a timeline item. */}
                   <div className="edit-photo">
-                    <span>Photos <small>Optional · {editingItem.photos.length}/{MAX_ITEM_PHOTOS}</small></span>
+                    <div className="edit-photo-head">
+                      <div className="edit-photo-title-block"><span>Photos</span><small>Optional</small></div>
+                      <span className="edit-photo-count">{editingItem.photos.length} / {MAX_ITEM_PHOTOS}</span>
+                    </div>
                     <div>
                       {editingItem.photos.map((photo, index) => <figure key={photo}>
                         <img src={photo} alt={index === 0 ? "Activity cover" : "Activity photo"} />
