@@ -225,6 +225,17 @@ def test_unknown_package_is_hidden(db):
     db.model.assert_not_called()
 
 
+def test_package_fetch_uses_narrow_select(db):
+    client.post(BASE, json={"prompt": "Tokyo food"})
+    package_calls = [c for c in db.calls if c[1] == "travel_packages"]
+    assert package_calls
+    for _, _, kwargs in package_calls:
+        assert kwargs["params"]["select"] == (
+            "title,destination_city,destination_country,duration_days,"
+            "package_flights(id),package_hotels(id),package_activities(id)"
+        )
+
+
 def test_followup_context_and_per_item_feedback(db):
     first = client.post(BASE, json={"prompt": "Tokyo food"}).json()
     item_url = f"{BASE}/{first['turn_id']}/items/AC-1"
