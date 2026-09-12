@@ -1278,7 +1278,7 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
 
           <section className="timeline-section">
             <h3>Timeline</h3>
-            <div className="timeline-list">
+            <div className={`timeline-list${items.length === 0 ? " is-empty" : ""}`}>
               {items.map((item, index) => {
                 const flightIndex = items.slice(0, index).filter(({ type }) => type === "FLIGHT").length;
                 const flight = item.type === "FLIGHT" ? flights[flightIndex] : undefined;
@@ -1431,7 +1431,14 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
                 </section>}
                 <AddStopFlow index={index} {...addFlowProps} />
               </div>})}
-              {items.length === 0 && <AddStopFlow index={-1} {...addFlowProps} />}
+              {items.length === 0 && (addingAfter === -1
+                ? <AddStopFlow index={-1} {...addFlowProps} />
+                : <div className="timeline-empty">
+                    <span className="timeline-empty-icon"><Icon name="pin" size={22} /></span>
+                    <p>No stops yet</p>
+                    <small>Add a flight, hotel, or activity to start building this day.</small>
+                    <button type="button" className="timeline-empty-add" onClick={() => openAddFlow(-1)}><Icon name="plus" size={14} /> Add stop</button>
+                  </div>)}
             </div>
           </section>
         </div>
