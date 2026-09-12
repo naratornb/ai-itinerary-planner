@@ -77,6 +77,7 @@ export type CreatorPackageDetail = {
   description?: string | null;
   max_group_size?: number | null;
   tags?: string[];
+  status?: string;
   flights: CreatorFlightDetail[];
   hotels: CreatorHotelDetail[];
   activities: CreatorActivityDetail[];
@@ -113,7 +114,7 @@ export function resolveCreatorProfile(
   };
 }
 
-const STATUS_LABELS: Record<string, string> = {
+export const STATUS_LABELS: Record<string, string> = {
   draft: "Draft",
   pending_review: "Under review",
   approved: "Approved",
@@ -379,6 +380,44 @@ export async function updatePackage(
     throw new Error(body?.message || "Unable to save this package. Please try again.");
   }
   return response.json() as Promise<{ package_id: string }>;
+}
+
+export type SubmitPackageResult = {
+  package_id: string;
+  status: string;
+  submitted_at?: string | null;
+};
+
+// Submits a saved draft for review. This does not save editor content —
+// PUT must succeed first — and it never calls /approvals/*; only an admin
+// approves or publishes.
+export async function submitPackage(
+  fetcher: typeof fetch,
+  apiUrl: string,
+  accessToken: string,
+  packageId: string,
+  submissionNote?: string,
+) {
+  const response = await fetcher(
+    `${apiUrl.replace(/\/$/, "")}/packages/${encodeURIComponent(packageId)}/submit`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify(submissionNote?.trim() ? { submission_note: submissionNote.trim() } : {}),
+    },
+  );
+  if (response.status === 401) throw new Error("Your session expired. Please sign in again.");
+  if (response.status === 404) throw new Error("This package is no longer available.");
+  if (!response.ok) {
+    // e.g. 422 SUBMISSION_PRECONDITION_FAILED — message already lists which
+    // conditions failed (missing components, price, wrong status).
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.message || "Unable to submit this package for review.");
+  }
+  return response.json() as Promise<SubmitPackageResult>;
 }
 
 export async function deletePackage(

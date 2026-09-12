@@ -252,6 +252,7 @@ button:focus-visible, textarea:focus-visible { outline: 3px solid var(--fc-focus
 
 .itinerary-editor { min-height: 100vh; background: #fafafa; color: var(--fc-ink); font-family: var(--fc-font-body); }
 .editor-topbar { min-height: 76px; padding: 12px max(32px, calc((100vw - 1440px) / 2 + 32px)); display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 24px; background: #fff; border-bottom: 1px solid var(--fc-border); position: sticky; top: 0; z-index: 20; }
+.locked-status-banner { padding: 12px max(32px, calc((100vw - 1440px) / 2 + 32px)); background: #fffaf2; border-bottom: 1px solid #efd2a8; color: var(--fc-warning); font-size: 14px; text-align: center; }
 .editor-title-block { text-align: center; }
 .editor-title-block h1 { margin: 2px 0 0; font-family: var(--fc-font-display); font-size: 21px; line-height: 1.25; letter-spacing: -.02em; }
 .package-title-button { max-width: min(560px,45vw); margin: 2px auto 0; padding: 3px 8px; display: block; border: 0; border-radius: 7px; background: transparent; color: var(--fc-ink); cursor: text; }

@@ -26,8 +26,10 @@ import type { CopilotSuggestionV1 } from "../lib/copilot";
 import {
   deletePackageMedia,
   listPackageMedia,
+  submitPackage,
   updatePackage,
   uploadPackageMedia,
+  STATUS_LABELS,
   type ActivityInput,
   type CreatorFlightDetail,
   type CreatorHotelDetail,
@@ -533,7 +535,11 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
   const [dayScroll, setDayScroll] = useState({ canLeft: false, canRight: false });
   const [savedSnapshot, setSavedSnapshot] = useState<{ days: BuilderDay[]; title: string } | null>(null);
   const [saving, setSaving] = useState(false);
-  const [published, setPublished] = useState(false);
+  const [packageStatus, setPackageStatus] = useState(pkg.status ?? "draft");
+  const [submitting, setSubmitting] = useState(false);
+  // Only draft/rejected packages may be saved or submitted (apps/api/app/packages/service.py) —
+  // everything else is a read-only lifecycle state past this editor's control.
+  const isLocked = packageStatus !== "draft" && packageStatus !== "rejected";
   const [previewOpen, setPreviewOpen] = useState(false);
   const [isGeneratingStory, setIsGeneratingStory] = useState(false);
   const [editingDayField, setEditingDayField] = useState<"title" | null>(null);
@@ -924,14 +930,18 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
     };
   };
 
+  const persistDraft = async (token: string) => {
+    await updatePackage(fetch, API_URL, token, pkg.package_id, buildSavePayload());
+    setSavedSnapshot({ days, title: packageTitle });
+  };
+
   const saveDraft = async () => {
-    if (saving) return;
+    if (saving || isLocked) return;
     setSaving(true);
     try {
       const token = await accessToken();
       if (!token) throw new Error("Your session expired. Please sign in again.");
-      await updatePackage(fetch, API_URL, token, pkg.package_id, buildSavePayload());
-      setSavedSnapshot({ days, title: packageTitle });
+      await persistDraft(token);
       showNotice("Draft saved");
     } catch (error) {
       showNotice(error instanceof Error ? error.message : "Unable to save this draft.");
@@ -1301,8 +1311,20 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
     feasResult.is_feasible
   );
 
-  const handlePublish = () => {
-    if (feasLoading) return;
+  const publishButtonLabel = isLocked
+    ? STATUS_LABELS[packageStatus] ?? packageStatus
+    : submitting
+      ? "Submitting…"
+      : !isReadyToPublish
+        ? (feasResult && !feasResult.is_feasible ? "Fix issues to publish" : "Check content to publish")
+        : "Continue to publish";
+
+  // "Publish" here means submitting for review, not going live — only an
+  // admin's later /approvals/{id}/approve and /approvals/{id}/publish do
+  // that. The saved draft must reach the server before submit reads it, so
+  // this always saves first; a save failure must never reach submitPackage.
+  const handlePublish = async () => {
+    if (feasLoading || submitting || isLocked) return;
     setPreviewOpen(false);
     if (!isReadyToPublish) {
       showNotice(!feasResult
@@ -1312,8 +1334,21 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
           : "Fix critical feasibility issues and check content again before publishing.");
       return;
     }
-    setPublished(true);
-    showNotice("Package ready to publish");
+    setSubmitting(true);
+    try {
+      const token = await accessToken();
+      if (!token) throw new Error("Your session expired. Please sign in again.");
+      await persistDraft(token);
+      const result = await submitPackage(fetch, API_URL, token, pkg.package_id);
+      setPackageStatus(result.status);
+      showNotice("Submitted for review");
+    } catch (error) {
+      // A failed submit doesn't undo the save above — the draft is safely
+      // stored and this can just be retried.
+      showNotice(error instanceof Error ? error.message : "Unable to submit this package for review.");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const deleteItem = (itemId: number) => {
@@ -1380,13 +1415,17 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
         <button className="text-action back-action" onClick={onBack} aria-label="Edit destination, travel style, duration, or season"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg> Edit trip setup</button>
         <div className="editor-title-block"><span className="editor-kicker">AI itinerary editor</span>{editingTitle ? <input className="package-title-input" value={titleDraft} autoFocus maxLength={200} aria-label="Package title" onChange={(event) => setTitleDraft(event.target.value)} onBlur={savePackageTitle} onKeyDown={(event) => { if (event.key === "Enter") savePackageTitle(); if (event.key === "Escape") { setTitleDraft(packageTitle); setEditingTitle(false); } }} /> : <button className="package-title-button" onClick={() => { setTitleDraft(packageTitle); setEditingTitle(true); }} aria-label={`Edit package title, currently ${packageTitle}`} title="Edit package title"><h1>{packageTitle}</h1></button>}</div>
         <div className="editor-actions">
-          <button className="quiet-button" disabled={saving} onClick={() => { void saveDraft(); }}>{saving ? "Saving…" : saved ? "Saved" : "Save Draft"}</button>
+          <button className="quiet-button" disabled={saving || isLocked} onClick={() => { void saveDraft(); }}>{saving ? "Saving…" : saved ? "Saved" : "Save Draft"}</button>
           <button className="quiet-button" onClick={() => setPreviewOpen(true)}>Preview</button>
-          <button className="publish-button" disabled={feasLoading} onClick={handlePublish}>
-            {!isReadyToPublish ? (feasResult && !feasResult.is_feasible ? "Fix issues to publish" : "Check content to publish") : "Continue to publish"}
+          <button className="publish-button" disabled={feasLoading || submitting || isLocked} onClick={() => { void handlePublish(); }}>
+            {publishButtonLabel}
           </button>
         </div>
       </header>
+
+      {isLocked && <div className="locked-status-banner" role="status">
+        This package is {(STATUS_LABELS[packageStatus] ?? packageStatus).toLowerCase()} and can no longer be edited here.
+      </div>}
 
       <nav className="day-strip" aria-label="Itinerary days">
         <button type="button" className="day-scroll-btn" disabled={!dayScroll.canLeft} onClick={() => scrollDayTabs(-1)} aria-label="Scroll days left"><Icon name="chevron" size={18} /></button>
@@ -1700,7 +1739,7 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
           </div>
         </section>
       </div>}
-      {previewOpen && <div className="preview-backdrop" role="presentation" onMouseDown={() => setPreviewOpen(false)}><section className="preview-dialog" role="dialog" aria-modal="true" aria-labelledby="preview-title" onMouseDown={(event) => event.stopPropagation()}><button className="preview-close" onClick={() => setPreviewOpen(false)} aria-label="Close preview"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg></button><span>Traveller preview</span><h2 id="preview-title">{packageTitle}</h2><p>{story || "Your itinerary story will appear here. Add a personal introduction before publishing."}</p><div><strong>{days.length} days / 2 nights</strong><strong>${packagePrice.toLocaleString()}</strong></div><button className="publish-button" disabled={feasLoading} onClick={handlePublish}>{!isReadyToPublish ? (feasResult && !feasResult.is_feasible ? "Fix issues to publish" : "Check content to publish") : "Continue to publish"}</button></section></div>}
+      {previewOpen && <div className="preview-backdrop" role="presentation" onMouseDown={() => setPreviewOpen(false)}><section className="preview-dialog" role="dialog" aria-modal="true" aria-labelledby="preview-title" onMouseDown={(event) => event.stopPropagation()}><button className="preview-close" onClick={() => setPreviewOpen(false)} aria-label="Close preview"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg></button><span>Traveller preview</span><h2 id="preview-title">{packageTitle}</h2><p>{story || "Your itinerary story will appear here. Add a personal introduction before publishing."}</p><div><strong>{days.length} days / 2 nights</strong><strong>${packagePrice.toLocaleString()}</strong></div><button className="publish-button" disabled={feasLoading || submitting || isLocked} onClick={() => { void handlePublish(); }}>{publishButtonLabel}</button></section></div>}
     </main>
   );
 }
