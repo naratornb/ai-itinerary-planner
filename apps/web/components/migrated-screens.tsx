@@ -1920,7 +1920,7 @@ export function wizardDraftToPackageInput(draft: {
     description: `AI-planned ${vibes ? `${vibes} ` : ""}itinerary for ${draft.season}.`,
     destination_city: city,
     destination_country: country,
-    duration_days: draft.duration === "custom" ? Math.max(1, draft.customDurationDays) : DURATION_DAYS[draft.duration],
+    duration_days: draft.duration === "custom" ? Math.max(2, draft.customDurationDays) : DURATION_DAYS[draft.duration],
     base_price_aud: 0,
     max_group_size: null,
   };
@@ -2117,7 +2117,7 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
   const stepSummaries = [
     selected ?? dest.trim(),
     vibes.map((vibe) => VIBES.find((item) => item.id === vibe)?.label).filter(Boolean).join(", "),
-    duration === "custom" ? `Custom, ${customDurationDays} ${customDurationDays === 1 ? "day" : "days"}` : duration ? `${duration.charAt(0).toUpperCase() + duration.slice(1)} trip` : "",
+    duration === "custom" ? `Custom, ${customDurationDays} days` : duration ? `${duration.charAt(0).toUpperCase() + duration.slice(1)} trip` : "",
     season ? season.charAt(0).toUpperCase() + season.slice(1) : "",
   ];
   const currentSetup = JSON.stringify({
@@ -2278,7 +2278,7 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
                 { id: "short" as const, range: "3 to 5 days", title: "Short trip", description: "City breaks and quick getaways", path: "M5 7h14M7 4v6m10-6v6M5 11h14v9H5z" },
                 { id: "mid" as const, range: "6 to 8 days", title: "Mid trip", description: "A balanced week in one region", path: "M4 18V6l5-2 6 3 5-2v12l-5 2-6-3zM9 4v12m6-9v12" },
                 { id: "long" as const, range: "9 to 14 days", title: "Long trip", description: "Multi-stop and slower journeys", path: "M4 17l5-5 4 4 7-8M15 8h5v5" },
-                { id: "custom" as const, range: "1 to 14 days", title: "Custom", description: "Choose an exact duration", path: "M4 7h10M18 7h2M4 17h2M10 17h10M16 5v4M8 15v4" },
+                { id: "custom" as const, range: "2 to 14 days", title: "Custom", description: "Choose an exact duration", path: "M4 7h10M18 7h2M4 17h2M10 17h10M16 5v4M8 15v4" },
               ].map((option) => {
                 const active = duration === option.id;
                 return <button key={option.id} role="radio" aria-checked={active} onClick={() => setDuration(option.id)} style={{ minHeight: 154, padding: "18px", position: "relative", display: "grid", gridTemplateColumns: "34px 1fr", alignContent: "center", columnGap: 12, textAlign: "left", border: `2px solid ${active ? C.blue : C.border}`, borderRadius: 14, background: active ? "#EFF6FF" : C.white, boxShadow: active ? `0 0 0 3px rgba(0,114,234,0.10)` : C.shadowCard, cursor: "pointer", transition: "border-color 140ms, background 140ms, box-shadow 140ms" }}>
@@ -2291,10 +2291,10 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
             </div>
 
             {duration === "custom" && <div style={{ marginTop: 10, padding: "20px 22px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 24, border: `1px solid ${C.border}`, borderRadius: 12, background: C.white }}>
-              <div><strong style={{ display: "block", marginBottom: 4, fontSize: 14, color: C.ink }}>Exact duration</strong><span style={{ fontSize: 12, color: C.secondary }}>Choose from 1 to 14 days</span></div>
+              <div><strong style={{ display: "block", marginBottom: 4, fontSize: 14, color: C.ink }}>Exact duration</strong><span style={{ fontSize: 12, color: C.secondary }}>Choose from 2 to 14 days</span></div>
               <div role="group" aria-label="Custom trip duration" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <button type="button" aria-label="Decrease duration" disabled={customDurationDays === 1} onClick={() => setCustomDurationDays((days) => Math.max(1, days - 1))} style={{ width: 52, height: 52, display: "grid", placeItems: "center", border: `1px solid ${C.border}`, borderRadius: 8, background: C.white, color: customDurationDays === 1 ? C.disabled : C.ink, cursor: customDurationDays === 1 ? "not-allowed" : "pointer" }}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M5 12h14"/></svg></button>
-                <div aria-live="polite" style={{ minWidth: 112, height: 52, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, borderRadius: 8, background: C.subtle }}><strong style={{ fontFamily: "var(--fc-font-body)", fontSize: 24, lineHeight: 1, color: C.ink }}>{customDurationDays}</strong><span style={{ fontSize: 13, lineHeight: 1, fontWeight: 600, color: C.secondary }}>{customDurationDays === 1 ? "day" : "days"}</span></div>
+                <button type="button" aria-label="Decrease duration" disabled={customDurationDays === 2} onClick={() => setCustomDurationDays((days) => Math.max(2, days - 1))} style={{ width: 52, height: 52, display: "grid", placeItems: "center", border: `1px solid ${C.border}`, borderRadius: 8, background: C.white, color: customDurationDays === 2 ? C.disabled : C.ink, cursor: customDurationDays === 2 ? "not-allowed" : "pointer" }}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M5 12h14"/></svg></button>
+                <div aria-live="polite" style={{ minWidth: 112, height: 52, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, borderRadius: 8, background: C.subtle }}><strong style={{ fontFamily: "var(--fc-font-body)", fontSize: 24, lineHeight: 1, color: C.ink }}>{customDurationDays}</strong><span style={{ fontSize: 13, lineHeight: 1, fontWeight: 600, color: C.secondary }}>days</span></div>
                 <button type="button" aria-label="Increase duration" disabled={customDurationDays === 14} onClick={() => setCustomDurationDays((days) => Math.min(14, days + 1))} style={{ width: 52, height: 52, display: "grid", placeItems: "center", border: `1px solid ${C.border}`, borderRadius: 8, background: C.white, color: customDurationDays === 14 ? C.disabled : C.ink, cursor: customDurationDays === 14 ? "not-allowed" : "pointer" }}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
               </div>
             </div>}
