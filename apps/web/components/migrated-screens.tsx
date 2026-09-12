@@ -1884,6 +1884,28 @@ export function BuilderScreen({ onNav }: { onNav: (s: Screen) => void }) {
 // ─── AI Wizard Screen ──────────────────────────────────────────────────────────
 const WIZARD_STEPS = ["Destination", "Travel style", "Duration", "Season"];
 
+type DestinationOption = { city: string; country: string; tags: string[] };
+
+// activities.category is lowercase ("food & drink", "day trip") — display-case it.
+const titleCaseCategory = (category: string) => category.replace(/\b\w/g, (c) => c.toUpperCase());
+
+// Up to two badges per destination — its most common activity categories.
+function DestinationTags({ tags, active }: { tags: string[]; active: boolean }) {
+  if (tags.length === 0) return null;
+  return (
+    <span style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+      {tags.slice(0, 2).map((tag) => (
+        <span key={tag} style={{
+          fontFamily: "var(--fc-font-body)", fontSize: 11, fontWeight: 500,
+          color: active ? C.blue : C.secondary,
+          background: active ? "rgba(0,114,234,0.08)" : C.subtle,
+          borderRadius: 4, padding: "2px 7px", whiteSpace: "nowrap",
+        }}>{tag}</span>
+      ))}
+    </span>
+  );
+}
+
 const VIBES = [
   { id: "chill",      label: "Chill",            desc: "Slow-paced, relaxing travel with minimal planning", img: "https://images.unsplash.com/photo-1602002418816-5c0aeef426aa?w=600&h=320&fit=crop" },
   { id: "adventure",  label: "Adventure",        desc: "Active experiences and outdoor activities",          img: "https://images.unsplash.com/photo-1533240332313-0db49b459ad6?w=600&h=320&fit=crop" },
@@ -1925,8 +1947,10 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
   const [selected, setSelected] = useState<string | null>(null);
   const [dest, setDest] = useState("");
   const [destinationSearch, setDestinationSearch] = useState("");
-  const [destinations, setDestinations] = useState<{ city: string; country: string }[]>([]);
+  const [destinations, setDestinations] = useState<DestinationOption[]>([]);
+  const [recommended, setRecommended] = useState<DestinationOption[]>([]);
   const [destinationsLoading, setDestinationsLoading] = useState(true);
+  const [destinationDropdownOpen, setDestinationDropdownOpen] = useState(false);
   const [hovCard, setHovCard] = useState<string | null>(null);
   const [vibes, setVibes] = useState<string[]>([]);
   const [duration, setDuration] = useState<"short" | "mid" | "long" | "custom" | null>(null);
@@ -1950,32 +1974,44 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
   // covers the whole picker; filtering then happens client-side with no
   // re-fetch per keystroke. PostgREST caps a single response at 1000 rows,
   // so page through activities (paginated) until a short page signals the end.
+  // Each destination's two badges are its most-common activity categories —
+  // real signal from the catalog, not curated copy.
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const seen = new Set<string>();
-      const found: { city: string; country: string }[] = [];
+      const places = new Map<string, { city: string; country: string }>();
+      const categoryCounts = new Map<string, Map<string, number>>();
       const pageSize = 1000;
       for (let offset = 0; offset < 10_000; offset += pageSize) {
         const { data, error } = await supabase
           .from("activities")
-          .select("city,country")
+          .select("city,country,category")
           .order("city", { ascending: true })
           .range(offset, offset + pageSize - 1);
         if (error || !data || cancelled) break;
         for (const row of data) {
           const key = `${row.city}|${row.country}`;
-          if (seen.has(key)) continue;
-          seen.add(key);
-          found.push({ city: row.city, country: row.country });
+          if (!places.has(key)) places.set(key, { city: row.city, country: row.country });
+          if (row.category) {
+            const counts = categoryCounts.get(key) ?? new Map<string, number>();
+            counts.set(row.category, (counts.get(row.category) ?? 0) + 1);
+            categoryCounts.set(key, counts);
+          }
         }
         if (data.length < pageSize) break;
       }
-      if (!cancelled) {
-        found.sort((a, b) => a.city.localeCompare(b.city));
-        setDestinations(found);
-        setDestinationsLoading(false);
-      }
+      if (cancelled) return;
+      const found: DestinationOption[] = [...places.entries()].map(([key, place]) => {
+        const counts = [...(categoryCounts.get(key)?.entries() ?? [])];
+        counts.sort(([aCategory, aCount], [bCategory, bCount]) => bCount - aCount || aCategory.localeCompare(bCategory));
+        return { ...place, tags: counts.slice(0, 2).map(([category]) => titleCaseCategory(category)) };
+      });
+      found.sort((a, b) => a.city.localeCompare(b.city));
+      setDestinations(found);
+      // A random 6-destination spread for the empty-query default view —
+      // "recommended", not the full catalog dump.
+      setRecommended([...found].sort(() => Math.random() - 0.5).slice(0, 6));
+      setDestinationsLoading(false);
     })();
     return () => { cancelled = true; };
   }, []);
@@ -2074,6 +2110,15 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
     const query = destinationSearch.trim().toLowerCase();
     return !query || destination.city.toLowerCase().includes(query) || destination.country.toLowerCase().includes(query);
   });
+  const selectDestination = (d: DestinationOption) => {
+    const name = `${d.city}, ${d.country}`;
+    setSelected(name);
+    setDest(name);
+    // Leave destinationSearch as-is: setting it to the full "City, Country"
+    // string would stop matching its own city/country substring filter and
+    // make the just-picked card vanish from its own result list.
+    setDestinationDropdownOpen(false);
+  };
   const stepSummaries = [
     selected ?? dest.trim(),
     vibes.map((vibe) => VIBES.find((item) => item.id === vibe)?.label).filter(Boolean).join(", "),
@@ -2329,8 +2374,12 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
               </svg>
               <input
                 value={destinationSearch}
-                onChange={(e) => { setDestinationSearch(e.target.value); setSelected(null); setDest(""); }}
+                onChange={(e) => { setDestinationSearch(e.target.value); setSelected(null); setDest(""); setDestinationDropdownOpen(true); }}
                 placeholder="Search by city or country…"
+                role="combobox"
+                aria-expanded={destinationDropdownOpen}
+                aria-autocomplete="list"
+                aria-controls="wizard-destination-listbox"
                 style={{
                   width: "100%", boxSizing: "border-box", height: 52,
                   paddingLeft: 48, paddingRight: destinationSearch ? 48 : 16,
@@ -2339,31 +2388,65 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
                   background: C.white, boxShadow: C.shadowCard,
                   transition: "border-color 140ms, box-shadow 140ms",
                 }}
-                onFocus={(e) => { e.currentTarget.style.borderColor = C.blue; e.currentTarget.style.boxShadow = `0 0 0 3px ${C.focusRing}`; }}
-                onBlur={(e) => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.boxShadow = C.shadowCard; }}
+                onFocus={(e) => { e.currentTarget.style.borderColor = C.blue; e.currentTarget.style.boxShadow = `0 0 0 3px ${C.focusRing}`; setDestinationDropdownOpen(true); }}
+                onBlur={(e) => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.boxShadow = C.shadowCard; setDestinationDropdownOpen(false); }}
+                onKeyDown={(e) => { if (e.key === "Escape") e.currentTarget.blur(); }}
               />
               {destinationSearch && <button type="button" aria-label="Clear destination search" onClick={() => { setDestinationSearch(""); setSelected(null); setDest(""); }} style={{ position: "absolute", right: 6, top: 4, width: 44, height: 44, display: "grid", placeItems: "center", border: 0, background: "transparent", color: C.secondary, cursor: "pointer" }}>
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
               </button>}
+              {destinationDropdownOpen && (
+                <div id="wizard-destination-listbox" role="listbox" aria-label="City or country results" style={{
+                  position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, zIndex: 20,
+                  maxHeight: 320, overflowY: "auto",
+                  background: C.white, border: `1px solid ${C.border}`, borderRadius: 12,
+                  boxShadow: C.shadowRaised,
+                }}>
+                  {destinationsLoading && <p style={{ margin: 0, padding: "14px 16px", fontFamily: "var(--fc-font-body)", fontSize: 13, color: C.secondary }}>Loading destinations…</p>}
+                  {!destinationsLoading && filteredDestinations.length === 0 && (
+                    <p style={{ margin: 0, padding: "14px 16px", fontFamily: "var(--fc-font-body)", fontSize: 13, color: C.secondary }}>No destinations found{destinationSearch ? ` for “${destinationSearch}”` : ""}.</p>
+                  )}
+                  {filteredDestinations.map((d) => {
+                    const name = `${d.city}, ${d.country}`;
+                    return (
+                      <button key={name} type="button" role="option" aria-selected={selected === name}
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => selectDestination(d)}
+                        style={{
+                          width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
+                          padding: "10px 16px", border: 0, borderBottom: `1px solid ${C.border}`,
+                          background: selected === name ? "#EFF6FF" : "transparent", cursor: "pointer", textAlign: "left",
+                        }}
+                      >
+                        <span>
+                          <span style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 600, color: selected === name ? C.blue : C.ink }}>{d.city}</span>
+                          <span style={{ fontFamily: "var(--fc-font-body)", fontSize: 13, color: C.secondary }}>, {d.country}</span>
+                        </span>
+                        <DestinationTags tags={d.tags} active={selected === name} />
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </label>
           <div style={{ minHeight: 32, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, marginBottom: 10 }}>
             <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 12, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: C.secondary, margin: 0 }}>
-              {destinationSearch ? `${filteredDestinations.length} matching destinations` : "All destinations"}
+              {destinationSearch ? `${filteredDestinations.length} matching destinations` : "Recommended destinations"}
             </p>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 12, marginBottom: 20 }}>
-            {filteredDestinations.map((d) => {
+            {(destinationSearch ? filteredDestinations : recommended).map((d) => {
               const name = `${d.city}, ${d.country}`;
               const isSel = selected === name;
               const isHov = hovCard === name;
               return (
                 <button key={name}
-                  onClick={() => { setSelected(name); setDest(name); }}
+                  onClick={() => selectDestination(d)}
                   onMouseEnter={() => setHovCard(name)}
                   onMouseLeave={() => setHovCard(null)}
                   style={{
-                    minHeight: 64, textAlign: "left", padding: "16px 18px", overflow: "hidden",
+                    minHeight: 92, textAlign: "left", padding: "16px 18px", overflow: "hidden",
                     background: C.white,
                     border: `2px solid ${isSel ? C.blue : isHov ? "#BDBDBD" : C.border}`,
                     borderRadius: 12, cursor: "pointer",
@@ -2373,8 +2456,9 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
                   }}
                 >
                   {isSel && <div style={{ position: "absolute", top: 12, right: 12, width: 22, height: 22, borderRadius: "50%", background: C.blue, display: "flex", alignItems: "center", justifyContent: "center" }}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg></div>}
-                  <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 15, fontWeight: 700, color: isSel ? C.blue : C.ink, margin: 0, paddingRight: isSel ? 24 : 0 }}>{d.city}</p>
-                  <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 13, color: isSel ? C.blue : C.secondary, margin: "2px 0 0" }}>{d.country}</p>
+                  <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 15, fontWeight: 700, color: isSel ? C.blue : C.ink, margin: "0 0 2px", paddingRight: isSel ? 24 : 0 }}>{d.city}</p>
+                  <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 13, color: isSel ? C.blue : C.secondary, margin: "0 0 10px" }}>{d.country}</p>
+                  <DestinationTags tags={d.tags} active={isSel} />
                 </button>
               );
             })}
@@ -2383,7 +2467,7 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
                 <p style={{ margin: 0, fontFamily: "var(--fc-font-body)", fontSize: 13, color: C.secondary }}>Loading destinations…</p>
               </div>
             )}
-            {!destinationsLoading && filteredDestinations.length === 0 && (
+            {!destinationsLoading && destinationSearch && filteredDestinations.length === 0 && (
               <div style={{ gridColumn: "1 / -1", padding: "28px", border: `1px dashed ${C.border}`, borderRadius: 12, background: C.white, textAlign: "center" }}>
                 <p style={{ margin: "0 0 5px", fontFamily: "var(--fc-font-body)", fontSize: 15, fontWeight: 600, color: C.ink }}>No destinations found for “{destinationSearch}”</p>
                 <p style={{ margin: 0, fontFamily: "var(--fc-font-body)", fontSize: 13, color: C.secondary }}>Try a different city or country.</p>
