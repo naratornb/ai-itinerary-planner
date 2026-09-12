@@ -227,6 +227,9 @@ export async function fetchOwnPackages(
 }
 
 // Mirrors FlightInput/HotelInput/ActivityInput in apps/api/app/packages/schemas.py.
+// day_number/sequence_order/start_time/category/address/source_id are not
+// accepted by the backend yet (proposed in the save/submit handover doc) —
+// sent ahead of that landing so nothing has to change here once it does.
 export type FlightInput = {
   origin_iata: string;              // exactly 3 chars
   destination_iata: string;         // exactly 3 chars
@@ -236,6 +239,9 @@ export type FlightInput = {
   arrival_datetime: string;
   cabin_class?: string | null;
   price_aud?: number | null;
+  day_number?: number;
+  sequence_order?: number;
+  source_id?: string | null;
 };
 
 export type HotelInput = {
@@ -247,6 +253,8 @@ export type HotelInput = {
   check_out_date: string;           // YYYY-MM-DD
   price_per_night_aud?: number | null;
   room_type?: string | null;
+  day_number?: number;
+  source_id?: string | null;
 };
 
 export type ActivityInput = {
@@ -257,12 +265,20 @@ export type ActivityInput = {
   price_aud?: number | null;
   description?: string | null;
   booking_required?: boolean | null;
+  day_number?: number;
+  sequence_order?: number;
+  start_time?: string | null;
+  category?: string | null;
+  address?: string | null;
+  source_id?: string | null;
 };
 
 export type PackageDayInput = {
   day_number: number;
   title: string | null;
   summary: string | null;
+  meta?: string | null;
+  media_ids?: string[];
 };
 
 export type CreatePackageInput = {
@@ -283,6 +299,13 @@ export type UpdatePackageInput = {
   title?: string;
   base_price_aud?: number;
   days?: PackageDayInput[];
+  // Not yet persisted by PUT /packages/{id} — the backend still only reads
+  // metadata + day title/summary and silently ignores everything else here.
+  // Sent anyway so the editor round-trips real content once that ships;
+  // see the save/submit handover doc.
+  flights?: FlightInput[];
+  hotels?: HotelInput[];
+  activities?: ActivityInput[];
 };
 
 export async function createPackage(

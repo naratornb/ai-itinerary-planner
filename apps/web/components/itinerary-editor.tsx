@@ -14,6 +14,7 @@ import {
   extractClockTimeInZone,
   getEndTime,
   insertItemInDay,
+  nextCalendarDate,
   removeDay,
   timezoneForIata,
   type BuilderDay,
@@ -27,9 +28,13 @@ import {
   listPackageMedia,
   updatePackage,
   uploadPackageMedia,
+  type ActivityInput,
   type CreatorFlightDetail,
   type CreatorHotelDetail,
   type CreatorPackageDetail,
+  type FlightInput,
+  type HotelInput,
+  type UpdatePackageInput,
 } from "../lib/creator-api";
 import { supabase } from "../lib/supabase/client";
 
@@ -815,25 +820,102 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
 
   const accessToken = async () => (await supabase.auth.getSession()).data.session?.access_token ?? null;
 
-  // ponytail: only title, price, and the day titles/summaries are synced back —
-  // timeline items, hotels, and flights stay local. The API replaces those by
-  // delete/re-add, which is a separate feature.
+  const priceNumber = (price: string) => Number(price.replace(/[^0-9.]/g, "")) || null;
+
+  // Builds the full save payload from local editor state. PUT /packages/{id}
+  // doesn't persist flights/hotels/activities yet — the backend still only
+  // reads metadata + day title/summary and silently ignores everything else
+  // here (see the save/submit handover doc) — but sending it now means the
+  // editor round-trips real content the moment that lands, with no FE change
+  // needed. Items that can't be represented without data the source never
+  // carried (e.g. a Co-Pilot flight/hotel pick, which has no IATA codes or
+  // room data) are left out rather than sent with fabricated values.
+  const buildSavePayload = (): UpdatePackageInput => {
+    const flat = days.flatMap((day, dayIndex) =>
+      day.items.map((item, itemIndex) => ({ item, day, dayIndex, itemIndex })));
+
+    const flights: FlightInput[] = flat
+      .filter(({ item }) => item.type === "FLIGHT" && item.originIata && item.destinationIata && item.departureDatetime && item.arrivalDatetime)
+      .map(({ item, dayIndex, itemIndex }) => ({
+        origin_iata: item.originIata!,
+        destination_iata: item.destinationIata!,
+        airline: item.airline || "Unknown",
+        flight_number: item.flightNumber || null,
+        departure_datetime: item.departureDatetime!,
+        arrival_datetime: item.arrivalDatetime!,
+        cabin_class: item.cabinClass || null,
+        price_aud: priceNumber(item.price),
+        day_number: dayIndex + 1,
+        sequence_order: itemIndex,
+        source_id: item.sourceId || null,
+      }));
+
+    const activities: ActivityInput[] = flat
+      .filter(({ item }) => item.type === "ACTIVITY")
+      .map(({ item, day, dayIndex, itemIndex }) => ({
+        activity_name: item.title,
+        activity_date: item.activityDate || day.date || new Date().toISOString().slice(0, 10),
+        city: item.city || pkg.destination_city || "",
+        duration_hours: item.duration ? Number(item.duration) / 60 : null,
+        price_aud: priceNumber(item.price),
+        description: item.notes || null,
+        day_number: dayIndex + 1,
+        sequence_order: itemIndex,
+        start_time: item.time || null,
+        category: item.category || null,
+        address: item.address || null,
+        source_id: item.sourceId || null,
+      }));
+
+    // One stay record per stayGroupId, not one per rendered check-in/night/
+    // check-out row — check-in/out dates come from where those marker rows
+    // now live, since the user can move them independently of the source
+    // booking's original dates.
+    const stayGroupIds = [...new Set(flat.filter(({ item }) => item.type === "HOTEL" && item.stayGroupId).map(({ item }) => item.stayGroupId!))];
+    const hotels: HotelInput[] = stayGroupIds.flatMap((groupId) => {
+      const group = flat.filter(({ item }) => item.stayGroupId === groupId);
+      const checkIn = group.find(({ item }) => item.stayMarker === "check-in") ?? group[0];
+      const checkOut = group.find(({ item }) => item.stayMarker === "check-out") ?? group[group.length - 1];
+      const base = checkIn.item;
+      if (!base.hotelName) return [];
+      return [{
+        hotel_name: base.hotelName,
+        star_rating: base.starRating ?? null,
+        city: base.city || pkg.destination_city || "",
+        address: base.address || null,
+        check_in_date: checkIn.day.date || base.checkIn || new Date().toISOString().slice(0, 10),
+        check_out_date: checkOut.day.date || base.checkOut || new Date().toISOString().slice(0, 10),
+        price_per_night_aud: priceNumber(base.price),
+        room_type: base.roomType || null,
+        day_number: checkIn.dayIndex + 1,
+        source_id: base.sourceId || null,
+      }];
+    });
+
+    return {
+      title: packageTitle,
+      base_price_aud: Math.round(packagePrice),
+      days: days.map((day, index) => ({
+        day_number: index + 1,
+        // Don't pin the generated "Day N" placeholder as real data.
+        title: day.title === `Day ${index + 1}` ? null : day.title || null,
+        summary: day.story || null,
+        meta: day.meta || null,
+        media_ids: day.photos.flatMap((photo) => photo.media_id ? [photo.media_id] : []),
+      })),
+      flights,
+      hotels,
+      activities,
+    };
+  };
+
   const saveDraft = async () => {
     if (saving) return;
     setSaving(true);
     try {
       const token = await accessToken();
       if (!token) throw new Error("Your session expired. Please sign in again.");
-      await updatePackage(fetch, API_URL, token, pkg.package_id, {
-        title: packageTitle,
-        base_price_aud: Math.round(packagePrice),
-        days: days.map((day, index) => ({
-          day_number: index + 1,
-          // Don't pin the generated "Day N" placeholder as real data.
-          title: day.title === `Day ${index + 1}` ? null : day.title || null,
-          summary: day.story || null,
-        })),
-      });
+      await updatePackage(fetch, API_URL, token, pkg.package_id, buildSavePayload());
       setSavedSnapshot({ days, title: packageTitle });
       showNotice("Draft saved");
     } catch (error) {
@@ -1069,6 +1151,13 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
       price: flight.price_aud != null ? `$${flight.price_aud.toLocaleString("en-US")}` : "$0",
       icon: "plane",
       status: "pass",
+      originIata: flight.origin_iata ?? undefined,
+      destinationIata: flight.destination_iata ?? undefined,
+      airline: flight.airline ?? undefined,
+      flightNumber: flight.flight_number ?? undefined,
+      departureDatetime: flight.departure_datetime ?? undefined,
+      arrivalDatetime: flight.arrival_datetime ?? undefined,
+      cabinClass: flight.cabin_class ?? undefined,
     });
     setFlightSearch("");
     setSelectedFlightIndex(null);
@@ -1104,7 +1193,7 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
       const next = [...current];
       while (next.length <= checkOutIndex) {
         const dayNumber = next.length + 1;
-        next.push({ id: `day-${Date.now()}-${dayNumber}`, day: dayNumber, title: "Untitled day", meta: "Add your first stop", items: [], story: "", photos: [] });
+        next.push({ id: `day-${Date.now()}-${dayNumber}`, day: dayNumber, title: "Untitled day", meta: "Add your first stop", items: [], story: "", photos: [], date: nextCalendarDate(next[next.length - 1]?.date) });
       }
       for (let offset = 0; offset <= nights; offset += 1) {
         nextItemId.current += 1;
@@ -1129,6 +1218,8 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
           starRating: selectedHotelOption.star_rating ?? undefined,
           stayMarker: offset === 0 ? "check-in" : isCheckOutDay ? "check-out" : undefined,
           stayGroupId,
+          hotelName: selectedHotelOption.hotel_name ?? undefined,
+          city: selectedHotelOption.city ?? undefined,
         };
         const dayIndex = checkInIndex + offset;
         next[dayIndex] = { ...next[dayIndex], items: [...next[dayIndex].items, item] };
@@ -1282,7 +1373,7 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
             <button aria-current={activeDay === index ? "page" : undefined} className={`day-tab ${activeDay === index ? "active" : ""}`} onClick={() => setActiveDay(index)}><span>DAY {day.day} <b>{day.items.length}</b></span><strong>{day.title}</strong><small>{daySubtitle(day)}</small></button>
             <button className="delete-day-tab" disabled={days.length === 1} onClick={() => setPendingDeleteDay(index)} aria-label={`Delete Day ${day.day}`}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M6 6l12 12M18 6 6 18" /></svg></button>
           </div>)}
-          <button className="add-day" onClick={() => { const nextDay = days.length + 1; setDays([...days, { id: `day-${Date.now()}`, day: nextDay, title: "Untitled day", meta: "Add your first stop", items: [], story: "", photos: [] }]); setActiveDay(days.length); showNotice("A new day was added"); }}><Icon name="plus" size={24} /><span>Add Day</span></button>
+          <button className="add-day" onClick={() => { const nextDay = days.length + 1; setDays([...days, { id: `day-${Date.now()}`, day: nextDay, title: "Untitled day", meta: "Add your first stop", items: [], story: "", photos: [], date: nextCalendarDate(days[days.length - 1]?.date) }]); setActiveDay(days.length); showNotice("A new day was added"); }}><Icon name="plus" size={24} /><span>Add Day</span></button>
         </div>
         <button type="button" className="day-scroll-btn" disabled={!dayScroll.canRight} onClick={() => scrollDayTabs(1)} aria-label="Scroll days right"><Icon name="chevron" size={18} /></button>
         <div className="trip-length"><strong>{days.length} days</strong><span>{Math.max(0, days.length - 1)} nights</span></div>
