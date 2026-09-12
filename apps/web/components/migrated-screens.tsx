@@ -1884,27 +1884,12 @@ export function BuilderScreen({ onNav }: { onNav: (s: Screen) => void }) {
 // ─── AI Wizard Screen ──────────────────────────────────────────────────────────
 const WIZARD_STEPS = ["Destination", "Travel style", "Duration", "Season"];
 
-type DestinationOption = { city: string; country: string; tags: string[] };
+type DestinationOption = { city: string; country: string; avgRating: number };
 
-// activities.category is lowercase ("food & drink", "day trip") — display-case it.
-const titleCaseCategory = (category: string) => category.replace(/\b\w/g, (c) => c.toUpperCase());
-
-// Up to two badges per destination — its most common activity categories.
-function DestinationTags({ tags, active }: { tags: string[]; active: boolean }) {
-  if (tags.length === 0) return null;
-  return (
-    <span style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-      {tags.slice(0, 2).map((tag) => (
-        <span key={tag} style={{
-          fontFamily: "var(--fc-font-body)", fontSize: 11, fontWeight: 500,
-          color: active ? C.blue : C.secondary,
-          background: active ? "rgba(0,114,234,0.08)" : C.subtle,
-          borderRadius: 4, padding: "2px 7px", whiteSpace: "nowrap",
-        }}>{tag}</span>
-      ))}
-    </span>
-  );
-}
+// A destination needs at least this many catalog activities before it's
+// eligible for "Recommended" — otherwise a high average rating could be an
+// artifact of two or three activities, not a real signal the creator can build on.
+const MIN_ACTIVITIES_FOR_RECOMMENDATION = 10;
 
 const VIBES = [
   { id: "chill",      label: "Chill",            desc: "Slow-paced, relaxing travel with minimal planning", img: "https://images.unsplash.com/photo-1602002418816-5c0aeef426aa?w=600&h=320&fit=crop" },
@@ -1951,6 +1936,7 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
   const [recommended, setRecommended] = useState<DestinationOption[]>([]);
   const [destinationsLoading, setDestinationsLoading] = useState(true);
   const [destinationDropdownOpen, setDestinationDropdownOpen] = useState(false);
+  const [recommendationInfoOpen, setRecommendationInfoOpen] = useState(false);
   const [hovCard, setHovCard] = useState<string | null>(null);
   const [vibes, setVibes] = useState<string[]>([]);
   const [duration, setDuration] = useState<"short" | "mid" | "long" | "custom" | null>(null);
@@ -1974,43 +1960,52 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
   // covers the whole picker; filtering then happens client-side with no
   // re-fetch per keystroke. PostgREST caps a single response at 1000 rows,
   // so page through activities (paginated) until a short page signals the end.
-  // Each destination's two badges are its most-common activity categories —
-  // real signal from the catalog, not curated copy.
+  // Average rating (used by the recommendation ranking below) comes from
+  // this same pass.
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       const places = new Map<string, { city: string; country: string }>();
-      const categoryCounts = new Map<string, Map<string, number>>();
+      const activityCounts = new Map<string, number>();
+      const ratingTotals = new Map<string, { sum: number; count: number }>();
       const pageSize = 1000;
       for (let offset = 0; offset < 10_000; offset += pageSize) {
         const { data, error } = await supabase
           .from("activities")
-          .select("city,country,category")
+          .select("city,country,rating")
           .order("city", { ascending: true })
           .range(offset, offset + pageSize - 1);
         if (error || !data || cancelled) break;
         for (const row of data) {
           const key = `${row.city}|${row.country}`;
           if (!places.has(key)) places.set(key, { city: row.city, country: row.country });
-          if (row.category) {
-            const counts = categoryCounts.get(key) ?? new Map<string, number>();
-            counts.set(row.category, (counts.get(row.category) ?? 0) + 1);
-            categoryCounts.set(key, counts);
+          activityCounts.set(key, (activityCounts.get(key) ?? 0) + 1);
+          if (row.rating != null) {
+            const totals = ratingTotals.get(key) ?? { sum: 0, count: 0 };
+            totals.sum += row.rating;
+            totals.count += 1;
+            ratingTotals.set(key, totals);
           }
         }
         if (data.length < pageSize) break;
       }
       if (cancelled) return;
       const found: DestinationOption[] = [...places.entries()].map(([key, place]) => {
-        const counts = [...(categoryCounts.get(key)?.entries() ?? [])];
-        counts.sort(([aCategory, aCount], [bCategory, bCount]) => bCount - aCount || aCategory.localeCompare(bCategory));
-        return { ...place, tags: counts.slice(0, 2).map(([category]) => titleCaseCategory(category)) };
+        const totals = ratingTotals.get(key);
+        return { ...place, avgRating: totals && totals.count > 0 ? totals.sum / totals.count : 0 };
       });
       found.sort((a, b) => a.city.localeCompare(b.city));
       setDestinations(found);
-      // A random 6-destination spread for the empty-query default view —
-      // "recommended", not the full catalog dump.
-      setRecommended([...found].sort(() => Math.random() - 0.5).slice(0, 6));
+      // Recommended = highest average activity rating in the catalog, so the
+      // creator starts from destinations with genuinely well-reviewed material
+      // to build a package from — not a random sample. Destinations without
+      // enough activities to make that average meaningful are excluded first.
+      setRecommended(
+        found
+          .filter((d) => (activityCounts.get(`${d.city}|${d.country}`) ?? 0) >= MIN_ACTIVITIES_FOR_RECOMMENDATION)
+          .sort((a, b) => b.avgRating - a.avgRating)
+          .slice(0, 6),
+      );
       setDestinationsLoading(false);
     })();
     return () => { cancelled = true; };
@@ -2422,7 +2417,6 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
                           <span style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 600, color: selected === name ? C.blue : C.ink }}>{d.city}</span>
                           <span style={{ fontFamily: "var(--fc-font-body)", fontSize: 13, color: C.secondary }}>, {d.country}</span>
                         </span>
-                        <DestinationTags tags={d.tags} active={selected === name} />
                       </button>
                     );
                   })}
@@ -2431,8 +2425,39 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
             </div>
           </label>
           <div style={{ minHeight: 32, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, marginBottom: 10 }}>
-            <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 12, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: C.secondary, margin: 0 }}>
+            <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 12, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: C.secondary, margin: 0, display: "flex", alignItems: "center", gap: 6 }}>
               {destinationSearch ? `${filteredDestinations.length} matching destinations` : "Recommended destinations"}
+              {!destinationSearch && (
+                <span style={{ position: "relative", display: "inline-flex" }}>
+                  <button type="button" aria-label="How destinations are recommended"
+                    onMouseEnter={() => setRecommendationInfoOpen(true)}
+                    onMouseLeave={() => setRecommendationInfoOpen(false)}
+                    onFocus={() => setRecommendationInfoOpen(true)}
+                    onBlur={() => setRecommendationInfoOpen(false)}
+                    onClick={() => setRecommendationInfoOpen((open) => !open)}
+                    style={{
+                      width: 18, height: 18, display: "grid", placeItems: "center", padding: 0,
+                      border: 0, borderRadius: "50%", background: C.subtle,
+                      color: C.secondary, cursor: "pointer",
+                      fontFamily: "var(--fc-font-body)", fontSize: 12, fontWeight: 700, lineHeight: 1,
+                      textTransform: "none", letterSpacing: "normal",
+                    }}
+                  >
+                    ?
+                  </button>
+                  {recommendationInfoOpen && (
+                    <div role="tooltip" style={{
+                      position: "absolute", top: "calc(100% + 8px)", left: "50%", transform: "translateX(-50%)",
+                      width: 240, padding: "10px 12px", zIndex: 30,
+                      background: C.ink, color: "#fff", borderRadius: 8, boxShadow: C.shadowRaised,
+                      fontFamily: "var(--fc-font-body)", fontSize: 12, fontWeight: 400, lineHeight: 1.5,
+                      textTransform: "none", letterSpacing: "normal",
+                    }}>
+                      Ranked by each destination&rsquo;s average activity rating in our catalog.
+                    </div>
+                  )}
+                </span>
+              )}
             </p>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 12, marginBottom: 20 }}>
@@ -2446,7 +2471,7 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
                   onMouseEnter={() => setHovCard(name)}
                   onMouseLeave={() => setHovCard(null)}
                   style={{
-                    minHeight: 92, textAlign: "left", padding: "16px 18px", overflow: "hidden",
+                    minHeight: 64, textAlign: "left", padding: "16px 18px", overflow: "hidden",
                     background: C.white,
                     border: `2px solid ${isSel ? C.blue : isHov ? "#BDBDBD" : C.border}`,
                     borderRadius: 12, cursor: "pointer",
@@ -2456,9 +2481,8 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
                   }}
                 >
                   {isSel && <div style={{ position: "absolute", top: 12, right: 12, width: 22, height: 22, borderRadius: "50%", background: C.blue, display: "flex", alignItems: "center", justifyContent: "center" }}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg></div>}
-                  <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 15, fontWeight: 700, color: isSel ? C.blue : C.ink, margin: "0 0 2px", paddingRight: isSel ? 24 : 0 }}>{d.city}</p>
-                  <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 13, color: isSel ? C.blue : C.secondary, margin: "0 0 10px" }}>{d.country}</p>
-                  <DestinationTags tags={d.tags} active={isSel} />
+                  <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 15, fontWeight: 700, color: isSel ? C.blue : C.ink, margin: 0, paddingRight: isSel ? 24 : 0 }}>{d.city}</p>
+                  <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 13, color: isSel ? C.blue : C.secondary, margin: "2px 0 0" }}>{d.country}</p>
                 </button>
               );
             })}
