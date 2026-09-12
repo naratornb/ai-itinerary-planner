@@ -16,7 +16,7 @@ info:
 
     ## Architecture
 
-    - **Backend:** FastAPI (Python), deployed on Railway *— Phase 2 target; Phase 1 is Flask 3.0.3 on port 5000 with no `/v1` prefix. See [apps/api/docs/adr/0001-flask-now-fastapi-for-ai.md](../apps/api/docs/adr/0001-flask-now-fastapi-for-ai.md).*
+    - **Backend:** FastAPI (Python), targeting Vercel serverless. Routes currently have no `/v1` prefix.
     - **Database:** Supabase PostgreSQL (13 tables)
     - **AI:** LangChain RAG pipeline with GPT-4o (NFR-P-101: responses < 10 seconds)
     - **Frontend:** Next.js + Tailwind CSS, deployed on Vercel
@@ -36,21 +36,23 @@ info:
 
     ## Assessor Notes
 
-    This specification covers all six API groups: `auth`, `packages`, `approvals`, `media`, `ai`, `marketplace`.
-    Error responses use a consistent `ErrorResponse` schema throughout.
+    This specification covers `auth`, `users`, `packages`, `approvals`, `media`, `ai`, `marketplace`, and Co-Pilot operations.
+    Error responses use `ErrorResponse`, except user-management upstream failures, which return an `error` string.
     All monetary values are stored and returned as **whole AUD dollars** (integer), matching the database columns.
 
-  version: "2.1.0"
+  version: "2.3.0"
   license:
     name: Academic Use Only
 
 servers:
-  - url: https://api.example.com/v1
-    description: Production (Railway)
-  - url: http://localhost:8000/v1
+  - url: http://localhost:8000
     description: Local development
+  - url: https://api.example.com
+    description: Production placeholder; replace with the deployed API origin
 
 tags:
+  - name: users
+    description: User management backed by Supabase Auth. Currently requires a valid session, without an admin-role check.
   - name: auth
     description: |
       Authentication endpoints. Issues JWT Bearer tokens for all three roles.
@@ -113,6 +115,44 @@ components:
   #  REUSABLE SCHEMAS
   # ─────────────────────────────────────────────
   schemas:
+    ManagedUser:
+      type: object
+      required: [id, email, createdAt, status, role, username]
+      properties:
+        id:
+          type: string
+          nullable: true
+        email:
+          type: string
+        createdAt:
+          type: string
+          nullable: true
+          description: User metadata override, falling back to the Auth creation timestamp.
+        status:
+          type: string
+          nullable: true
+          description: App metadata status; defaults to active when absent.
+        role:
+          type: string
+          nullable: true
+          description: App metadata role; defaults to member when absent.
+        username:
+          type: string
+    ManagedUserUpdate:
+      type: object
+      description: All fields are optional. Null and empty strings are ignored; unknown fields are ignored.
+      properties:
+        email:
+          type: string
+          nullable: true
+        status:
+          type: string
+          nullable: true
+          description: Written to app_metadata.status; no local enum validation.
+        createdAt:
+          type: string
+          nullable: true
+          description: Written to user_metadata.createdAt, not the Auth creation timestamp. No local date validation.
     FeedbackInput:
       properties:
         status:
@@ -447,6 +487,11 @@ components:
               type: array
               items:
                 $ref: '#/components/schemas/ActivityInput'
+            days:
+              type: array
+              description: Per-day narrative. Days need not be contiguous; day_number values must be unique within the request.
+              items:
+                $ref: '#/components/schemas/PackageDayInput'
 
     TravelPackageSummary:
       type: object
@@ -581,7 +626,20 @@ components:
 
     TravelPackageUpdate:
       type: object
-      description: All fields are optional; only provided fields are updated.
+      description: |
+        All metadata fields are optional; only provided fields are updated.
+
+        `flights`, `hotels`, and `activities` follow replace semantics: omit
+        the key to leave the stored collection unchanged, supply an array to
+        replace it entirely (scoped to this package only), or supply `[]` to
+        deliberately clear it. Supplying an explicit JSON `null` for any of
+        these three is rejected with `422` — it is not a supported way to
+        clear a collection.
+
+        `days` differs for backward compatibility: `null` (or omission) means
+        no change, while `[]` clears all day narratives. A supplied `days`
+        array replaces day rows by exact `day_number` (days need not be
+        contiguous), not by array length/position.
       properties:
         title:
           type: string
@@ -595,6 +653,7 @@ components:
         duration_days:
           type: integer
           minimum: 1
+          description: The final merged package (including any collections left unchanged) is validated against this value, e.g. a shrinking duration_days is rejected if it would leave an existing flight/activity's day_number out of range.
         base_price_aud:
           type: integer
           minimum: 0
@@ -605,8 +664,50 @@ components:
           type: array
           items:
             type: string
+        flights:
+          type: array
+          items:
+            $ref: '#/components/schemas/FlightInput'
+        hotels:
+          type: array
+          items:
+            $ref: '#/components/schemas/HotelInput'
+        activities:
+          type: array
+          items:
+            $ref: '#/components/schemas/ActivityInput'
+        days:
+          type: array
+          nullable: true
+          items:
+            $ref: '#/components/schemas/PackageDayInput'
 
     # ── Package Components ─────────────────────
+    PackageDayInput:
+      type: object
+      required: [day_number]
+      properties:
+        day_number:
+          type: integer
+          minimum: 1
+        title:
+          type: string
+          nullable: true
+        summary:
+          type: string
+          nullable: true
+          description: The day's story/narrative, shown on the detail page. Distinct from any component's own `notes`.
+        meta:
+          type: string
+          nullable: true
+        media_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          default: []
+          description: Must not contain duplicates; every ID must already belong to this package or the request is rejected with 422.
+
     FlightInput:
       type: object
       required: [origin_iata, destination_iata, airline, departure_datetime, arrival_datetime]
@@ -631,10 +732,12 @@ components:
         departure_datetime:
           type: string
           format: date-time
+          description: Real flight departure timestamp. Flights are not eligible for the undated/relative-day placeholders that hotels and activities support — always required in the existing format.
           example: "2025-07-14T06:30:00+10:00"
         arrival_datetime:
           type: string
           format: date-time
+          description: Must be strictly after departure_datetime.
           example: "2025-07-14T11:45:00+08:00"
         cabin_class:
           type: string
@@ -644,6 +747,31 @@ components:
           type: integer
           description: Per-person flight price in whole AUD dollars.
           example: 850
+        day_number:
+          type: integer
+          minimum: 1
+          nullable: true
+          description: Timeline placement (1..duration_days). Independent of departure_datetime's own date.
+        sequence_order:
+          type: integer
+          minimum: 1
+          nullable: true
+          description: Position among this package's flights when supplied; ties fall back to component type then package_component_id.
+        notes:
+          type: string
+          nullable: true
+          description: Creator-authored note, distinct from any description-like field.
+        media_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          default: []
+          description: Must not contain duplicates; every ID must already belong to this package.
+        source_id:
+          type: string
+          nullable: true
+          description: Provenance only (e.g. an inventory catalog reference the editor copied from). Not permission to read or modify inventory; the saved flight is a fully independent record.
 
     FlightDetail:
       allOf:
@@ -652,6 +780,13 @@ components:
             flight_id:
               type: string
               format: uuid
+              nullable: true
+              description: Legacy shared-catalog reference. Null for custom package components saved via the editor.
+            package_component_id:
+              type: string
+              format: uuid
+              nullable: true
+              description: Identifies the actual package_flights row. Use this, not flight_id, to reference "this flight in this package" — a full collection replacement issues new package_component_id values.
             sequence_order:
               type: integer
               example: 1
@@ -659,7 +794,14 @@ components:
 
     HotelInput:
       type: object
-      required: [hotel_name, check_in_date, check_out_date, city]
+      required: [hotel_name, city]
+      description: |
+        One HotelInput represents one full stay (its complete interval), not
+        a per-night row. Repeated nightly renderings and the check-out marker
+        in an editor UI are views of this one object, not separate stays.
+        Supply either `check_in_date`/`check_out_date`, or
+        `check_in_day`/`check_out_day` (both of a pair are required
+        together); at least one representation is required.
       properties:
         hotel_name:
           type: string
@@ -680,11 +822,24 @@ components:
         check_in_date:
           type: string
           format: date
+          nullable: true
           example: "2025-07-14"
         check_out_date:
           type: string
           format: date
+          nullable: true
+          description: Must be strictly after check_in_date when both dates are supplied.
           example: "2025-07-21"
+        check_in_day:
+          type: integer
+          minimum: 1
+          nullable: true
+          description: Relative day placement, for undated drafts. Must be between 1 and duration_days.
+        check_out_day:
+          type: integer
+          minimum: 1
+          nullable: true
+          description: Must be strictly after check_in_day; may be duration_days + 1 to represent the departure boundary.
         price_per_night_aud:
           type: integer
           description: Per-night price in whole AUD dollars.
@@ -694,6 +849,25 @@ components:
           type: string
           nullable: true
           example: "Pool Villa, King Bed"
+        sequence_order:
+          type: integer
+          minimum: 1
+          nullable: true
+          description: Round-trips inside the saved details for this stay. Not a native DB ordering column — do not rely on the database to order hotels by position; the API returns them in save order / array index as a fallback.
+        notes:
+          type: string
+          nullable: true
+        media_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          default: []
+          description: Must not contain duplicates; every ID must already belong to this package.
+        source_id:
+          type: string
+          nullable: true
+          description: Provenance only, not permission to read/modify shared hotel inventory.
 
     HotelDetail:
       allOf:
@@ -702,6 +876,13 @@ components:
             hotel_id:
               type: string
               format: uuid
+              nullable: true
+              description: Legacy shared-catalog reference. Null for custom package components saved via the editor.
+            package_component_id:
+              type: string
+              format: uuid
+              nullable: true
+              description: Identifies the actual package_hotels row.
             sequence_order:
               type: integer
               example: 1
@@ -709,7 +890,11 @@ components:
 
     ActivityInput:
       type: object
-      required: [activity_name, activity_date, city]
+      required: [activity_name, city]
+      description: |
+        Requires either `activity_date` or `day_number` (at least one).
+        Existing date-based inputs continue to work unchanged; `day_number`
+        additionally supports an undated draft placement.
       properties:
         activity_name:
           type: string
@@ -717,10 +902,27 @@ components:
         activity_date:
           type: string
           format: date
+          nullable: true
           example: "2025-07-16"
         city:
           type: string
           example: "Ubud, Bali"
+        day_number:
+          type: integer
+          minimum: 1
+          nullable: true
+          description: Timeline placement (1..duration_days) for undated drafts.
+        sequence_order:
+          type: integer
+          minimum: 1
+          nullable: true
+          description: Position among this package's activities when supplied; ties fall back to component type then package_component_id.
+        start_time:
+          type: string
+          pattern: '^([01]\d|2[0-3]):[0-5]\d$'
+          nullable: true
+          description: 24-hour HH:MM.
+          example: "10:30"
         duration_hours:
           type: number
           format: float
@@ -731,6 +933,16 @@ components:
           nullable: true
           description: Per-person activity price in whole AUD dollars.
           example: 120
+        category:
+          type: string
+          nullable: true
+        address:
+          type: string
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+          description: Creator-authored note, stored independently from `description`.
         description:
           type: string
           nullable: true
@@ -738,6 +950,17 @@ components:
         booking_required:
           type: boolean
           example: true
+        media_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          default: []
+          description: Must not contain duplicates; every ID must already belong to this package.
+        source_id:
+          type: string
+          nullable: true
+          description: Provenance only, not permission to read/modify shared activity inventory.
 
     ActivityDetail:
       allOf:
@@ -746,6 +969,13 @@ components:
             activity_id:
               type: string
               format: uuid
+              nullable: true
+              description: Legacy shared-catalog reference. Null for custom package components saved via the editor.
+            package_component_id:
+              type: string
+              format: uuid
+              nullable: true
+              description: Identifies the actual package_activities row.
             sequence_order:
               type: integer
               example: 1
@@ -863,6 +1093,14 @@ components:
           type: string
           nullable: true
           example: "Land at Narita, check in near Shinjuku and ease in with an evening izakaya crawl."
+        meta:
+          type: string
+          nullable: true
+        media_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
 
     PackageCreator:
       type: object
@@ -1471,6 +1709,89 @@ paths:
   #  AUTH
   # ══════════════════════════════════════════
 
+  /users:
+    get:
+      tags: [users]
+      summary: List Auth users
+      operationId: usersList
+      description: |
+        Returns normalized users from the Supabase Auth admin API.
+        Requires a valid Supabase bearer token; the current handler does not check the caller's role.
+        No pagination parameters are exposed; the upstream default page is returned.
+      responses:
+        "200":
+          description: Normalized users.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [users]
+                properties:
+                  users:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ManagedUser'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        default:
+          description: Upstream failures preserve the upstream HTTP status and return an error string. Authentication service or configuration failures use ErrorResponse.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    required: [error]
+                    properties:
+                      error:
+                        type: string
+                  - $ref: '#/components/schemas/ErrorResponse'
+
+  /users/{user_id}:
+    patch:
+      tags: [users]
+      summary: Update an Auth user's email or metadata
+      operationId: usersUpdate
+      description: |
+        Requires a valid Supabase bearer token; the current handler does not check the caller's role.
+        Updates email, app_metadata.status, and user_metadata.createdAt when non-empty values are supplied.
+        Returns the upstream Supabase Auth JSON unchanged, not a normalized ManagedUser.
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ManagedUserUpdate'
+      responses:
+        "200":
+          description: Unmodified Supabase Auth update response.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "422":
+          $ref: '#/components/responses/UnprocessableEntity'
+        default:
+          description: Upstream failures preserve the upstream HTTP status and return an error string. Authentication service or configuration failures use ErrorResponse.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    required: [error]
+                    properties:
+                      error:
+                        type: string
+                  - $ref: '#/components/schemas/ErrorResponse'
+
   /auth/login:
     post:
       tags: [auth]
@@ -1675,7 +1996,19 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
         "422":
-          $ref: '#/components/responses/UnprocessableEntity'
+          description: |
+            Request body failed schema validation (`VALIDATION_ERROR`), or the
+            body was well-formed but the save RPC rejected it on a business
+            precondition — e.g. a `day_number` outside `1..duration_days`, or a
+            `media_ids` reference that doesn't belong to this package
+            (`SAVE_PRECONDITION_FAILED`). Nothing is written either way.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error_code: "SAVE_PRECONDITION_FAILED"
+                message: "flight day_number must be between 1 and duration_days"
 
   /packages/{package_id}:
     parameters:
@@ -1711,11 +2044,23 @@ paths:
       tags: [packages]
       summary: Update a package (partial or full update)
       description: |
-        Updates the metadata fields of a travel package. Only packages in `draft`
-        or `rejected` status may be updated; attempting to update a package in
-        any other status returns `409 Conflict`.
+        Partially updates a package's metadata, days, and itinerary components
+        in one atomic save. Only packages in `draft` or `rejected` status may
+        be updated; attempting to update a package in any other status
+        returns `409 Conflict`.
 
-        To update flights/hotels/activities, delete and re-add the components.
+        `flights`, `hotels`, and `activities` each replace the package's
+        stored collection when supplied as an array (`[]` clears it);
+        omitting the key leaves that collection unchanged. A full replacement
+        assigns new `package_component_id` values in the response — clients
+        must not keep treating local/previous IDs as still valid. See
+        `TravelPackageUpdate` for the complete field-by-field semantics,
+        including the `days` exception (`null`/omission = unchanged,
+        `[]` = clear narratives).
+
+        Any validation failure (bounds, time format, duplicate media/day
+        numbers, foreign/missing media references, etc.) rolls back the
+        entire save — nothing is partially written.
 
         **Roles:** `influencer` (own packages only)
         **FR:** FR-I-101, FR-I-103 (revise after rejection)
@@ -1726,6 +2071,32 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/TravelPackageUpdate'
+            example:
+              title: "Tokyo food day"
+              description: "A creator-led day exploring local food."
+              base_price_aud: 450
+              days:
+                - day_number: 1
+                  title: "Markets and neighbourhoods"
+                  summary: "Start at the market, then explore nearby streets."
+                  meta: "Food and culture"
+                  media_ids: []
+              activities:
+                - activity_name: "Market walk"
+                  activity_date: "2026-10-01"
+                  city: "Tokyo"
+                  day_number: 1
+                  sequence_order: 1
+                  start_time: "10:30"
+                  duration_hours: 1.5
+                  price_aud: 40
+                  category: "Food"
+                  address: "Market entrance"
+                  description: "Explore the food stalls."
+                  notes: "Meet beside the gate"
+                  booking_required: false
+                  media_ids: []
+                  source_id: null
       responses:
         "200":
           description: Package updated successfully.
@@ -1749,7 +2120,20 @@ paths:
                 error_code: "PACKAGE_NOT_EDITABLE"
                 message: "This package cannot be edited because its status is 'pending_review'. Only packages in 'draft' or 'rejected' status may be updated."
         "422":
-          $ref: '#/components/responses/UnprocessableEntity'
+          description: |
+            Request body failed schema validation (`VALIDATION_ERROR`), or the
+            body was well-formed but the save RPC rejected it on a business
+            precondition — e.g. a `day_number` outside `1..duration_days`, or a
+            `media_ids` reference that doesn't belong to this package
+            (`SAVE_PRECONDITION_FAILED`). The update is rolled back entirely
+            either way.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error_code: "SAVE_PRECONDITION_FAILED"
+                message: "flight day_number must be between 1 and duration_days"
 
     delete:
       tags: [packages]

@@ -159,6 +159,126 @@ def test_price_whole_dollars(monkeypatch):
     assert resp.json()["base_price_aud"] == 2999  # no cents conversion, ever
 
 
+def test_public_detail_serves_custom_component_snapshot_fields(monkeypatch):
+    # Task C: a custom (null catalog id) component's saved `details` fields
+    # must survive all the way through GET /marketplace/packages/{id} — the
+    # FastAPI response_model (TravelPackageDetail) is what could silently
+    # strip a field the service dict includes, so this must go through the
+    # real route rather than calling _to_detail directly.
+    _configure(monkeypatch)
+    row = dict(FIXTURE)
+    row["package_flights"] = [
+        {
+            "id": "pf-custom",
+            "flight_id": None,
+            "day_number": 2,
+            "sequence_order": 1,
+            "notes": "native-projected-notes",
+            "details": {
+                "origin_iata": "HND",
+                "destination_iata": "KIX",
+                "airline": "JL",
+                "flight_number": "JL123",
+                "departure_datetime": "2026-03-03T09:00:00+00:00",
+                "arrival_datetime": "2026-03-03T11:00:00+00:00",
+                "cabin_class": "economy",
+                "price_aud": 300,
+                "day_number": 2,
+                "sequence_order": 1,
+                "notes": "custom leg",
+                "media_ids": ["m1"],
+                "source_id": "wizard-flight-2",
+            },
+            "flights": None,
+        }
+    ]
+    row["package_hotels"] = [
+        {
+            "id": "ph-custom",
+            "hotel_id": None,
+            "check_in_date": None,
+            "check_out_date": None,
+            "check_in_day": 5,
+            "check_out_day": 7,
+            "nights": 2,
+            "notes": "custom stay",
+            "details": {
+                "hotel_name": "Kyoto Ryokan",
+                "star_rating": 5,
+                "city": "Kyoto",
+                "address": "2-2",
+                "check_in_day": 5,
+                "check_out_day": 7,
+                "price_per_night_aud": 320,
+                "room_type": "suite",
+                "sequence_order": 1,
+                "notes": "custom stay",
+                "media_ids": [],
+                "source_id": "wizard-hotel-2",
+            },
+            "hotels": None,
+        }
+    ]
+    row["package_activities"] = [
+        {
+            "id": "pa-custom",
+            "activity_id": None,
+            "sequence_order": 1,
+            "day_number": 2,
+            "activity_date": None,
+            "notes": "native-projected-notes",
+            "details": {
+                "activity_name": "Osaka street food crawl",
+                "city": "Osaka",
+                "day_number": 2,
+                "sequence_order": 1,
+                "start_time": "18:30",
+                "duration_hours": 2.5,
+                "price_aud": 60,
+                "category": "food",
+                "address": "Dotonbori",
+                "notes": "custom activity",
+                "description": "Evening food crawl",
+                "booking_required": False,
+                "media_ids": ["m1"],
+                "source_id": "wizard-activity-2",
+            },
+            "activities": None,
+        }
+    ]
+    monkeypatch.setattr(packages_service.requests, "get", _fake_get([row], []))
+    resp = client.get("/marketplace/packages/b0000000-0000-0000-0000-000000000001")
+    assert resp.status_code == 200
+    body = resp.json()
+
+    flight = body["flights"][0]
+    assert flight["flight_id"] is None
+    assert flight["package_component_id"] == "pf-custom"
+    assert flight["origin_iata"] == "HND"
+    assert flight["source_id"] == "wizard-flight-2"
+    assert flight["media_ids"] == ["m1"]
+
+    hotel = body["hotels"][0]
+    assert hotel["hotel_id"] is None
+    assert hotel["package_component_id"] == "ph-custom"
+    assert hotel["check_in_day"] == 5
+    assert hotel["check_out_day"] == 7
+    assert hotel["source_id"] == "wizard-hotel-2"
+
+    activity = body["activities"][0]
+    assert activity["activity_id"] is None
+    assert activity["package_component_id"] == "pa-custom"
+    assert activity["start_time"] == "18:30"
+    assert activity["category"] == "food"
+    assert activity["address"] == "Dotonbori"
+    assert activity["source_id"] == "wizard-activity-2"
+
+    # Effective saved-detail prices, one hotel stay's actual nights (2, not 3).
+    assert body["pricing"]["flights_total"] == 300
+    assert body["pricing"]["hotels_total"] == 640
+    assert body["pricing"]["activities_total"] == 60
+
+
 def test_openapi_yaml_served_and_valid():
     resp = client.get("/openapi.yaml")
     assert resp.status_code == 200

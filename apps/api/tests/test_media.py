@@ -284,6 +284,42 @@ def test_delete_media_not_editable(fake):
     assert not fake.find("DELETE", "/storage/v1/object")
 
 
+def test_delete_media_trigger_race_maps_to_409(fake):
+    # The service precheck sees "draft", but a concurrent submit flips the
+    # package's status before the DELETE reaches the DB; the
+    # package_media_before_delete trigger (migration 0013) then rejects the
+    # delete. That known race must map to the existing 409
+    # PACKAGE_NOT_EDITABLE contract, not the generic sanitized 502.
+    fake.route("GET", "package_media", FakeResp([_media_row_with_package()]))
+    fake.route(
+        "DELETE",
+        "/rest/v1/package_media",
+        FakeResp(
+            {"message": f"PACKAGE_NOT_EDITABLE: package {PKG} is not editable (status pending_review)"},
+            status_code=400,
+        ),
+    )
+
+    resp = client.delete(f"/media/{MID}")
+    assert resp.status_code == 409
+    assert resp.json()["error_code"] == "PACKAGE_NOT_EDITABLE"
+    assert not fake.find("DELETE", "/storage/v1/object")
+
+
+def test_delete_media_other_upstream_failure_stays_sanitized(fake):
+    fake.route("GET", "package_media", FakeResp([_media_row_with_package()]))
+    fake.route(
+        "DELETE",
+        "/rest/v1/package_media",
+        FakeResp({"message": "secret pg detail"}, status_code=500),
+    )
+
+    resp = client.delete(f"/media/{MID}")
+    assert resp.status_code == 502
+    assert resp.json()["error_code"] == "UPSTREAM_ERROR"
+    assert "secret pg detail" not in resp.text
+
+
 def test_delete_media_unknown(fake):
     fake.route("GET", "package_media", FakeResp([]))
     resp = client.delete(f"/media/{MID}")

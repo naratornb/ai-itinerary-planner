@@ -21,7 +21,7 @@ PackageStatus = Literal[
 
 
 def _upstream(exc: service.UpstreamError):
-    return _err(exc.status_code, "UPSTREAM_ERROR", exc.message)
+    return _err(exc.status_code, exc.error_code or "UPSTREAM_ERROR", exc.message)
 
 
 def _not_found():
@@ -116,7 +116,7 @@ def submit_package(
 ):
     try:
         outcome, result = service.submit_package(
-            package_id, ctx["headers"], body.submission_note if body else None
+            package_id, ctx["headers"], ctx["uid"], body.submission_note if body else None
         )
     except service.UpstreamError as exc:
         return _upstream(exc)

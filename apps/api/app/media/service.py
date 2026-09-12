@@ -29,22 +29,40 @@ _ITEM_SELECT = (
     "sort_order,uploaded_at"
 )
 
+# Raised by the package_media_before_delete DB trigger (migration 0013) when
+# a concurrent submit/save flips the package out of draft/rejected between
+# this module's own precheck and the actual DELETE. A known race, not an
+# unexpected upstream failure — map it to the existing 409 contract instead
+# of the generic sanitized 502.
+_NOT_EDITABLE_MARKER = "PACKAGE_NOT_EDITABLE"
 
-def _call(method: str, table: str, **kwargs):
+
+def _raise_sanitized(method: str, table: str, response) -> None:
+    logger.error(
+        "PostgREST %s %s failed (%s): %s",
+        method, table, response.status_code, response.text,
+    )
+    raise UpstreamError(502, "Upstream database error.")
+
+
+def _call(method: str, table: str, check: bool = True, **kwargs):
     # Local twin of packages.service._call so tests can stub this module's
     # `requests` alone (same reason approvals has its own copy).
+    # check=False returns the raw response instead of raising, for the one
+    # caller (delete_media) that needs to inspect a non-ok body itself
+    # before deciding whether it's the sanitized 502 or a known 409 — it
+    # still routes through _raise_sanitized for anything else, so there is
+    # exactly one place that decides how upstream errors get logged/masked.
     try:
         response = getattr(requests, method)(
             f"{core.SUPABASE_URL}/rest/v1/{table}", timeout=15, **kwargs
         )
     except requests.RequestException:
         raise UpstreamError(503, "Database unreachable.")
+    if not check:
+        return response
     if not response.ok:
-        logger.error(
-            "PostgREST %s %s failed (%s): %s",
-            method, table, response.status_code, response.text,
-        )
-        raise UpstreamError(502, "Upstream database error.")
+        _raise_sanitized(method, table, response)
     return response
 
 
@@ -192,10 +210,20 @@ def delete_media(media_id, ctx):
         return "not_editable", None
 
     # Row first: a DB failure then leaves an orphaned object (tolerated),
-    # not a live row pointing at a deleted file.
-    _call(
-        "delete", "package_media", params={"media_id": f"eq.{media_id}"}, headers=headers
+    # not a live row pointing at a deleted file. check=False: this call
+    # must inspect the trigger's rejection text itself before falling back
+    # to _call's own sanitized 502 for anything else.
+    response = _call(
+        "delete",
+        "package_media",
+        params={"media_id": f"eq.{media_id}"},
+        headers=headers,
+        check=False,
     )
+    if not response.ok:
+        if _NOT_EDITABLE_MARKER in (response.text or ""):
+            return "not_editable", None
+        _raise_sanitized("delete", "package_media", response)
     url = rows[0].get("url") or ""
     if f"/{BUCKET}/" in url:
         _delete_object(url.split(f"/{BUCKET}/", 1)[1], ctx)
