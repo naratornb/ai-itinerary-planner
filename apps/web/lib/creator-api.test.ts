@@ -266,6 +266,22 @@ test("formatCreatorPackage uses a concise edit action for drafts", () => {
   assert.equal(formatted.rowAction, "Edit");
 });
 
+test("formatCreatorPackage labels an approved package as a preview", () => {
+  const formatted = formatCreatorPackage({
+    package_id: "package-1",
+    title: "Approved trip",
+    destination_country: "Japan",
+    destination_city: "Tokyo",
+    duration_days: 5,
+    base_price_aud: 2485,
+    status: "approved",
+    creator_id: "creator-1",
+    created_at: "2026-08-20T00:00:00Z",
+  });
+
+  assert.equal(formatted.rowAction, "Preview");
+});
+
 test("resolveCreatorProfile prefers the database profile", () => {
   assert.deepEqual(
     resolveCreatorProfile(

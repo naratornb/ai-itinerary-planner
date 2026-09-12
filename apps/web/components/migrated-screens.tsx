@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { Session } from "@supabase/supabase-js";
 
@@ -26,10 +27,19 @@ import {
   type WizardSelection,
 } from "../lib/ai/itinerary";
 import { supabase } from "../lib/supabase/client";
+import { creatorPackageRoute } from "../lib/routes";
+import { dashboardActionAlignment } from "./navigation-model";
 const creatorBannerImg = "/creator-banner.png";
 
 
 export type Screen = "login" | "marketplace" | "dashboard" | "builder" | "ai-wizard";
+
+export function nextRecommendationInfoOpen(
+  open: boolean,
+  interaction: "focus" | "click" | "leave",
+) {
+  return interaction === "leave" ? false : open || interaction === "focus" || interaction === "click";
+}
 
 // ─── Image URLs ────────────────────────────────────────────────────────────────
 const IMG = {
@@ -64,6 +74,11 @@ const C = {
   radiusLg:      16,
   radiusPill:    999,
 };
+
+export function destinationOptionBackground(selected: boolean, hovered: boolean) {
+  if (selected) return "#EFF6FF";
+  return hovered ? C.subtle : "transparent";
+}
 
 // ─── Button primitives ─────────────────────────────────────────────────────────
 // Primary: blue fill, white text — "an action the user can take"
@@ -1194,19 +1209,20 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
   const stats = [
     { label: "Packages", value: String(packages.length), sub: "All your packages" },
     { label: "Live", value: String(packages.filter((p) => p.status === "live").length), sub: "Published & bookable" },
-    { label: "Approved", value: String(packages.filter((p) => p.status === "approved").length), sub: "Ready to publish" },
+    { label: "Approved", value: String(packages.filter((p) => p.status === "approved").length), sub: "Creator preview available" },
     { label: "Drafts", value: String(packages.filter((p) => p.status === "draft").length), sub: "Still in progress" },
   ];
 
   const cols = {
-    grid: "minmax(0,1.8fr) minmax(140px,1fr) 100px 120px 140px 220px",
+    grid: "minmax(0,1.8fr) minmax(140px,1fr) 100px 120px 140px 200px",
+    gap: 24,
     headers: [
       { h: "Package",        align: "left"  },
       { h: "Destination",    align: "left"  },
       { h: "Duration",       align: "right" },
-      { h: "Price",          align: "center" },
+      { h: "Price",          align: "right" },
       { h: "Status",         align: "center" },
-      { h: "Actions",        align: "right" },
+      { h: "Actions",        align: dashboardActionAlignment.header },
     ],
   };
 
@@ -1314,7 +1330,7 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
           </div>
 
           {/* Column headers */}
-          <div style={{ display: "grid", gridTemplateColumns: cols.grid, padding: "14px 28px", background: "#FAFAFA", borderBottom: `1px solid ${C.border}` }}>
+          <div style={{ display: "grid", gridTemplateColumns: cols.grid, columnGap: cols.gap, padding: "14px 28px", background: "#FAFAFA", borderBottom: `1px solid ${C.border}` }}>
             {cols.headers.map(({ h, align }) => (
               <p key={h} style={{
                 fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 400,
@@ -1347,6 +1363,7 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
           {/* Rows */}
           {filtered.map((pkg, i) => {
             const hov = hovRow === pkg.name;
+            const packageHref = creatorPackageRoute(pkg.id, pkg.statusKey);
             const statusStyle = pkg.statusKey === "live" || pkg.statusKey === "approved"
               ? { color: C.success, background: C.successBg }
               : pkg.statusKey === "pending_review"
@@ -1355,34 +1372,27 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
             return (
               <div key={pkg.id}
                 style={{
-                  display: "grid", gridTemplateColumns: cols.grid,
+                  display: "grid", gridTemplateColumns: cols.grid, columnGap: cols.gap,
                   padding: "22px 28px", alignItems: "center",
                   borderBottom: i < filtered.length - 1 ? `1px solid #F0F0F0` : "none",
                   background: hov ? "#FAFAFA" : "transparent",
-                  transition: "background 120ms", cursor: "pointer",
+                  transition: "background 120ms",
                 }}
                 onMouseEnter={() => setHovRow(pkg.name)}
                 onMouseLeave={() => setHovRow(null)}
               >
                 {/* Package name */}
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
-                    <p style={{
-                      fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 500,
-                      color: hov ? C.blue : C.ink,
-                      textDecoration: hov ? "underline" : "none",
-                      textUnderlineOffset: 2,
-                      margin: 0, lineHeight: "20px", transition: "color 120ms",
-                      overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                    }}>{pkg.name}</p>
+                  <Link className="dashboard-package-link" href={packageHref}>
+                    <span>{pkg.name}</span>
                     <svg
                       width="14" height="14" viewBox="0 0 24 24" fill="none"
                       stroke={C.blue} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
-                      style={{ flexShrink: 0, opacity: hov ? 1 : 0, transition: "opacity 140ms" }}
+                      aria-hidden="true"
                     >
                       <path d="M5 12h14M12 5l7 7-7 7"/>
                     </svg>
-                  </div>
+                  </Link>
                 </div>
 
                 <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, color: C.secondary, margin: 0 }}>
@@ -1393,7 +1403,7 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
                   {pkg.duration}
                 </p>
 
-                <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, color: C.ink, margin: 0, textAlign: "center", fontVariantNumeric: "tabular-nums" }}>
+                <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, color: C.ink, margin: 0, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
                   {pkg.price}
                 </p>
 
@@ -1408,31 +1418,11 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
                 </div>
 
                 {/* Row action */}
-                <div style={{ textAlign: "right", display: "flex", justifyContent: "flex-end", gap: 8 }}>
-                  <button style={{
-                    fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 500,
-                    color: C.ink, background: "none",
-                    border: `1px solid ${C.border}`,
-                    borderRadius: 6, padding: "5px 14px", cursor: "pointer",
-                    whiteSpace: "nowrap",
-                    opacity: hov ? 1 : 0.75, transition: "opacity 140ms, border-color 140ms",
-                  }}
-                    onClick={() => router.push(`/packages/editor/${encodeURIComponent(pkg.id)}`)}
-                    onMouseEnter={(e) => { e.currentTarget.style.borderColor = "#9E9E9E"; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.borderColor = C.border; }}
-                  >{pkg.rowAction}</button>
+                <div style={{ textAlign: dashboardActionAlignment.buttons, display: "flex", justifyContent: dashboardActionAlignment.buttons, gap: 8 }}>
+                  <Link className="dashboard-row-action" href={packageHref}>{pkg.rowAction}</Link>
                   {pkg.statusKey === "draft" && (
-                    <button style={{
-                      fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 500,
-                      color: C.red, background: "none",
-                      border: `1px solid ${C.border}`,
-                      borderRadius: 6, padding: "5px 14px", cursor: "pointer",
-                      whiteSpace: "nowrap",
-                      opacity: hov ? 1 : 0.75, transition: "opacity 140ms, border-color 140ms",
-                    }}
+                    <button className="dashboard-row-action dashboard-row-action-delete"
                       onClick={() => { setDeleteError(""); setPendingDelete({ id: pkg.id, name: pkg.name }); }}
-                      onMouseEnter={(e) => { e.currentTarget.style.borderColor = C.red; }}
-                      onMouseLeave={(e) => { e.currentTarget.style.borderColor = C.border; }}
                     >Delete</button>
                   )}
                 </div>
@@ -1960,6 +1950,18 @@ const WIZARD_STEPS = ["Destination", "Travel style", "Duration", "Season"];
 
 type DestinationOption = { city: string; country: string; avgRating: number };
 
+export function destinationSelection(destination: Pick<DestinationOption, "city" | "country">) {
+  const name = `${destination.city}, ${destination.country}`;
+  return { name, search: name };
+}
+
+export function destinationMatchesSearch(
+  destination: Pick<DestinationOption, "city" | "country">,
+  query: string,
+) {
+  return `${destination.city}, ${destination.country}`.toLowerCase().includes(query.trim().toLowerCase());
+}
+
 // A destination needs at least this many catalog activities before it's
 // eligible for "Recommended" — otherwise a high average rating could be an
 // artifact of two or three activities, not a real signal the creator can build on.
@@ -2174,17 +2176,13 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
   // Step 0 requires an actual pick from the catalog — typing alone (without
   // selecting a result) must not be enough to continue.
   const canContinue = step === 0 ? selected !== null : step === 1 ? vibes.length > 0 : step === 2 ? duration !== null : step === 3 ? season !== null : true;
-  const filteredDestinations = destinations.filter((destination) => {
-    const query = destinationSearch.trim().toLowerCase();
-    return !query || destination.city.toLowerCase().includes(query) || destination.country.toLowerCase().includes(query);
-  });
+  const filteredDestinations = destinations.filter((destination) =>
+    destinationMatchesSearch(destination, destinationSearch));
   const selectDestination = (d: DestinationOption) => {
-    const name = `${d.city}, ${d.country}`;
+    const { name, search } = destinationSelection(d);
     setSelected(name);
     setDest(name);
-    // Leave destinationSearch as-is: setting it to the full "City, Country"
-    // string would stop matching its own city/country substring filter and
-    // make the just-picked card vanish from its own result list.
+    setDestinationSearch(search);
     setDestinationDropdownOpen(false);
   };
   const stepSummaries = [
@@ -2471,14 +2469,18 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
                   )}
                   {filteredDestinations.map((d) => {
                     const name = `${d.city}, ${d.country}`;
+                    const isHovered = hovCard === name;
                     return (
                       <button key={name} type="button" role="option" aria-selected={selected === name}
                         onMouseDown={(e) => e.preventDefault()}
+                        onMouseEnter={() => setHovCard(name)}
+                        onMouseLeave={() => setHovCard(null)}
                         onClick={() => selectDestination(d)}
                         style={{
                           width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
                           padding: "10px 16px", border: 0, borderBottom: `1px solid ${C.border}`,
-                          background: selected === name ? "#EFF6FF" : "transparent", cursor: "pointer", textAlign: "left",
+                          background: destinationOptionBackground(selected === name, isHovered), cursor: "pointer", textAlign: "left",
+                          transition: "background-color 120ms ease",
                         }}
                       >
                         <span>
@@ -2496,16 +2498,20 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
             </p>
           </label>
           <div style={{ minHeight: 32, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, marginBottom: 10 }}>
-            <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 12, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: C.secondary, margin: 0, display: "flex", alignItems: "center", gap: 6 }}>
+            <div style={{ fontFamily: "var(--fc-font-body)", fontSize: 12, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: C.secondary, margin: 0, display: "flex", alignItems: "center", gap: 6 }}>
               {destinationSearch ? `${filteredDestinations.length} matching destinations` : "Recommended destinations"}
               {!destinationSearch && (
-                <span style={{ position: "relative", display: "inline-flex" }}>
+                <span
+                  onMouseEnter={() => setRecommendationInfoOpen((open) => nextRecommendationInfoOpen(open, "focus"))}
+                  onMouseLeave={() => setRecommendationInfoOpen((open) => nextRecommendationInfoOpen(open, "leave"))}
+                  style={{ position: "relative", display: "inline-flex" }}
+                >
                   <button type="button" aria-label="How destinations are recommended"
-                    onMouseEnter={() => setRecommendationInfoOpen(true)}
-                    onMouseLeave={() => setRecommendationInfoOpen(false)}
-                    onFocus={() => setRecommendationInfoOpen(true)}
-                    onBlur={() => setRecommendationInfoOpen(false)}
-                    onClick={() => setRecommendationInfoOpen((open) => !open)}
+                    aria-expanded={recommendationInfoOpen}
+                    aria-describedby={recommendationInfoOpen ? "destination-recommendation-tooltip" : undefined}
+                    onFocus={() => setRecommendationInfoOpen((open) => nextRecommendationInfoOpen(open, "focus"))}
+                    onBlur={() => setRecommendationInfoOpen((open) => nextRecommendationInfoOpen(open, "leave"))}
+                    onClick={() => setRecommendationInfoOpen((open) => nextRecommendationInfoOpen(open, "click"))}
                     style={{
                       width: 18, height: 18, display: "grid", placeItems: "center", padding: 0,
                       border: 0, borderRadius: "50%", background: C.subtle,
@@ -2517,7 +2523,7 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
                     ?
                   </button>
                   {recommendationInfoOpen && (
-                    <div role="tooltip" style={{
+                    <div id="destination-recommendation-tooltip" role="tooltip" style={{
                       position: "absolute", top: "calc(100% + 8px)", left: "50%", transform: "translateX(-50%)",
                       width: 240, padding: "10px 12px", zIndex: 30,
                       background: C.ink, color: "#fff", borderRadius: 8, boxShadow: C.shadowRaised,
@@ -2529,7 +2535,7 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
                   )}
                 </span>
               )}
-            </p>
+            </div>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 12, marginBottom: 20 }}>
             {(destinationSearch ? filteredDestinations : recommended).map((d) => {

@@ -11,3 +11,8 @@ export const marketplaceNavigationItems = [
   "Tours",
   "Deals",
 ] as const;
+
+export const dashboardActionAlignment = {
+  header: "center",
+  buttons: "center",
+} as const;

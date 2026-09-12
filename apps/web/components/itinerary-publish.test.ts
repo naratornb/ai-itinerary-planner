@@ -7,28 +7,47 @@ import ts from "typescript";
 const source = readFileSync(new URL("./itinerary-editor.tsx", import.meta.url), "utf8");
 const file = ts.createSourceFile("editor.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const buttons: ts.JsxOpeningElement[] = [];
-let publishHandler = "";
+let submitHandler = "";
+let submissionButtonLabel = "";
 function visit(node: ts.Node) {
-  if (ts.isVariableDeclaration(node) && node.name.getText(file) === "handlePublish") {
-    publishHandler = `const handlePublish = ${node.initializer!.getText(file)};`;
+  if (ts.isVariableDeclaration(node) && node.name.getText(file) === "handleSubmit") {
+    submitHandler = `const handleSubmit = ${node.initializer!.getText(file)};`;
   }
-  // publishButtonLabel is the shared label expression only the two real
+  if (ts.isVariableDeclaration(node) && node.name.getText(file) === "submissionButtonLabel") {
+    submissionButtonLabel = node.initializer!.getText(file);
+  }
+  // submissionButtonLabel is the shared label expression only the two real
   // "submit for review" buttons render — other buttons sharing the same
   // className (Add flight, Add hotel, Save changes, ...) don't reference it.
   if (ts.isJsxElement(node) && node.openingElement.tagName.getText(file) === "button"
-    && node.children.some((child) => child.getText(file).includes("publishButtonLabel"))) {
+    && node.children.some((child) => child.getText(file).includes("submissionButtonLabel"))) {
     buttons.push(node.openingElement);
   }
   ts.forEachChild(node, visit);
 }
 visit(file);
 
+function readyButtonLabel() {
+  const context = {
+    isLocked: false,
+    packageStatus: "draft",
+    STATUS_LABELS: {},
+    uploadingCount: 0,
+    submitting: false,
+    isReadyToSubmit: true,
+    feasResult: { is_feasible: true },
+    __label: "",
+  };
+  runInNewContext(`__label = ${submissionButtonLabel};`, context);
+  return context.__label;
+}
+
 // Execute the real button bindings without mounting unrelated catalog/map
-// components. A disabled button must not dispatch its click. handlePublish
+// components. A disabled button must not dispatch its click. handleSubmit
 // is async (it saves then submits over the network), so the guard clauses
 // run synchronously but the real submit path is exercised by awaiting the
 // mocked accessToken/persistDraft/submitPackage calls to resolve.
-async function clickPublish(
+async function clickSubmit(
   button: ts.JsxOpeningElement,
   score: number | undefined,
   critical = false,
@@ -44,7 +63,7 @@ async function clickPublish(
     displayScore: score,
     feasResult: score === undefined ? null : { is_feasible: !critical },
     hardErrors: critical ? [{}] : [],
-    isReadyToPublish: score !== undefined && score >= 70 && !critical,
+    isReadyToSubmit: score !== undefined && score >= 70 && !critical,
     feasLoading: loading,
     saving: false,
     uploadingCount,
@@ -83,49 +102,53 @@ async function clickPublish(
     return attribute.initializer.expression!.getText(file);
   }
   runInNewContext(
-    ts.transpile(`${publishHandler}\n__result = (${expression("disabled")}) ? Promise.resolve() : handlePublish();`),
+    ts.transpile(`${submitHandler}\n__result = (${expression("disabled")}) ? Promise.resolve() : handleSubmit();`),
     context,
   );
   await context.__result;
   return { notices, submitting, packageStatus, events };
 }
 
-test("both publish buttons explain insufficient scores without publishing", async () => {
+test("both submission buttons explain insufficient scores without submitting", async () => {
   assert.equal(buttons.length, 2);
   for (const button of buttons) {
-    const result = await clickPublish(button, 69);
+    const result = await clickSubmit(button, 69);
     assert.equal(result.packageStatus, "draft");
     assert.match(result.notices.join(" "), /69.*70/);
   }
 });
 
-test("publish explains unchecked content and critical issues; only eligible trips proceed", async () => {
-  for (const button of buttons) {
-    assert.match((await clickPublish(button, undefined)).notices.join(" "), /check content/i);
+test("a ready package is submitted for review rather than described as published", () => {
+  assert.equal(readyButtonLabel(), "Submit for review");
+});
 
-    const blocked = await clickPublish(button, 90, true);
+test("submission explains unchecked content and critical issues; only eligible trips proceed", async () => {
+  for (const button of buttons) {
+    assert.match((await clickSubmit(button, undefined)).notices.join(" "), /check content/i);
+
+    const blocked = await clickSubmit(button, 90, true);
     assert.equal(blocked.packageStatus, "draft");
     assert.match(blocked.notices.join(" "), /critical/i);
 
-    const eligible = await clickPublish(button, 70);
+    const eligible = await clickSubmit(button, 70);
     assert.equal(eligible.packageStatus, "pending_review");
     assert.match(eligible.notices.join(" "), /submitted for review/i);
 
-    const loading = await clickPublish(button, 70, false, true);
+    const loading = await clickSubmit(button, 70, false, true);
     assert.deepEqual(loading, { notices: [], submitting: false, packageStatus: "draft", events: [] });
 
-    const uploading = await clickPublish(button, 70, false, false, 1);
+    const uploading = await clickSubmit(button, 70, false, false, 1);
     assert.deepEqual(uploading, { notices: [], submitting: false, packageStatus: "draft", events: [] });
   }
 });
 
 test("a failed save never submits, while a failed submit keeps the saved draft retryable", async () => {
-  const saveFailure = await clickPublish(buttons[0], 70, false, false, 0, "save");
+  const saveFailure = await clickSubmit(buttons[0], 70, false, false, 0, "save");
   assert.deepEqual(saveFailure.events, ["save"]);
   assert.equal(saveFailure.packageStatus, "draft");
   assert.match(saveFailure.notices.join(" "), /save failed/i);
 
-  const submitFailure = await clickPublish(buttons[0], 70, false, false, 0, "submit");
+  const submitFailure = await clickSubmit(buttons[0], 70, false, false, 0, "submit");
   assert.deepEqual(submitFailure.events, ["save", "submit"]);
   assert.equal(submitFailure.packageStatus, "draft");
   assert.match(submitFailure.notices.join(" "), /submit failed/i);

@@ -181,7 +181,11 @@ export function formatCreatorPackage(pkg: CreatorPackage) {
     }).format(pkg.base_price_aud),
     status: STATUS_LABELS[pkg.status] ?? pkg.status,
     statusKey: pkg.status,
-    rowAction: pkg.status === "draft" || pkg.status === "rejected" ? "Edit" : "View",
+    rowAction: pkg.status === "draft" || pkg.status === "rejected"
+      ? "Edit"
+      : pkg.status === "approved"
+        ? "Preview"
+        : "View",
   };
 }
 

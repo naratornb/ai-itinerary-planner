@@ -112,6 +112,36 @@ function hotelNights(hotel: CreatorHotelDetail) {
 
 const REAL_TIME_PATTERN = /^\d{1,2}:\d{2}/;
 
+const REFERENCE_FLIGHT_GUIDANCE = "Travellers will see similar flights for their dates and departure airport.";
+
+function sentenceCase(value: string) {
+  const normalized = value.replace(/[_-]+/g, " ").trim().toLowerCase();
+  return normalized ? normalized[0].toUpperCase() + normalized.slice(1) : "";
+}
+
+export function referenceFlightPresentation(item: TimelineItem) {
+  const route = item.originIata && item.destinationIata
+    ? `${item.originIata} → ${item.destinationIata}`
+    : item.title;
+  const title = [item.flightNumber, route].filter(Boolean).join(" · ");
+  const times = item.departureTime && item.arrivalTime
+    ? `${item.departureTime}–${item.arrivalTime}`
+    : item.departureTime || item.arrivalTime || (REAL_TIME_PATTERN.test(item.time) ? item.time : "");
+  const schedule = [times, item.cabinClass ? sentenceCase(item.cabinClass) : ""]
+    .filter(Boolean)
+    .join(" · ");
+
+  return {
+    label: "REFERENCE FLIGHT",
+    subtitle: "Creator’s suggested option",
+    title: title || "Reference flight",
+    schedule,
+    priceLabel: "Estimated",
+    price: item.price,
+    guidance: REFERENCE_FLIGHT_GUIDANCE,
+  };
+}
+
 // The inverse of getEndTime(): how far back a stop's start time has to move
 // so it still finishes exactly at a given clock time.
 function subtractMinutes(time: string, durationMinutes: string) {
@@ -375,7 +405,7 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
                   {p.addFlow === "type" && <>
                     <div className="inline-add-head"><h4>Select item type</h4><button onClick={() => p.setAddingAfter(null)}>Cancel</button></div>
                     <div className="item-type-grid">
-                      <button onClick={() => p.setAddFlow("flight")}><span className="type-icon flight"><Icon name="plane" /></span><strong>Flight</strong><small>Air travel and transfers</small></button>
+                      <button onClick={() => p.setAddFlow("flight")}><span className="type-icon flight"><Icon name="plane" /></span><strong>Reference flight</strong><small>Suggest an air travel option</small></button>
                       <button onClick={() => { p.setAddFlow("hotel"); p.setHotelCheckInDayId(p.activeDayData?.id ?? null); p.setHotelCheckOutDayId(null); }}><span className="type-icon hotel"><Icon name="hotel" /></span><strong>Hotel</strong><small>Accommodation and stays</small></button>
                       <button onClick={() => p.setAddFlow("activities")}><span className="type-icon activity"><Icon name="star" /></span><strong>Activity</strong><small>Tours, museums, and experiences</small></button>
                       <button onClick={() => p.setAddFlow("creator")}><span className="type-icon creator"><Icon name="check" /></span><strong>Creator Pick</strong><small>Your own recommendation</small></button>
@@ -383,9 +413,9 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
                   </>}
 
                   {p.addFlow === "flight" && <>
-                    <div className="inline-add-head"><button className="inline-back" onClick={() => p.setAddFlow("type")} aria-label="Back to item types">‹</button><h4>Choose a flight</h4><button onClick={() => p.setAddingAfter(null)}>Cancel</button></div>
+                    <div className="inline-add-head"><button className="inline-back" onClick={() => p.setAddFlow("type")} aria-label="Back to item types">‹</button><h4>Choose a reference flight</h4><button onClick={() => p.setAddingAfter(null)}>Cancel</button></div>
                     <label className="activity-search"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input value={p.flightSearch} onChange={(event) => p.setFlightSearch(event.target.value)} placeholder="Search by airport, airline, or flight number" /></label>
-                    <p className="database-note">Flights are supplied by Travel Marketplace and cannot be edited here.</p>
+                    <p className="database-note">Choose an example for the itinerary. Travellers will see similar flights after selecting their dates and departure airport.</p>
                     <div className="flight-results" role="radiogroup" aria-label="Available flights">
                       {p.matchingFlights.map((flight, index) => {
                         const departureTime = extractClockTimeInZone(flight.departure_datetime, timezoneForIata(flight.origin_iata)) ?? "--:--";
@@ -395,13 +425,13 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
                           <span className="flight-route"><strong>{departureTime}</strong><small>{flight.origin_iata ?? "Not provided"}</small></span>
                           <span className="flight-duration"><i aria-hidden="true"><Icon name="plane" size={20} /></i></span>
                           <span className="flight-route"><strong>{arrivalTime}</strong><small>{flight.destination_iata ?? "Not provided"}</small></span>
-                          <span className="flight-fare"><small>From</small><strong>{flight.price_aud != null ? `$${flight.price_aud.toLocaleString("en-US")}` : "Not provided"}</strong></span>
+                          <span className="flight-fare"><small>Estimated</small><strong>{flight.price_aud != null ? `$${flight.price_aud.toLocaleString("en-US")}` : "Not provided"}</strong></span>
                           <span className="flight-select" aria-hidden="true">{p.selectedFlightIndex === index ? <Icon name="check" size={18} /> : ""}</span>
                         </button>;
                       })}
                       {p.matchingFlights.length === 0 && <p>No matching flights found.</p>}
                     </div>
-                    <div className="activity-form-actions"><button className="publish-button" disabled={p.selectedFlightIndex === null} onClick={p.addSelectedFlight}>Add selected flight</button></div>
+                    <div className="activity-form-actions"><button className="publish-button" disabled={p.selectedFlightIndex === null} onClick={p.addSelectedFlight}>Add as reference flight</button></div>
                   </>}
 
                   {p.addFlow === "hotel" && <>
@@ -717,7 +747,7 @@ export default function ItineraryEditor({
   };
 
   // Invalidate the check result whenever itinerary content changes after a check has been run.
-  // This forces creators to re-check before they can publish edited content.
+  // This forces creators to re-check before they can submit edited content.
   const isFirstMount = useRef(true);
   useEffect(() => {
     if (isFirstMount.current) {
@@ -1304,36 +1334,34 @@ export default function ItineraryEditor({
   const hasEmptyDay = days.some((day) => day.items.length === 0);
   const displayScore = hasEmptyDay ? 0 : feasResult?.quality_score;
 
-  const isReadyToPublish = Boolean(
+  const isReadyToSubmit = Boolean(
     feasResult &&
     (displayScore ?? 0) >= 70 &&
     hardErrors.length === 0 &&
     feasResult.is_feasible
   );
 
-  const publishButtonLabel = isLocked
+  const submissionButtonLabel = isLocked
     ? STATUS_LABELS[packageStatus] ?? packageStatus
     : uploadingCount > 0
       ? `Uploading ${uploadingCount}…`
     : submitting
       ? "Submitting…"
-      : !isReadyToPublish
-        ? (feasResult && !feasResult.is_feasible ? "Fix issues to publish" : "Check content to publish")
-        : "Continue to publish";
+      : !isReadyToSubmit
+        ? (feasResult && !feasResult.is_feasible ? "Fix issues to submit" : "Check content to submit")
+        : "Submit for review";
 
-  // "Publish" here means submitting for review, not going live — only an
-  // admin's later /approvals/{id}/approve and /approvals/{id}/publish do
-  // that. The saved draft must reach the server before submit reads it, so
-  // this always saves first; a save failure must never reach submitPackage.
-  const handlePublish = async () => {
+  // Submitting sends the saved draft to an admin; it does not make the
+  // package public. A save failure must never reach submitPackage.
+  const handleSubmit = async () => {
     if (feasLoading || saving || uploadingCount > 0 || submittingRef.current || isLocked) return;
     setPreviewOpen(false);
-    if (!isReadyToPublish) {
+    if (!isReadyToSubmit) {
       showNotice(!feasResult
-        ? "Please check content before publishing."
+        ? "Please check content before submitting."
         : (displayScore ?? 0) < 70
-          ? `Your trip score is ${displayScore ?? 0}/100. A minimum score of 70 is required to publish. Improve your itinerary and check content again.`
-          : "Fix critical feasibility issues and check content again before publishing.");
+          ? `Your trip score is ${displayScore ?? 0}/100. A minimum score of 70 is required to submit. Improve your itinerary and check content again.`
+          : "Fix critical feasibility issues and check content again before submitting.");
       return;
     }
     submittingRef.current = true;
@@ -1434,8 +1462,8 @@ export default function ItineraryEditor({
         <div className="editor-actions">
           <button className="quiet-button" disabled={saving || submitting || uploadingCount > 0 || isLocked} onClick={() => { void saveDraft(); }}>{uploadingCount > 0 ? `Uploading ${uploadingCount}…` : saving ? "Saving…" : saved ? "Saved" : "Save Draft"}</button>
           <button className="quiet-button" onClick={() => setPreviewOpen(true)}>Preview</button>
-          <button className="publish-button" disabled={feasLoading || saving || uploadingCount > 0 || submitting || isLocked} onClick={() => { void handlePublish(); }}>
-            {publishButtonLabel}
+          <button className="publish-button" disabled={feasLoading || saving || uploadingCount > 0 || submitting || isLocked} onClick={() => { void handleSubmit(); }}>
+            {submissionButtonLabel}
           </button>
         </div>
       </header>
@@ -1488,6 +1516,7 @@ export default function ItineraryEditor({
               {items.map((item, index) => {
                 const flightIndex = items.slice(0, index).filter(({ type }) => type === "FLIGHT").length;
                 const flight = item.type === "FLIGHT" ? flights[flightIndex] : undefined;
+                const referenceFlight = item.type === "FLIGHT" ? referenceFlightPresentation(item) : null;
                 const hotel = hotelForItem(item);
                 const hasHotelDetails = item.type === "HOTEL" && (Boolean(hotel) || Boolean(item.roomType));
                 const isFixedActivity = item.type === "ACTIVITY";
@@ -1508,7 +1537,8 @@ export default function ItineraryEditor({
                   ? `$${flight.price_aud.toLocaleString("en-AU")}`
                   : hotelTotal;
                 const isTimeValue = /^\d{1,2}:\d{2}/.test(item.time);
-                const isPriceValue = itemPrice.startsWith("$");
+                const displayedPrice = referenceFlight?.price ?? itemPrice;
+                const isPriceValue = displayedPrice.startsWith("$");
                 const stayMarkerLabel = item.stayMarker === "check-in"
                     ? "Check-in"
                     : item.stayMarker === "check-out"
@@ -1525,18 +1555,25 @@ export default function ItineraryEditor({
                 <article className={`timeline-item ${scheduleConflict ? "critical" : item.status} ${draggedItemId === item.id ? "dragging" : ""} ${canExpand ? "editable" : ""} ${isExpanded ? "expanded" : ""}`} onClick={(event) => { if (!canExpand || (event.target as HTMLElement).closest("button")) return; toggleExpand(); }} onKeyDown={(event) => { if (!canExpand || (event.target as HTMLElement).closest("button")) return; if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggleExpand(); } }} tabIndex={canExpand ? 0 : undefined} role={canExpand ? "button" : undefined} aria-expanded={canExpand ? isExpanded : undefined}>
                   <button className="drag-handle" draggable aria-label={`Move ${hotelTitle}. Use drag and drop, or the up and down arrow keys.`} onDragStart={(event) => { setEditingItem(null); setDraggedItemId(item.id); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", String(item.id)); }} onDragEnd={endDrag} onKeyDown={(event) => { if (event.key === "ArrowUp") { event.preventDefault(); moveItem(index, index - 1); } if (event.key === "ArrowDown") { event.preventDefault(); moveItem(index, index + 1); } }}><span /><span /><span /><span /><span /><span /></button>
                   <div className="item-time"><Icon name={item.icon} /><strong className={isTimeValue ? undefined : "item-time-word"}>{item.time}</strong></div>
-                  <div className="item-copy"><div className="item-copy-head"><span>{item.type}</span>{stayMarkerLabel && <span className="stay-marker">{stayMarkerLabel}</span>}</div><h4>{hotelTitle}</h4>{scheduleConflict ? <div className="item-alert"><Icon name="alert" size={15} /><div><strong>Scheduling conflict</strong><span>{scheduleConflict}</span></div></div> : item.problem && <div className="item-alert"><Icon name="alert" size={15} /><div><strong>{item.problem}</strong><span>{item.problemDetail}</span></div></div>}</div>
-                  <div className="item-price"><span>Price</span><strong className={isPriceValue ? undefined : "item-price-word"}>{withWrapBeforeSlash(itemPrice)}</strong></div>
+                  <div className="item-copy">
+                    <div className="item-copy-head"><span>{referenceFlight?.label ?? item.type}</span>{stayMarkerLabel && <span className="stay-marker">{stayMarkerLabel}</span>}</div>
+                    {referenceFlight && <p className="reference-flight-subtitle">{referenceFlight.subtitle}</p>}
+                    <h4>{referenceFlight?.title ?? hotelTitle}</h4>
+                    {referenceFlight?.schedule && <p className="reference-flight-schedule">{referenceFlight.schedule}</p>}
+                    {scheduleConflict ? <div className="item-alert"><Icon name="alert" size={15} /><div><strong>Scheduling conflict</strong><span>{scheduleConflict}</span></div></div> : item.problem && <div className="item-alert"><Icon name="alert" size={15} /><div><strong>{item.problem}</strong><span>{item.problemDetail}</span></div></div>}
+                  </div>
+                  <div className="item-price"><span>{referenceFlight?.priceLabel ?? "Price"}</span><strong className={isPriceValue ? undefined : "item-price-word"}>{withWrapBeforeSlash(displayedPrice)}</strong></div>
                 </article>
-                {flight && expandedFlightId === item.id && <section id={`flight-details-${item.id}`} className="timeline-detail-panel" aria-label={`${flight.airline ?? "Flight"} details`}>
+                {flight && expandedFlightId === item.id && <section id={`flight-details-${item.id}`} className="timeline-detail-panel" aria-label={`${flight.airline ?? "Flight"} reference flight details`}>
                   <div className="detail-card">
                     <div className="detail-card-top">
                       <div className="detail-card-heading">
-                        <span className="detail-card-badge detail-card-badge-flight"><Icon name="plane" size={14} />Flight</span>
+                        <span className="detail-card-badge detail-card-badge-flight"><Icon name="plane" size={14} />Reference flight</span>
                         <div className="detail-card-title-row">
                           <h3>{flight.airline || "Flight"}</h3>
                           <p className="detail-card-subtitle"><Icon name="plane" size={14} />{flight.origin_iata || "Not provided"} to {flight.destination_iata || "Not provided"}</p>
                         </div>
+                        <p className="reference-flight-guidance">{REFERENCE_FLIGHT_GUIDANCE}</p>
                       </div>
                     </div>
                   </div>
@@ -1658,10 +1695,10 @@ export default function ItineraryEditor({
           <button className="copilot-mobile-trigger" type="button" onClick={() => setCopilotOpen(true)}>Open Itinerary Co-Pilot</button>
           <Panel title="Package quality" className="quality-panel">
             <div className="quality-score"><strong>{displayScore !== undefined ? displayScore : "(-)"}</strong><span>/100</span></div>
-            <div className="score-track" role="meter" aria-label={displayScore !== undefined ? `Package quality score, ${displayScore} out of 100. Minimum score to publish is 70.` : "Package quality score not yet checked. Minimum score to publish is 70."} aria-valuemin={0} aria-valuemax={100} aria-valuenow={displayScore ?? 0}>
+            <div className="score-track" role="meter" aria-label={displayScore !== undefined ? `Package quality score, ${displayScore} out of 100. Minimum score to submit is 70.` : "Package quality score not yet checked. Minimum score to submit is 70."} aria-valuemin={0} aria-valuemax={100} aria-valuenow={displayScore ?? 0}>
               <span className="score-fill" style={{ width: displayScore !== undefined ? `${Math.min(100, Math.max(0, displayScore))}%` : "0%" }} />
               <i aria-hidden="true" />
-              <span className="score-threshold" aria-label="Minimum publish score is 70"><small>Minimum publish score:</small><strong>70</strong></span>
+              <span className="score-threshold" aria-label="Minimum submission score is 70"><small>Minimum submission score:</small><strong>70</strong></span>
             </div>
             <div className="quality-meta">
               <button
@@ -1671,8 +1708,8 @@ export default function ItineraryEditor({
               >
                 {feasLoading ? "Checking..." : "Check content"}
               </button>
-              {isReadyToPublish ? (
-                <strong><Icon name="check" size={14} />Ready to publish</strong>
+              {isReadyToSubmit ? (
+                <strong><Icon name="check" size={14} />Ready to submit</strong>
               ) : (
                 <strong className="warning">
                   <Icon name="alert" size={14} />
@@ -1754,7 +1791,7 @@ export default function ItineraryEditor({
           </div>
         </section>
       </div>}
-      {previewOpen && <div className="preview-backdrop" role="presentation" onMouseDown={() => setPreviewOpen(false)}><section className="preview-dialog" role="dialog" aria-modal="true" aria-labelledby="preview-title" onMouseDown={(event) => event.stopPropagation()}><button className="preview-close" onClick={() => setPreviewOpen(false)} aria-label="Close preview"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg></button><span>Traveller preview</span><h2 id="preview-title">{packageTitle}</h2><p>{story || "Your itinerary story will appear here. Add a personal introduction before publishing."}</p><div><strong>{days.length} days / 2 nights</strong><strong>${packagePrice.toLocaleString()}</strong></div><button className="publish-button" disabled={feasLoading || saving || uploadingCount > 0 || submitting || isLocked} onClick={() => { void handlePublish(); }}>{publishButtonLabel}</button></section></div>}
+      {previewOpen && <div className="preview-backdrop" role="presentation" onMouseDown={() => setPreviewOpen(false)}><section className="preview-dialog" role="dialog" aria-modal="true" aria-labelledby="preview-title" onMouseDown={(event) => event.stopPropagation()}><button className="preview-close" onClick={() => setPreviewOpen(false)} aria-label="Close preview"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg></button><span>Traveller preview</span><h2 id="preview-title">{packageTitle}</h2><p>{story || "Your itinerary story will appear here. Add a personal introduction before submitting."}</p><div><strong>{days.length} days / 2 nights</strong><strong>${packagePrice.toLocaleString()}</strong></div><button className="publish-button" disabled={feasLoading || saving || uploadingCount > 0 || submitting || isLocked} onClick={() => { void handleSubmit(); }}>{submissionButtonLabel}</button></section></div>}
     </main>
   );
 }
