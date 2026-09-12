@@ -72,6 +72,11 @@ export type CreatorPackageDetail = {
   duration_days: number;
   destination_city?: string | null;
   destination_country?: string | null;
+  // Present on the real GET /packages/{id} response (TravelPackageDetail in
+  // apps/api/app/packages/schemas.py) but unused until now, so left untyped.
+  description?: string | null;
+  max_group_size?: number | null;
+  tags?: string[];
   flights: CreatorFlightDetail[];
   hotels: CreatorHotelDetail[];
   activities: CreatorActivityDetail[];
@@ -298,6 +303,12 @@ export type CreatePackageInput = {
 export type UpdatePackageInput = {
   title?: string;
   base_price_aud?: number;
+  description?: string;
+  destination_country?: string;
+  destination_city?: string;
+  duration_days?: number;
+  max_group_size?: number;
+  tags?: string[];
   days?: PackageDayInput[];
   // Not yet persisted by PUT /packages/{id} — the backend still only reads
   // metadata + day title/summary and silently ignores everything else here.

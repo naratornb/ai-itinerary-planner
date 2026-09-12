@@ -822,14 +822,16 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
 
   const priceNumber = (price: string) => Number(price.replace(/[^0-9.]/g, "")) || null;
 
-  // Builds the full save payload from local editor state. PUT /packages/{id}
-  // doesn't persist flights/hotels/activities yet — the backend still only
-  // reads metadata + day title/summary and silently ignores everything else
-  // here (see the save/submit handover doc) — but sending it now means the
-  // editor round-trips real content the moment that lands, with no FE change
-  // needed. Items that can't be represented without data the source never
-  // carried (e.g. a Co-Pilot flight/hotel pick, which has no IATA codes or
-  // room data) are left out rather than sent with fabricated values.
+  // Builds the full save payload from local editor state. Metadata (title,
+  // description, destination, duration, group size, tags) and day title/
+  // summary are already persisted by PUT /packages/{id} today. Day
+  // meta/media_ids and flights/hotels/activities are not — the backend
+  // still silently ignores them (see the save/submit handover doc) — but
+  // sending them now means the editor round-trips real content the moment
+  // that support lands, with no FE change needed. Items that can't be
+  // represented without data the source never carried (e.g. a Co-Pilot
+  // flight/hotel pick, which has no IATA codes or room data) are left out
+  // rather than sent with fabricated values.
   const buildSavePayload = (): UpdatePackageInput => {
     const flat = days.flatMap((day, dayIndex) =>
       day.items.map((item, itemIndex) => ({ item, day, dayIndex, itemIndex })));
@@ -898,6 +900,16 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
     return {
       title: packageTitle,
       base_price_aud: Math.round(packagePrice),
+      // Not editable on this screen (that's "Edit trip setup"), but the
+      // backend already accepts and persists these on PUT today — round-
+      // tripping the loaded value keeps this save from being metadata-only
+      // by omission.
+      description: pkg.description ?? undefined,
+      destination_country: pkg.destination_country ?? undefined,
+      destination_city: pkg.destination_city ?? undefined,
+      duration_days: pkg.duration_days,
+      max_group_size: pkg.max_group_size ?? undefined,
+      tags: pkg.tags ?? undefined,
       days: days.map((day, index) => ({
         day_number: index + 1,
         // Don't pin the generated "Day N" placeholder as real data.
