@@ -1882,15 +1882,6 @@ export function BuilderScreen({ onNav }: { onNav: (s: Screen) => void }) {
 }
 
 // ─── AI Wizard Screen ──────────────────────────────────────────────────────────
-const DESTINATIONS = [
-  { name: "Tokyo, Japan",      tags: ["Food & Culture", "City"],   img: "https://images.unsplash.com/photo-1513407030348-c983a97b98d8?w=400&h=180&fit=crop" },
-  { name: "Paris, France",     tags: ["Romance", "Culture"],       img: "https://images.unsplash.com/photo-1511739001486-6bfe10ce785f?w=400&h=180&fit=crop" },
-  { name: "Bali, Indonesia",   tags: ["Beach", "Wellness"],        img: "https://images.unsplash.com/photo-1555400038-63f5ba517a47?w=400&h=180&fit=crop" },
-  { name: "Iceland",           tags: ["Nature", "Adventure"],      img: "https://images.unsplash.com/photo-1488415032361-b7e238421f1b?w=400&h=180&fit=crop" },
-  { name: "New York, USA",     tags: ["City", "Shopping"],         img: "https://images.unsplash.com/photo-1496588152823-86ff7695e68f?w=400&h=180&fit=crop" },
-  { name: "Santorini, Greece", tags: ["Beach", "Romance"],         img: "https://images.unsplash.com/photo-1672622851784-0dbd3df4c088?w=400&h=180&fit=crop" },
-];
-
 const WIZARD_STEPS = ["Destination", "Travel style", "Duration", "Season"];
 
 const VIBES = [
@@ -1934,6 +1925,8 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
   const [selected, setSelected] = useState<string | null>(null);
   const [dest, setDest] = useState("");
   const [destinationSearch, setDestinationSearch] = useState("");
+  const [destinations, setDestinations] = useState<{ city: string; country: string }[]>([]);
+  const [destinationsLoading, setDestinationsLoading] = useState(true);
   const [hovCard, setHovCard] = useState<string | null>(null);
   const [vibes, setVibes] = useState<string[]>([]);
   const [duration, setDuration] = useState<"short" | "mid" | "long" | "custom" | null>(null);
@@ -1951,6 +1944,41 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
     if (requestedStep === undefined) return;
     setStep(requestedStep);
   }, [requestedStep, stepRequestId]);
+
+  // The catalog only has ~70 distinct city/country pairs, so one fetch on
+  // mount (RLS grants public SELECT — see supabase/migrations/0003_rls_policies.sql)
+  // covers the whole picker; filtering then happens client-side with no
+  // re-fetch per keystroke. PostgREST caps a single response at 1000 rows,
+  // so page through activities (paginated) until a short page signals the end.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const seen = new Set<string>();
+      const found: { city: string; country: string }[] = [];
+      const pageSize = 1000;
+      for (let offset = 0; offset < 10_000; offset += pageSize) {
+        const { data, error } = await supabase
+          .from("activities")
+          .select("city,country")
+          .order("city", { ascending: true })
+          .range(offset, offset + pageSize - 1);
+        if (error || !data || cancelled) break;
+        for (const row of data) {
+          const key = `${row.city}|${row.country}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          found.push({ city: row.city, country: row.country });
+        }
+        if (data.length < pageSize) break;
+      }
+      if (!cancelled) {
+        found.sort((a, b) => a.city.localeCompare(b.city));
+        setDestinations(found);
+        setDestinationsLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   // Crawls toward — but never reaches — 92%, so the bar keeps moving for as
   // long as the real build actually takes instead of finishing on a fixed
@@ -2039,10 +2067,12 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
     return () => window.clearTimeout(timeout);
   }, [isLoading, progress, createdPackageId, router]);
 
-  const canContinue = step === 0 ? (selected !== null || dest.trim().length > 0) : step === 1 ? vibes.length > 0 : step === 2 ? duration !== null : step === 3 ? season !== null : true;
-  const filteredDestinations = DESTINATIONS.filter((destination) => {
+  // Step 0 requires an actual pick from the catalog — typing alone (without
+  // selecting a result) must not be enough to continue.
+  const canContinue = step === 0 ? selected !== null : step === 1 ? vibes.length > 0 : step === 2 ? duration !== null : step === 3 ? season !== null : true;
+  const filteredDestinations = destinations.filter((destination) => {
     const query = destinationSearch.trim().toLowerCase();
-    return !query || destination.name.toLowerCase().includes(query) || destination.tags.some((tag) => tag.toLowerCase().includes(query));
+    return !query || destination.city.toLowerCase().includes(query) || destination.country.toLowerCase().includes(query);
   });
   const stepSummaries = [
     selected ?? dest.trim(),
@@ -2299,8 +2329,8 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
               </svg>
               <input
                 value={destinationSearch}
-                onChange={(e) => { setDestinationSearch(e.target.value); setDest(e.target.value); setSelected(null); }}
-                placeholder="Search by city, country or travel style…"
+                onChange={(e) => { setDestinationSearch(e.target.value); setSelected(null); setDest(""); }}
+                placeholder="Search by city or country…"
                 style={{
                   width: "100%", boxSizing: "border-box", height: 52,
                   paddingLeft: 48, paddingRight: destinationSearch ? 48 : 16,
@@ -2312,27 +2342,28 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
                 onFocus={(e) => { e.currentTarget.style.borderColor = C.blue; e.currentTarget.style.boxShadow = `0 0 0 3px ${C.focusRing}`; }}
                 onBlur={(e) => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.boxShadow = C.shadowCard; }}
               />
-              {destinationSearch && <button type="button" aria-label="Clear destination search" onClick={() => { setDestinationSearch(""); setDest(""); setSelected(null); }} style={{ position: "absolute", right: 6, top: 4, width: 44, height: 44, display: "grid", placeItems: "center", border: 0, background: "transparent", color: C.secondary, cursor: "pointer" }}>
+              {destinationSearch && <button type="button" aria-label="Clear destination search" onClick={() => { setDestinationSearch(""); setSelected(null); setDest(""); }} style={{ position: "absolute", right: 6, top: 4, width: 44, height: 44, display: "grid", placeItems: "center", border: 0, background: "transparent", color: C.secondary, cursor: "pointer" }}>
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
               </button>}
             </div>
           </label>
           <div style={{ minHeight: 32, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, marginBottom: 10 }}>
             <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 12, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: C.secondary, margin: 0 }}>
-              {destinationSearch ? `${filteredDestinations.length} matching destinations` : "Popular Destinations"}
+              {destinationSearch ? `${filteredDestinations.length} matching destinations` : "All destinations"}
             </p>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 12, marginBottom: 20 }}>
             {filteredDestinations.map((d) => {
-              const isSel = selected === d.name;
-              const isHov = hovCard === d.name;
+              const name = `${d.city}, ${d.country}`;
+              const isSel = selected === name;
+              const isHov = hovCard === name;
               return (
-                <button key={d.name}
-                  onClick={() => { setSelected(d.name); setDest(d.name); }}
-                  onMouseEnter={() => setHovCard(d.name)}
+                <button key={name}
+                  onClick={() => { setSelected(name); setDest(name); }}
+                  onMouseEnter={() => setHovCard(name)}
                   onMouseLeave={() => setHovCard(null)}
                   style={{
-                    minHeight: 92, textAlign: "left", padding: "16px 18px", overflow: "hidden",
+                    minHeight: 64, textAlign: "left", padding: "16px 18px", overflow: "hidden",
                     background: C.white,
                     border: `2px solid ${isSel ? C.blue : isHov ? "#BDBDBD" : C.border}`,
                     borderRadius: 12, cursor: "pointer",
@@ -2342,27 +2373,20 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
                   }}
                 >
                   {isSel && <div style={{ position: "absolute", top: 12, right: 12, width: 22, height: 22, borderRadius: "50%", background: C.blue, display: "flex", alignItems: "center", justifyContent: "center" }}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg></div>}
-                  <div>
-                    <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 15, fontWeight: 700, color: isSel ? C.blue : C.ink, margin: "0 0 10px", paddingRight: isSel ? 24 : 0 }}>{d.name}</p>
-                    <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-                      {d.tags.map((tag) => (
-                        <span key={tag} style={{
-                          fontFamily: "var(--fc-font-body)", fontSize: 11, fontWeight: 500,
-                          color: isSel ? C.blue : C.secondary,
-                          background: isSel ? "rgba(0,114,234,0.08)" : C.subtle,
-                          borderRadius: 4, padding: "2px 7px",
-                          transition: "color 140ms, background 140ms",
-                        }}>{tag}</span>
-                      ))}
-                    </div>
-                  </div>
+                  <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 15, fontWeight: 700, color: isSel ? C.blue : C.ink, margin: 0, paddingRight: isSel ? 24 : 0 }}>{d.city}</p>
+                  <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 13, color: isSel ? C.blue : C.secondary, margin: "2px 0 0" }}>{d.country}</p>
                 </button>
               );
             })}
-            {filteredDestinations.length === 0 && (
+            {destinationsLoading && (
               <div style={{ gridColumn: "1 / -1", padding: "28px", border: `1px dashed ${C.border}`, borderRadius: 12, background: C.white, textAlign: "center" }}>
-                <p style={{ margin: "0 0 5px", fontFamily: "var(--fc-font-body)", fontSize: 15, fontWeight: 600, color: C.ink }}>Create a trip to “{destinationSearch}”</p>
-                <p style={{ margin: 0, fontFamily: "var(--fc-font-body)", fontSize: 13, color: C.secondary }}>No preset found, but you can continue and let AI build it.</p>
+                <p style={{ margin: 0, fontFamily: "var(--fc-font-body)", fontSize: 13, color: C.secondary }}>Loading destinations…</p>
+              </div>
+            )}
+            {!destinationsLoading && filteredDestinations.length === 0 && (
+              <div style={{ gridColumn: "1 / -1", padding: "28px", border: `1px dashed ${C.border}`, borderRadius: 12, background: C.white, textAlign: "center" }}>
+                <p style={{ margin: "0 0 5px", fontFamily: "var(--fc-font-body)", fontSize: 15, fontWeight: 600, color: C.ink }}>No destinations found for “{destinationSearch}”</p>
+                <p style={{ margin: 0, fontFamily: "var(--fc-font-body)", fontSize: 13, color: C.secondary }}>Try a different city or country.</p>
               </div>
             )}
           </div>
