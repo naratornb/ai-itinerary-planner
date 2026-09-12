@@ -29,6 +29,12 @@ AI-powered itinerary service for travel influencers. Next.js web app (`apps/web`
      (or the `NEXT_PUBLIC_` fallback) — dashboard env settings; without the service role key
      every authenticated route returns 500.
 
+4. Seed the AI feasibility rules (migrations create the `feasibility_rules` table, but leave it empty):
+
+   ```sh
+   apps/web/node_modules/.bin/tsx scripts/seed-feasibility-rules.mjs
+   ```
+
 ## Run (dev)
 
 ```sh
@@ -50,6 +56,8 @@ cd apps/api && pip install -r requirements.txt && uvicorn app.main:app --port 50
 Schema lives as versioned SQL in [supabase/migrations/](supabase/migrations/). To change it, add a new migration file — the pipeline applies it on deploy; never run `supabase db push` yourself (dry-run preview only), never edit an applied migration, and never alter the DB ad-hoc. See [docs/agents/database.md](docs/agents/database.md).
 
 Row-level security is enforced (`supabase/migrations/0003_rls_policies.sql`); `node scripts/rls.check.mjs` verifies the policies against the live project.
+
+`feasibility_rules` is the exception: it's admin-write-only, so it's never populated by a SQL seed file. `scripts/seed-feasibility-rules.mjs` upserts the rule set from `apps/web/lib/feasibility.ts`'s `FALLBACK_RULES` into whichever project your `.env`'s `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY` point at — run it once after migrating, and again any time a rule's wording changes.
 
 ## More
 

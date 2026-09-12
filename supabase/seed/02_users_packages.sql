@@ -7,7 +7,6 @@ BEGIN;
 
 -- ---------- cleanup (rerun safety) ----------
 DELETE FROM public.travel_packages WHERE package_id::text LIKE 'b0000000-%';
-DELETE FROM public.feasibility_rules WHERE rule_id::text LIKE 'f0000000-%';
 DELETE FROM auth.users WHERE email LIKE '%@seed.local'; -- cascades to profiles etc.
 
 -- ---------- auth users (trigger creates public.profiles) ----------
@@ -177,9 +176,9 @@ INSERT INTO public.package_reviews (package_id, customer_id, rating, comment) VA
   ('b0000000-0000-0000-0000-000000000003', 'a0000000-0000-0000-0000-000000000005', 4.5, 'Felt like a local weekend, not a tourist sprint.');
 
 -- ---------- feasibility rules ----------
-INSERT INTO public.feasibility_rules (rule_id, rule_description, is_active, rule_priority) VALUES
-  ('f0000000-0000-0000-0000-000000000001', 'Total scheduled activity hours per day must not exceed 10.', TRUE, 1),
-  ('f0000000-0000-0000-0000-000000000002', 'First and last days of a package must have at most one activity (travel buffer).', TRUE, 2),
-  ('f0000000-0000-0000-0000-000000000003', 'Hotel nights must equal package duration_days minus 1 or match exactly.', FALSE, 3);
+-- Not seeded here — feasibility_rules is populated/kept in sync from
+-- apps/web/lib/feasibility.ts's FALLBACK_RULES via `npm run seed:feasibility-rules`
+-- (scripts/seed-feasibility-rules.mjs), which upserts by rule_code and prunes
+-- anything no longer in FALLBACK_RULES. Run that after this seed file.
 
 COMMIT;

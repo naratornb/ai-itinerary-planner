@@ -35,6 +35,36 @@ import { supabase } from "../lib/supabase/client";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+type FeasibilityIssue = {
+  error_code: string;
+  rule: string;
+  severity: "error" | "warning";
+  field?: string;
+  field_value?: string;
+  affected_item: string;
+  message: string;
+  action: string;
+};
+
+type FeasibilityResult = {
+  package_id: string;
+  is_feasible: boolean;
+  has_warnings: boolean;
+  hard_errors: FeasibilityIssue[];
+  soft_warnings: FeasibilityIssue[];
+  summary: string;
+  quality_score?: number;
+  can_publish?: boolean;
+  ai_response?: any;
+};
+
+function timeToSlot(time: string): string {
+  const h = parseInt(time.split(":")[0], 10);
+  if (isNaN(h) || h < 13) return "Morning";
+  if (h < 18) return "Afternoon";
+  return "Evening";
+}
+
 function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
   const paths: Record<IconName, React.ReactNode> = {
     plane: <><path d="M21 16v-2l-8-5V3.5a1.5 1.5 0 0 0-3 0V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5z" /></>,
@@ -49,6 +79,10 @@ function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
   };
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
 }
+
+// Transfer-gap check thresholds used by annotateItems.
+const MIN_TRANSFER_GAP_MIN = 15; // minutes — minimum breathing room between consecutive items
+const LONG_ACTIVITY_MIN = 240;   // minutes — 4 hours
 
 const ACTIVITY_CATEGORIES = ["Activity", "Restaurant", "Shopping", "Attraction", "Other"];
 const DURATION_OPTIONS = ["30", "60", "90", "120", "180"];
@@ -164,12 +198,104 @@ function resolveStopCoordinate(hint: string, fallbackIndex: number, city: string
   return [center[0] + radius * Math.cos(angle), center[1] + radius * Math.sin(angle)];
 }
 
+/** Convert "HH:MM" to total minutes from midnight. */
+function toMinutes(time: string): number {
+  const parts = time.split(":").map(Number);
+  return (parts[0] ?? 0) * 60 + (parts[1] ?? 0);
+}
+
+/**
+ * Returns true when text appears to contain random/gibberish characters.
+ * Heuristics (both must be language-agnostic enough to avoid false positives on proper nouns):
+ *  1. Any word with 5+ consecutive consonants (e.g. "jrhfurehog")
+ *  2. More than 40% of long words (>4 letters) have a vowel ratio below 15%
+ * Short texts or texts with no long words are left alone.
+ */
+function detectGibberish(text: string): boolean {
+  if (!text || text.trim().length < 8) return false;
+  const lower = text.toLowerCase();
+  // Immediate fail: any 5-consonant run is a strong gibberish signal
+  if (/[^aeiou\s\d\W]{5,}/.test(lower.replace(/[^a-z]/g, " "))) return true;
+  // Secondary: vowel-ratio check across long words
+  const words = lower.split(/\s+/).map((w) => w.replace(/[^a-z]/g, "")).filter((w) => w.length > 4);
+  if (words.length === 0) return false;
+  const suspicious = words.filter((w) => {
+    const vowels = (w.match(/[aeiou]/g) ?? []).length;
+    return vowels / w.length < 0.15;
+  });
+  return suspicious.length / words.length > 0.4;
+}
+
+/**
+ * Annotates each item with problem / problemDetail / status based on (priority order):
+ *  1. LONG_ACTIVITY : a single item's duration exceeds LONG_ACTIVITY_MIN
+ *  2. OVERLAP       : this item starts before the previous item ends
+ *  3. SHORT_TRANSFER: gap to the next item is > 0 but < MIN_TRANSFER_GAP_MIN
+ *  4. GIBBERISH     : item notes contain random/unreadable characters
+ * All other items are marked "pass" with no problem.
+ */
+function annotateItems(raw: TimelineItem[]): TimelineItem[] {
+  return raw.map((item, i) => {
+    const durationMin = Number(item.duration ?? 60);
+    const endMin = toMinutes(item.time) + durationMin;
+
+    // 1. Long single activity
+    if (durationMin > LONG_ACTIVITY_MIN) {
+      const hrs = (durationMin / 60).toFixed(1);
+      return {
+        ...item,
+        status: "critical" as const,
+        problem: "Activity is unusually long",
+        problemDetail: `${hrs} hrs scheduled — consider splitting into two stops`,
+      };
+    }
+
+    // 2 & 3. Gap vs next item — the list is a single day's items
+    const next = raw[i + 1];
+    if (next) {
+      const nextStartMin = toMinutes(next.time);
+      const gapMin = nextStartMin - endMin;
+
+      if (gapMin < 0) {
+        const overlapMin = Math.abs(gapMin);
+        return {
+          ...item,
+          status: "critical" as const,
+          problem: "Overlaps next item",
+          problemDetail: `Ends ${overlapMin} min after "${next.title}" starts`,
+        };
+      }
+
+      if (gapMin < MIN_TRANSFER_GAP_MIN) {
+        return {
+          ...item,
+          status: "critical" as const,
+          problem: "Transfer gap is too short",
+          problemDetail: `${gapMin} min to reach "${next.title}" · ${MIN_TRANSFER_GAP_MIN} min minimum`,
+        };
+      }
+    }
+
+    // 4. Gibberish in description
+    if (detectGibberish(item.notes ?? "")) {
+      return {
+        ...item,
+        status: "critical" as const,
+        problem: "Description contains unreadable text",
+        problemDetail: "Remove random characters and use clear, traveller-friendly language",
+      };
+    }
+
+    return { ...item, status: "pass" as const, problem: undefined, problemDetail: undefined };
+  });
+}
+
 function Panel({ title, children, className = "" }: { title: string; children: React.ReactNode; className?: string }) {
   return <section className={`editor-panel ${className}`}><h2>{title}</h2>{children}</section>;
 }
 
-function StatusToggle({ tone, count, label, expanded, onClick }: { tone: "critical" | "warning" | "pass"; count: number; label: string; expanded: boolean; onClick: () => void }) {
-  return <button className="status-toggle" aria-expanded={expanded} onClick={onClick}><span className={`${tone}-icon`}><Icon name={tone === "pass" ? "check" : "alert"} size={16} /></span><strong>{count}</strong><span>{label}</span><span className="status-chevron"><Icon name="chevron" size={17} /></span></button>;
+function StatusToggle({ tone, count, label, expanded, onClick }: { tone: "critical" | "warning" | "pass"; count?: number; label: string; expanded: boolean; onClick: () => void }) {
+  return <button className="status-toggle" aria-expanded={expanded} onClick={onClick}><span className={`${tone}-icon`}><Icon name={tone === "pass" ? "check" : "alert"} size={16} /></span>{count !== undefined && <strong>{count}</strong>}<span>{label}</span><span className="status-chevron"><Icon name="chevron" size={17} /></span></button>;
 }
 
 // Hover (desktop) or tab-focus (keyboard/touch) reveals rating and
@@ -381,6 +507,8 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
   const [packageTitle, setPackageTitle] = useState(pkg.title);
   const [titleDraft, setTitleDraft] = useState(pkg.title);
   const [editingTitle, setEditingTitle] = useState(false);
+  const [feasResult, setFeasResult] = useState<FeasibilityResult | null>(null);
+  const [feasLoading, setFeasLoading] = useState(false);
   const [activeDay, setActiveDay] = useState(0);
   const [days, setDays] = useState(() => buildDaysFromPackage(pkg));
   const [savedSnapshot, setSavedSnapshot] = useState<{ days: BuilderDay[]; title: string } | null>(null);
@@ -425,7 +553,9 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
   // "Saved" only holds while nothing has changed since the last successful PUT.
   const saved = savedSnapshot?.days === days && savedSnapshot?.title === packageTitle;
   const activeDayData = days[activeDay] ?? days[0];
-  const items = activeDayData?.items ?? [];
+  // Feasibility annotation is a pure function of the day's items, so it's
+  // derived here once instead of being re-applied inside every handler.
+  const items = useMemo(() => annotateItems(activeDayData?.items ?? []), [activeDayData]);
   const story = activeDayData?.story ?? "";
   const photos = activeDayData?.photos ?? [];
   // Activities carry a plain city name in `address` (buildDaysFromPackage);
@@ -485,6 +615,86 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
       items: typeof update === "function" ? update(day.items) : update,
     } : day));
   };
+
+  function buildValidationPayload() {
+    return {
+      package_id: pkg.package_id,
+      trip_name: packageTitle,
+      city: pkg.destination_city,
+      country: pkg.destination_country,
+      // ponytail: month/group size have no editor UI yet — wire real inputs when they do
+      travel_month: "April",
+      total_days: days.length,
+      group_size: 2,
+      hotel_name: pkg.hotels[0]?.hotel_name ?? "",
+      hotel_stars: pkg.hotels[0]?.star_rating ?? 4,
+      days_json: JSON.stringify(
+        days.map((day) => ({
+          day_number: day.day,
+          // Flights on this day — used by R2 transfer-time check in route.ts
+          flights: day.items
+            .filter((item) => item.type === "FLIGHT")
+            .map((item) => ({
+              arrival_time: item.time,
+              flight_type: item.title.toLowerCase().includes("international")
+                ? "international"
+                : "domestic",
+              title: item.title,
+            })),
+          activities: day.items
+            .filter((item) => item.type !== "FLIGHT" && item.type !== "HOTEL")
+            .map((item) => ({
+              activity_name: item.title,
+              start_time: item.time,           // HH:MM — used by R2
+              slot: timeToSlot(item.time),
+              category: item.category ?? item.type ?? "Activity",
+              duration_hours: Number(item.duration ?? 60) / 60,
+              suitable_for: "Couple",
+              address: item.address ?? "",
+              description: item.notes ?? "",
+            })),
+        }))
+      ),
+    };
+  }
+
+  const runFeasibilityCheck = async () => {
+    setFeasLoading(true);
+    setFeasResult(null);
+    try {
+      const res = await fetch("/api/ai/validate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildValidationPayload()),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        console.log("=== [AI VALIDATE CLIENT RESPONSE] ===", data);
+        setFeasResult(data);
+      }
+    } catch (err) {
+      console.error("Failed to run feasibility check:", err);
+    } finally {
+      setFeasLoading(false);
+    }
+  };
+
+  // Invalidate the check result whenever itinerary content changes after a check has been run.
+  // This forces creators to re-check before they can publish edited content.
+  const isFirstMount = useRef(true);
+  useEffect(() => {
+    if (isFirstMount.current) {
+      isFirstMount.current = false;
+      return;
+    }
+    if (!feasLoading) {
+      setFeasResult(null);
+    }
+    // All itinerary content (items, story, photos) lives inside `days`; the
+    // derived `items` is deliberately excluded so switching day tabs doesn't
+    // clear an unchanged result.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [days, packageTitle]);
 
   useEffect(() => {
     if (pendingDeleteDay === null) return;
@@ -931,6 +1141,33 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
     showNotice(`Day ${indexToDelete + 1} deleted`);
   };
 
+  const hardErrors = feasResult?.hard_errors ?? [];
+  const softWarnings = feasResult?.soft_warnings ?? [];
+  const hasEmptyDay = days.some((day) => day.items.length === 0);
+  const displayScore = hasEmptyDay ? 0 : feasResult?.quality_score;
+
+  const isReadyToPublish = Boolean(
+    feasResult &&
+    (displayScore ?? 0) >= 70 &&
+    hardErrors.length === 0 &&
+    feasResult.is_feasible
+  );
+
+  const handlePublish = () => {
+    if (feasLoading) return;
+    setPreviewOpen(false);
+    if (!isReadyToPublish) {
+      showNotice(!feasResult
+        ? "Please check content before publishing."
+        : (displayScore ?? 0) < 70
+          ? `Your trip score is ${displayScore ?? 0}/100. A minimum score of 70 is required to publish. Improve your itinerary and check content again.`
+          : "Fix critical feasibility issues and check content again before publishing.");
+      return;
+    }
+    setPublished(true);
+    showNotice("Package ready to publish");
+  };
+
   const deleteItem = (itemId: number) => {
     const target = days.flatMap((day) => day.items).find((entry) => entry.id === itemId);
     if (!target) return;
@@ -997,7 +1234,9 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
         <div className="editor-actions">
           <button className="quiet-button" disabled={saving} onClick={() => { void saveDraft(); }}>{saving ? "Saving…" : saved ? "Saved" : "Save Draft"}</button>
           <button className="quiet-button" onClick={() => setPreviewOpen(true)}>Preview</button>
-          <button className="publish-button" onClick={() => { setPublished(true); showNotice("Package ready to publish"); }}>{published ? "Ready to publish" : "Continue to publish"}</button>
+          <button className="publish-button" disabled={feasLoading} onClick={handlePublish}>
+            {!isReadyToPublish ? (feasResult && !feasResult.is_feasible ? "Fix issues to publish" : "Check content to publish") : "Continue to publish"}
+          </button>
         </div>
       </header>
 
@@ -1200,26 +1439,64 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
         <aside className="editor-sidebar">
           <button className="copilot-mobile-trigger" type="button" onClick={() => setCopilotOpen(true)}>Open Itinerary Co-Pilot</button>
           <Panel title="Package quality" className="quality-panel">
-            <div className="quality-score"><strong>78</strong><span>/100</span></div>
-            <div className="score-track" role="meter" aria-label="Package quality score, 78 out of 100. Minimum score to publish is 70." aria-valuemin={0} aria-valuemax={100} aria-valuenow={78}>
-              <span className="score-fill" />
+            <div className="quality-score"><strong>{displayScore !== undefined ? displayScore : "(-)"}</strong><span>/100</span></div>
+            <div className="score-track" role="meter" aria-label={displayScore !== undefined ? `Package quality score, ${displayScore} out of 100. Minimum score to publish is 70.` : "Package quality score not yet checked. Minimum score to publish is 70."} aria-valuemin={0} aria-valuemax={100} aria-valuenow={displayScore ?? 0}>
+              <span className="score-fill" style={{ width: displayScore !== undefined ? `${Math.min(100, Math.max(0, displayScore))}%` : "0%" }} />
               <i aria-hidden="true" />
               <span className="score-threshold" aria-label="Minimum publish score is 70"><small>Minimum publish score:</small><strong>70</strong></span>
             </div>
-            <div className="quality-meta"><strong><Icon name="check" size={14} />Ready to publish</strong></div>
+            <div className="quality-meta">
+              <button
+                className="quiet-button check-content-button"
+                onClick={runFeasibilityCheck}
+                disabled={feasLoading}
+              >
+                {feasLoading ? "Checking..." : "Check content"}
+              </button>
+              {isReadyToPublish ? (
+                <strong><Icon name="check" size={14} />Ready to publish</strong>
+              ) : (
+                <strong className="warning">
+                  <Icon name="alert" size={14} />
+                  {!feasResult
+                    ? "Please check content"
+                    : hardErrors.length > 0
+                      ? "Fix critical issues"
+                      : "Score below 70"}
+                </strong>
+              )}
+            </div>
           </Panel>
           <Panel title="Feasibility status" className="status-panel">
-            <StatusToggle tone="critical" count={2} label="Critical issues" expanded={expandedFeasibility === "critical"} onClick={() => setExpandedFeasibility(expandedFeasibility === "critical" ? null : "critical")} />
+            <StatusToggle tone="critical" count={hardErrors.length} label="Critical issues" expanded={expandedFeasibility === "critical"} onClick={() => setExpandedFeasibility(expandedFeasibility === "critical" ? null : "critical")} />
             {expandedFeasibility === "critical" && <div className="status-details">
-              <article><span className="critical-icon"><Icon name="alert" size={16} /></span><div><strong>Transfer time is too short</strong><p>Only 10 minutes between arrival and Shibuya Crossing. Allow at least 75 minutes.</p><button onClick={() => showNotice("Flight and activity highlighted")}>View affected stops</button></div></article>
-              <article><span className="critical-icon"><Icon name="alert" size={16} /></span><div><strong>Hotel check-in conflict</strong><p>Check-in overlaps with the evening activity.</p><button onClick={() => showNotice("Hotel timing highlighted")}>View affected stops</button></div></article>
+              {hardErrors.map((err, idx) => (
+                <article key={idx}>
+                  <span className="critical-icon"><Icon name="alert" size={16} /></span>
+                  <div>
+                    <strong>{err.affected_item}</strong>
+                    <p>{err.message}</p>
+                    <small>Fix: {err.action}</small>
+                  </div>
+                </article>
+              ))}
+              {hardErrors.length === 0 && <p style={{ padding: "8px", fontSize: "0.85rem", color: "#16a34a" }}>No critical issues detected.</p>}
             </div>}
-            <StatusToggle tone="warning" count={2} label="Suggestions" expanded={expandedFeasibility === "suggestions"} onClick={() => setExpandedFeasibility(expandedFeasibility === "suggestions" ? null : "suggestions")} />
+            <StatusToggle tone="warning" count={softWarnings.length} label="Suggestions" expanded={expandedFeasibility === "suggestions"} onClick={() => setExpandedFeasibility(expandedFeasibility === "suggestions" ? null : "suggestions")} />
             {expandedFeasibility === "suggestions" && <div className="status-details suggestions-details">
-              <article><span className="warning-icon"><Icon name="alert" size={16} /></span><div><strong>Busy afternoon</strong><p>Eight stops may feel rushed. Consider moving one activity to Day 2.</p></div></article>
-              <article><span className="warning-icon"><Icon name="alert" size={16} /></span><div><strong>Long gap before dinner</strong><p>There is an open window after Tokyo Tower that could include travel or a short break.</p></div></article>
+              {softWarnings.map((warn, idx) => (
+                <article key={idx}>
+                  <span className="warning-icon"><Icon name="alert" size={16} /></span>
+                  <div>
+                    <strong>{warn.affected_item}</strong>
+                    <p>{warn.message}</p>
+                    <small>Fix: {warn.action}</small>
+                  </div>
+                </article>
+              ))}
+              {softWarnings.length === 0 && <p style={{ padding: "8px", fontSize: "0.85rem", color: "#6b7280" }}>No suggestions.</p>}
             </div>}
-            <StatusToggle tone="pass" count={4} label="Passed" expanded={expandedFeasibility === "passed"} onClick={() => setExpandedFeasibility(expandedFeasibility === "passed" ? null : "passed")} />
+            <StatusToggle tone="pass" label="Passed" expanded={expandedFeasibility === "passed"} onClick={() => setExpandedFeasibility(expandedFeasibility === "passed" ? null : "passed")} />
             {expandedFeasibility === "passed" && <ul className="passed-details"><li><Icon name="check" size={15} />Daily schedule has a clear start and end</li><li><Icon name="check" size={15} />All stops have pricing</li><li><Icon name="check" size={15} />Accommodation is included</li><li><Icon name="check" size={15} />Required package photos are uploaded</li></ul>}
           </Panel>
           <CopilotPanel
@@ -1259,7 +1536,7 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
           </div>
         </section>
       </div>}
-      {previewOpen && <div className="preview-backdrop" role="presentation" onMouseDown={() => setPreviewOpen(false)}><section className="preview-dialog" role="dialog" aria-modal="true" aria-labelledby="preview-title" onMouseDown={(event) => event.stopPropagation()}><button className="preview-close" onClick={() => setPreviewOpen(false)} aria-label="Close preview"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg></button><span>Traveller preview</span><h2 id="preview-title">{packageTitle}</h2><p>{story || "Your itinerary story will appear here. Add a personal introduction before publishing."}</p><div><strong>{days.length} days / 2 nights</strong><strong>${packagePrice.toLocaleString()}</strong></div><button className="publish-button" onClick={() => { setPreviewOpen(false); setPublished(true); showNotice("Package ready to publish"); }}>Continue to publish</button></section></div>}
+      {previewOpen && <div className="preview-backdrop" role="presentation" onMouseDown={() => setPreviewOpen(false)}><section className="preview-dialog" role="dialog" aria-modal="true" aria-labelledby="preview-title" onMouseDown={(event) => event.stopPropagation()}><button className="preview-close" onClick={() => setPreviewOpen(false)} aria-label="Close preview"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg></button><span>Traveller preview</span><h2 id="preview-title">{packageTitle}</h2><p>{story || "Your itinerary story will appear here. Add a personal introduction before publishing."}</p><div><strong>{days.length} days / 2 nights</strong><strong>${packagePrice.toLocaleString()}</strong></div><button className="publish-button" disabled={feasLoading} onClick={handlePublish}>{!isReadyToPublish ? (feasResult && !feasResult.is_feasible ? "Fix issues to publish" : "Check content to publish") : "Continue to publish"}</button></section></div>}
     </main>
   );
 }
