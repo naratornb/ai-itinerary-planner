@@ -2491,6 +2491,9 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
                 </div>
               )}
             </div>
+            <p style={{ margin: "8px 2px 0", fontFamily: "var(--fc-font-body)", fontSize: 12.5, lineHeight: "17px", color: C.secondary }}>
+              Some destinations are currently unavailable due to safety considerations.
+            </p>
           </label>
           <div style={{ minHeight: 32, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, marginBottom: 10 }}>
             <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 12, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: C.secondary, margin: 0, display: "flex", alignItems: "center", gap: 6 }}>
