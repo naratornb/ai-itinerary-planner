@@ -86,6 +86,7 @@ const LONG_ACTIVITY_MIN = 240;   // minutes — 4 hours
 
 const ACTIVITY_CATEGORIES = ["Activity", "Restaurant", "Shopping", "Attraction", "Other"];
 const DURATION_OPTIONS = ["30", "60", "90", "120", "180"];
+const MAX_ITEM_PHOTOS = 6;
 
 const NEW_DAY_OPTION_ID = "__new-day__";
 
@@ -150,6 +151,17 @@ function withWrapBeforeSlash(text: string) {
   const index = text.indexOf("/");
   if (index === -1) return text;
   return <>{text.slice(0, index)}<wbr /><span className="item-price-unit">{text.slice(index)}</span></>;
+}
+
+// "168 min" reads slower than "2h 48m" — raw minutes stay available as a
+// tooltip for anyone who wants the exact figure.
+function formatDuration(minutesText: string) {
+  const total = Number(minutesText) || 0;
+  const hours = Math.floor(total / 60);
+  const minutes = total % 60;
+  if (hours === 0) return `${minutes}m`;
+  if (minutes === 0) return `${hours}h`;
+  return `${hours}h ${minutes}m`;
 }
 
 // Placeholder until hotels carry a real check-in/check-out time — the
@@ -1411,16 +1423,14 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
                       <div className="detail-card-top">
                         <div className="detail-card-heading">
                           <span className="detail-card-badge"><Icon name="star" size={14} />{editingItem.category}</span>
-                          <div className="detail-card-title-row">
-                            <h3>{editingItem.title}</h3>
-                            <p className="detail-card-subtitle"><Icon name="pin" size={14} />{editingItem.address || "Address not provided"}</p>
-                          </div>
+                          <h3>{editingItem.title}</h3>
+                          <p className="detail-card-subtitle"><Icon name="pin" size={14} />{editingItem.address || "Address not provided"}</p>
                         </div>
                       </div>
                       <div className="activity-card-stats">
                         <div className="activity-card-stat"><Icon name="clock" size={16} /><span><small>Start time</small><div className="activity-card-time-field"><input type="time" className="activity-card-time-input" aria-label="Start time" value={editingItem.time} onChange={(event) => setEditingItem({ ...editingItem, time: event.target.value })} onClick={(event) => { try { event.currentTarget.showPicker(); } catch { /* unsupported browser: native click behavior still works */ } }} /></div></span></div>
-                        <div className="activity-card-duration"><span className="activity-card-duration-label">{editingItem.duration} min</span></div>
-                        <div className="activity-card-stat"><Icon name="clock" size={16} /><span><small>Ends at</small><strong>{getEndTime(editingItem.time, editingItem.duration)}</strong></span></div>
+                        <div className="activity-card-stat"><Icon name="clock" size={16} /><span><small>Duration</small><strong title={`${editingItem.duration} min`}>{formatDuration(editingItem.duration)}</strong></span></div>
+                        <div className="activity-card-stat"><Icon name="clock" size={16} /><span><small>End time</small><strong>{getEndTime(editingItem.time, editingItem.duration)}</strong></span></div>
                       </div>
                     </div>
                     <label className="activity-card-notes"><span>Notes</span><div className="activity-card-notes-field"><textarea value={editingItem.notes} maxLength={500} onChange={(event) => setEditingItem({ ...editingItem, notes: event.target.value })} placeholder="Share why this is worth a stop" /><small>{editingItem.notes.length} / 500</small></div></label>
@@ -1439,7 +1449,7 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
                   {/* ponytail: per-activity photos stay local blob URLs — the media API
                       attaches files to a package, not to a timeline item. */}
                   <div className="edit-photo">
-                    <span>Photos <small>Optional</small></span>
+                    <span>Photos <small>Optional · {editingItem.photos.length}/{MAX_ITEM_PHOTOS}</small></span>
                     <div>
                       {editingItem.photos.map((photo, index) => <figure key={photo}>
                         <img src={photo} alt={index === 0 ? "Activity cover" : "Activity photo"} />
@@ -1448,7 +1458,7 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
                           : <button type="button" className="set-cover-btn" onClick={() => setEditingItem({ ...editingItem, photos: [photo, ...editingItem.photos.filter((_, i) => i !== index)] })}>Set as cover</button>}
                         <button type="button" className="remove-photo-btn" aria-label="Remove photo" onClick={() => setEditingItem({ ...editingItem, photos: editingItem.photos.filter((_, i) => i !== index) })}><Icon name="plus" size={10} /></button>
                       </figure>)}
-                      <label><input type="file" accept="image/png,image/jpeg" multiple onChange={(event) => { const files = Array.from(event.target.files ?? []); if (files.length) setEditingItem({ ...editingItem, photos: [...editingItem.photos, ...files.map((file) => URL.createObjectURL(file))] }); event.target.value = ""; }} /><Icon name="plus" size={18} />Add photo</label>
+                      {editingItem.photos.length < MAX_ITEM_PHOTOS && <label><input type="file" accept="image/png,image/jpeg" multiple onChange={(event) => { const files = Array.from(event.target.files ?? []).slice(0, MAX_ITEM_PHOTOS - editingItem.photos.length); if (files.length) setEditingItem({ ...editingItem, photos: [...editingItem.photos, ...files.map((file) => URL.createObjectURL(file))] }); event.target.value = ""; }} /><Icon name="plus" size={18} />Add photo</label>}
                     </div>
                   </div>
                   <div className="inline-edit-actions"><button className="item-delete" onClick={() => requestDeleteItem(item)}>Delete</button><button className="quiet-button" onClick={() => setEditingItem(null)}>Cancel</button><button className="publish-button" disabled={!editingItem.title.trim()} onClick={saveEditedItem}>Save changes</button></div>
