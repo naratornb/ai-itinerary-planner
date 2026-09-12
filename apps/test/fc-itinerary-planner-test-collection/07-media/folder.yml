@@ -1,0 +1,8 @@
+info:
+  name: 07-media
+  seq: 8
+  description: |-
+    Media upload lifecycle against a self-contained draft package.
+
+    Precondition: the Supabase Storage bucket "package-media" must exist,
+    otherwise every upload in this folder fails.

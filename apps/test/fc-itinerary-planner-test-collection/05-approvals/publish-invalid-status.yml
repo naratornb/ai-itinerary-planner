@@ -1,0 +1,32 @@
+info:
+  name: publish-invalid-status
+  type: http
+  seq: 7
+
+http:
+  method: POST
+  url: "{{host-api}}/approvals/{{approvals-package-id}}/publish"
+  headers:
+    - name: accept
+      value: application/json
+  auth:
+    type: bearer
+    token: "{{access-token}}"
+
+runtime:
+  assertions:
+    - expression: res.status
+      operator: eq
+      value: "409"
+  scripts:
+    - type: tests
+      code: |-
+        test("rejected package cannot be published", function() {
+          expect(res.body.error_code).to.equal("INVALID_STATUS_TRANSITION");
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

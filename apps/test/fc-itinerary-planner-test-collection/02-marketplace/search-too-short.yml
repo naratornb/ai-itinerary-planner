@@ -1,0 +1,33 @@
+info:
+  name: search-too-short
+  type: http
+  seq: 4
+
+http:
+  method: GET
+  url: "{{host-api}}/marketplace/search?q=a"
+  headers:
+    - name: accept
+      value: application/json
+  params:
+    - name: q
+      value: a
+      type: query
+
+runtime:
+  assertions:
+    - expression: res.status
+      operator: eq
+      value: "400"
+  scripts:
+    - type: tests
+      code: |-
+        test("rejects a query shorter than the minimum length", function() {
+          expect(res.body.error_code).to.equal("SEARCH_QUERY_TOO_SHORT");
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

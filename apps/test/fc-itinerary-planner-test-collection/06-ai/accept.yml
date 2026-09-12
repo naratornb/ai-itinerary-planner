@@ -1,0 +1,40 @@
+info:
+  name: accept
+  type: http
+  seq: 5
+
+http:
+  method: PATCH
+  url: "{{host-api}}/ai/suggestions/{{suggestion-1-id}}/accept"
+  headers:
+    - name: content-type
+      value: application/json
+    - name: accept
+      value: application/json
+  auth:
+    type: bearer
+    token: "{{access-token}}"
+  body:
+    type: json
+    data: |-
+      {
+        "auto_apply": false
+      }
+
+runtime:
+  assertions:
+    - expression: res.status
+      operator: eq
+      value: "200"
+  scripts:
+    - type: tests
+      code: |-
+        test("marks the suggestion accepted", function() {
+          expect(res.body.suggestion.status).to.equal("accepted");
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

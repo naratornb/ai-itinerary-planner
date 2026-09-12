@@ -40,7 +40,7 @@ info:
     Error responses use a consistent `ErrorResponse` schema throughout.
     All monetary values are stored and returned as **whole AUD dollars** (integer), matching the database columns.
 
-  version: "2.0.0"
+  version: "2.1.0"
   license:
     name: Academic Use Only
 
@@ -113,6 +113,202 @@ components:
   #  REUSABLE SCHEMAS
   # ─────────────────────────────────────────────
   schemas:
+    FeedbackInput:
+      properties:
+        status:
+          type: string
+          enum:
+          - accepted
+          - dismissed
+          title: Status
+        auto_apply:
+          type: boolean
+          title: Auto Apply
+          default: false
+          enum:
+          - false
+      additionalProperties: false
+      type: object
+      required:
+      - status
+      title: FeedbackInput
+    NextAction:
+      properties:
+        type:
+          type: string
+          enum:
+          - recommend
+          - ask_clarification
+          - warn
+          - none
+          title: Type
+        label:
+          type: string
+          maxLength: 100
+          minLength: 1
+          title: Label
+      additionalProperties: false
+      type: object
+      required:
+      - type
+      - label
+      title: NextAction
+    PromptInput:
+      properties:
+        prompt:
+          type: string
+          maxLength: 1000
+          minLength: 1
+          title: Prompt
+      additionalProperties: false
+      type: object
+      required:
+      - prompt
+      title: PromptInput
+    Suggestion:
+      properties:
+        item_id:
+          type: string
+          title: Item Id
+        item_type:
+          type: string
+          enum:
+          - activity
+          - hotel
+          - flight
+          title: Item Type
+        item_name:
+          type: string
+          title: Item Name
+        city:
+          type: string
+          title: City
+        country:
+          title: Country
+          type: string
+          nullable: true
+        price_aud:
+          title: Price Aud
+          type: number
+          nullable: true
+        price_unit:
+          type: string
+          enum:
+          - per_person
+          - per_night
+          title: Price Unit
+        rating:
+          title: Rating
+          type: number
+          nullable: true
+        details:
+          additionalProperties: true
+          type: object
+          title: Details
+        why_recommended:
+          type: string
+          title: Why Recommended
+        status:
+          type: string
+          enum:
+          - pending
+          - accepted
+          - dismissed
+          title: Status
+          default: pending
+      type: object
+      required:
+      - item_id
+      - item_type
+      - item_name
+      - city
+      - price_unit
+      - details
+      - why_recommended
+      title: Suggestion
+    TurnList:
+      properties:
+        data:
+          items:
+            $ref: '#/components/schemas/TurnRead'
+          type: array
+          title: Data
+        meta:
+          $ref: '#/components/schemas/PaginationMeta'
+      type: object
+      required:
+      - data
+      - meta
+      title: TurnList
+    TurnRead:
+      properties:
+        turn_id:
+          type: string
+          format: uuid
+          title: Turn Id
+        package_id:
+          type: string
+          format: uuid
+          title: Package Id
+        prompt:
+          type: string
+          title: Prompt
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        message:
+          type: string
+          title: Message
+        next_action:
+          $ref: '#/components/schemas/NextAction'
+        warnings:
+          items:
+            $ref: '#/components/schemas/Warning'
+          type: array
+          title: Warnings
+        suggestions:
+          items:
+            $ref: '#/components/schemas/Suggestion'
+          type: array
+          title: Suggestions
+        generation_mode:
+          type: string
+          enum:
+          - llm
+          - inventory_fallback
+          - clarification
+          title: Generation Mode
+        response_time_ms:
+          type: integer
+          minimum: 0.0
+          title: Response Time Ms
+      type: object
+      required:
+      - turn_id
+      - package_id
+      - prompt
+      - created_at
+      - message
+      - next_action
+      - warnings
+      - suggestions
+      - generation_mode
+      - response_time_ms
+      title: TurnRead
+    Warning:
+      properties:
+        code:
+          type: string
+          title: Code
+        message:
+          type: string
+          title: Message
+      type: object
+      required:
+      - code
+      - message
+      title: Warning
 
     # ── Auth ──────────────────────────────────
     LoginRequest:
@@ -264,12 +460,15 @@ components:
           example: "10-Day Bali Escape: Culture, Surf & Cuisine"
         destination_country:
           type: string
+          nullable: true
           example: "Indonesia"
         destination_city:
           type: string
+          nullable: true
           example: "Bali"
         duration_days:
           type: integer
+          nullable: true
           example: 10
         base_price_aud:
           type: integer
@@ -303,6 +502,7 @@ components:
           properties:
             description:
               type: string
+              nullable: true
             max_group_size:
               type: integer
               nullable: true
@@ -337,6 +537,35 @@ components:
             latest_approval:
               $ref: '#/components/schemas/ApprovalRecord'
               nullable: true
+            pricing:
+              $ref: '#/components/schemas/Pricing'
+              nullable: true
+
+    Pricing:
+      type: object
+      description: |
+        Informational price breakdown computed from the package's itinerary
+        components (null component prices and null hotel nights count as 0).
+        `base_price_aud` is the
+        creator-set display price and may differ from `components_total`; the
+        API asserts nothing about which is authoritative.
+      properties:
+        flights_total:
+          type: integer
+          description: Sum of flight prices in whole AUD.
+        hotels_total:
+          type: integer
+          description: Sum of price-per-night × nights across hotels, whole AUD.
+        activities_total:
+          type: integer
+          description: Sum of activity prices in whole AUD.
+        components_total:
+          type: integer
+          description: flights_total + hotels_total + activities_total.
+        base_price_aud:
+          type: integer
+          nullable: true
+          description: The package's creator-set display price, repeated for convenience.
 
     PackageStatus:
       type: string
@@ -774,6 +1003,292 @@ components:
             suggestion accepted without modifying the package.
           example: true
 
+    AIRecommendRequest:
+      type: object
+      required: [query]
+      properties:
+        query:
+          type: string
+          minLength: 1
+          description: |
+            Natural-language trip request. The engine parses destination, duration,
+            theme, group size and budget out of this free text.
+          example: "5 day food trip to Tokyo for 2 travellers"
+        origin_city:
+          type: string
+          default: "Sydney"
+          description: City the traveller departs from, used to pick outbound flights.
+          example: "Sydney"
+
+    AIItineraryFlight:
+      type: object
+      description: A single flight leg selected from the flight inventory.
+      properties:
+        flight_id:
+          type: string
+          example: "QF25-20260401"
+        leg:
+          type: string
+          enum: [outbound, return]
+          example: "outbound"
+        airline:
+          type: string
+          example: "Qantas"
+        origin:
+          type: string
+          example: "Sydney (SYD)"
+        destination:
+          type: string
+          example: "Tokyo (HND)"
+        departure_datetime:
+          type: string
+          description: Departure timestamp as stored in the flight inventory.
+          example: "2026-04-01T09:50:00.000Z"
+        arrival_datetime:
+          type: string
+          description: Arrival timestamp as stored in the flight inventory.
+          example: "2026-04-01T18:05:00.000Z"
+        cabin_class:
+          type: string
+          example: "economy"
+        price_aud:
+          type: number
+          example: 1184
+        seats_available:
+          type: integer
+          example: 999
+        booking_class:
+          type: string
+          example: "Standard"
+        stops:
+          type: integer
+          example: 0
+        baggage_kg:
+          type: number
+          example: 30
+        refundable:
+          type: boolean
+          example: false
+
+    AIItineraryAccommodation:
+      type: object
+      description: A hotel stay selected from the hotel inventory.
+      properties:
+        hotel_id:
+          type: string
+          example: "HT-TYO-003"
+        hotel_name:
+          type: string
+          example: "Shinjuku Garden Hotel"
+        city:
+          type: string
+          example: "Tokyo"
+        star_rating:
+          type: number
+          example: 4.5
+        room_type:
+          type: string
+          example: "Deluxe Twin"
+        price_per_night_aud:
+          type: number
+          example: 312
+        nights:
+          type: integer
+          example: 4
+        total_price_aud:
+          type: number
+          example: 1248
+        check_in:
+          type: string
+          format: date
+          example: "2026-04-01"
+        check_out:
+          type: string
+          format: date
+          example: "2026-04-05"
+        amenities:
+          type: string
+          description: Comma-separated amenity list as stored in the hotel inventory.
+          example: "wifi, onsen, restaurant, breakfast included"
+        breakfast_included:
+          type: boolean
+          example: true
+        cancellation_policy:
+          type: string
+          example: "Free cancellation up to 48 hours before check-in."
+
+    AIItineraryActivity:
+      type: object
+      description: A scheduled activity within an itinerary day.
+      properties:
+        activity_id:
+          type: string
+          example: "AC-TYO-014"
+        activity_name:
+          type: string
+          example: "Tsukiji Outer Market Food Walk"
+        category:
+          type: string
+          example: "food"
+        start_time:
+          type: string
+          example: "10:00"
+        duration_hours:
+          type: number
+          example: 3
+        price_aud:
+          type: number
+          example: 95
+        rating:
+          type: number
+          example: 4.7
+        address:
+          type: string
+          nullable: true
+          example: "4-16-2 Tsukiji, Chuo City, Tokyo"
+        notes:
+          type: string
+          nullable: true
+          example: "Go hungry — most stalls are cash only."
+
+    AIItineraryDay:
+      type: object
+      description: One day of the generated itinerary.
+      properties:
+        day_number:
+          type: integer
+          minimum: 1
+          example: 1
+        date:
+          type: string
+          format: date
+          example: "2026-04-01"
+        city:
+          type: string
+          example: "Tokyo"
+        title:
+          type: string
+          example: "Arrival & Orientation"
+        description:
+          type: string
+          example: "Land at Haneda, settle into Shinjuku and ease in with an evening izakaya crawl."
+        activities:
+          type: array
+          items:
+            $ref: '#/components/schemas/AIItineraryActivity'
+
+    AIItinerary:
+      type: object
+      description: |
+        A complete generated itinerary. Flights, hotels and activities are drawn from
+        real inventory; the narrative and day plan come from the LLM. Costs are
+        recomputed deterministically from the selected components, so
+        `budget_breakdown` is authoritative rather than LLM-generated.
+      properties:
+        meta:
+          type: object
+          properties:
+            trip_id:
+              type: string
+              format: uuid
+            created_at:
+              type: string
+              format: date-time
+            version:
+              type: string
+              example: "1.0"
+        trip:
+          type: object
+          properties:
+            title:
+              type: string
+              example: "5-Day Tokyo Food Trail"
+            destination_cities:
+              type: array
+              items:
+                type: string
+              example: ["Tokyo"]
+            duration_days:
+              type: integer
+              example: 5
+            theme:
+              type: string
+              example: "food"
+            travel_dates:
+              type: object
+              properties:
+                depart_date:
+                  type: string
+                  format: date
+                  example: "2026-04-01"
+                return_date:
+                  type: string
+                  format: date
+                  example: "2026-04-05"
+            total_cost_aud:
+              type: number
+              example: 4820
+            currency:
+              type: string
+              example: "AUD"
+            group_size:
+              type: integer
+              example: 2
+            status:
+              type: string
+              example: "draft"
+        description:
+          type: string
+          description: Narrative summary of the trip.
+        flights:
+          type: array
+          items:
+            $ref: '#/components/schemas/AIItineraryFlight'
+        accommodation:
+          type: array
+          items:
+            $ref: '#/components/schemas/AIItineraryAccommodation'
+        days:
+          type: array
+          items:
+            $ref: '#/components/schemas/AIItineraryDay'
+        budget_breakdown:
+          type: object
+          description: Deterministic cost breakdown recomputed from the selected components.
+          properties:
+            flights_aud:
+              type: number
+            accommodation_aud:
+              type: number
+            activities_aud:
+              type: number
+            estimated_meals_aud:
+              type: number
+            estimated_transport_aud:
+              type: number
+            total_aud:
+              type: number
+        validation:
+          type: object
+          description: Result of the post-generation feasibility checks.
+          properties:
+            is_valid:
+              type: boolean
+            bookable:
+              type: boolean
+            warnings:
+              type: array
+              items:
+                type: string
+            errors:
+              type: array
+              items:
+                type: string
+        bookable:
+          type: boolean
+          description: Convenience mirror of `validation.bookable`.
+          example: true
+
     # ── Marketplace ───────────────────────────
     MarketplacePackageSummary:
       type: object
@@ -787,12 +1302,15 @@ components:
           example: "10-Day Bali Escape: Culture, Surf & Cuisine"
         destination_country:
           type: string
+          nullable: true
           example: "Indonesia"
         destination_city:
           type: string
+          nullable: true
           example: "Bali"
         duration_days:
           type: integer
+          nullable: true
           example: 10
         base_price_aud:
           type: integer
@@ -1862,6 +2380,73 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
 
+  /ai/recommend:
+    post:
+      tags: [ai]
+      summary: Generate a full itinerary from a natural-language trip request
+      description: |
+        Parses a free-text trip request, pulls matching flights, hotels and activities
+        from the Supabase inventory, and asks the LLM to assemble them into a day-by-day
+        itinerary. Costs and feasibility are then recomputed deterministically from the
+        selected components, so `budget_breakdown` and `validation` are computed by the
+        API rather than taken from the model.
+
+        If the LLM is unavailable the API still returns `200` with a draft itinerary
+        built straight from inventory — `bookable` is `false` and `validation.warnings`
+        explains why. A `502` is returned only when generation fails outright.
+
+        **Performance:** generation involves a Supabase fetch plus an LLM call and
+        routinely takes tens of seconds. Clients should allow a generous timeout.
+
+        **Roles:** Public (no authentication required)
+      operationId: recommendItinerary
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AIRecommendRequest'
+            example:
+              query: "5 day food trip to Tokyo for 2 travellers"
+              origin_city: "Sydney"
+      responses:
+        "200":
+          description: Itinerary generated (possibly an inventory-only fallback).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIItinerary'
+        "422":
+          $ref: '#/components/responses/UnprocessableEntity'
+        "429":
+          description: Too many itinerary requests; the upstream LLM quota is exhausted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error_code: "RATE_LIMITED"
+                message: "Too many itinerary requests. Please try again shortly."
+        "500":
+          description: The itinerary engine is not configured (missing LLM or Supabase credentials).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error_code: "CONFIG_ERROR"
+                message: "The itinerary engine is not configured on this environment."
+        "502":
+          description: The LLM call failed and no itinerary could be produced.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error_code: "LLM_FAILURE"
+                message: "The itinerary generator did not return a usable response. Please try again."
+
   # ══════════════════════════════════════════
   #  MARKETPLACE
   # ══════════════════════════════════════════
@@ -2098,3 +2683,210 @@ paths:
               example:
                 error_code: "SEARCH_QUERY_TOO_SHORT"
                 message: "The search query must be at least 2 characters long."
+
+  /ai/copilot/{package_id}/turns:
+    post:
+      tags:
+      - copilot
+      summary: Create Turn
+      operationId: create_turn_ai_copilot__package_id__turns_post
+      parameters:
+      - name: package_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Package Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PromptInput'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TurnRead'
+        '422':
+          description: Invalid request; auto_apply true is unsupported
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Package, turn or item not owned or not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '502':
+          description: Upstream database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Dependency unavailable or request budget exhausted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+      - BearerAuth: []
+    get:
+      tags:
+      - copilot
+      summary: List Turns
+      operationId: list_turns_ai_copilot__package_id__turns_get
+      parameters:
+      - name: package_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Package Id
+      - name: page
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          default: 1
+          title: Page
+      - name: per_page
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 20
+          title: Per Page
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TurnList'
+        '422':
+          description: Invalid request; auto_apply true is unsupported
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Package, turn or item not owned or not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '502':
+          description: Upstream database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Dependency unavailable or request budget exhausted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+      - BearerAuth: []
+  /ai/copilot/{package_id}/turns/{turn_id}/items/{item_id}:
+    patch:
+      tags:
+      - copilot
+      summary: Feedback
+      operationId: feedback_ai_copilot__package_id__turns__turn_id__items__item_id__patch
+      parameters:
+      - name: package_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Package Id
+      - name: turn_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Turn Id
+      - name: item_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Item Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FeedbackInput'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Suggestion'
+        '422':
+          description: Invalid request; auto_apply true is unsupported
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Package, turn or item not owned or not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '502':
+          description: Upstream database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Dependency unavailable or request budget exhausted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Suggestion already resolved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+      - BearerAuth: []

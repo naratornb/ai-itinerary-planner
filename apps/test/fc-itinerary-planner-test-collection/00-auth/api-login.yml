@@ -1,0 +1,43 @@
+info:
+  name: api-login
+  type: http
+  seq: 2
+
+http:
+  method: POST
+  url: "{{host-api}}/auth/login"
+  headers:
+    - name: content-type
+      value: application/json
+    - name: accept
+      value: application/json
+  body:
+    type: json
+    data: |-
+      {
+        "email": "{{process.env.SMOKE_EMAIL}}",
+        "password": "{{process.env.SMOKE_PASSWORD}}"
+      }
+
+runtime:
+  assertions:
+    - expression: res.status
+      operator: eq
+      value: "200"
+  scripts:
+    - type: tests
+      code: |-
+        test("returns a bearer token for the smoke user", function() {
+          expect(res.body.access_token).to.be.a("string").and.not.be.empty;
+          expect(res.body.user.user_id).to.equal(bru.getVar("user-id"));
+          expect(res.body.token_type).to.equal("bearer");
+        });
+    - type: after-response
+      code: |-
+        bru.setVar("api-access-token", res.body.access_token);
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

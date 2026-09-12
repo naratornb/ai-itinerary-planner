@@ -1,0 +1,49 @@
+info:
+  name: upload-unsupported
+  type: http
+  seq: 3
+
+http:
+  method: POST
+  url: "{{host-api}}/media/upload"
+  headers:
+    - name: accept
+      value: application/json
+  auth:
+    type: bearer
+    token: "{{access-token}}"
+  body:
+    type: multipart-form
+    data:
+      - name: package_id
+        type: text
+        value: "{{media-package-id}}"
+      - name: file
+        type: file
+        value:
+          - assets/unsupported.txt
+        contentType: text/plain
+      - name: is_cover
+        type: text
+        value: "false"
+      - name: sort_order
+        type: text
+        value: "0"
+
+runtime:
+  assertions:
+    - expression: res.status
+      operator: eq
+      value: "400"
+  scripts:
+    - type: tests
+      code: |-
+        test("rejects an unsupported file type", function() {
+          expect(res.body.error_code).to.equal("UNSUPPORTED_FILE_TYPE");
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

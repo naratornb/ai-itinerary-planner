@@ -1,18 +1,25 @@
+import logging
 from typing import Literal, Optional
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Query
 
 from app.ai import service
+from app.ai.engine import generate_itinerary
 from app.ai.schemas import (
     AISuggestion,
     AISuggestionAcceptRequest,
     AISuggestionAcceptResponse,
     AISuggestionListResponse,
     AISuggestRequest,
+    Itinerary,
+    RecommendRequest,
 )
 from app.core import _err, require_user_ctx
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
 
 SuggestionStatus = Literal["pending", "accepted", "dismissed"]
 
@@ -84,6 +91,35 @@ def accept_suggestion(
     if outcome == "already_resolved":
         return _resolved(result)
     return result
+
+
+@router.post("/ai/recommend", response_model=Itinerary)
+def recommend(payload: RecommendRequest):
+    """Plain `def` on purpose: generate_itinerary() blocks on Supabase and
+    Gemini, so FastAPI runs it in a threadpool instead of the event loop."""
+    try:
+        return generate_itinerary(payload.query, origin_city=payload.origin_city)
+    except EnvironmentError:
+        error_id = uuid4().hex[:8]
+        logger.exception("Itinerary engine is misconfigured [error_id=%s]", error_id)
+        return _err(
+            500, "CONFIG_ERROR", "AI service is not configured.", {"error_id": error_id}
+        )
+    except Exception as exc:  # noqa: BLE001 — engine raises bare Exception
+        # The exception text can carry provider payloads, so it goes to the
+        # logs only. error_id is the client's handle for finding that line.
+        error_id = uuid4().hex[:8]
+        logger.exception("Itinerary generation failed [error_id=%s]", error_id)
+        if "429" in str(exc) or "quota" in str(exc).lower():
+            return _err(
+                429,
+                "RATE_LIMITED",
+                "AI provider quota exceeded.",
+                {"error_id": error_id},
+            )
+        return _err(
+            502, "LLM_FAILURE", "AI provider request failed.", {"error_id": error_id}
+        )
 
 
 @router.patch("/ai/suggestions/{suggestion_id}/dismiss", response_model=AISuggestion)

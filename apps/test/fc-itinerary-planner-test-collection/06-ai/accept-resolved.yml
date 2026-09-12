@@ -1,0 +1,38 @@
+info:
+  name: accept-resolved
+  type: http
+  seq: 7
+
+http:
+  method: PATCH
+  url: "{{host-api}}/ai/suggestions/{{suggestion-2-id}}/accept"
+  headers:
+    - name: content-type
+      value: application/json
+    - name: accept
+      value: application/json
+  auth:
+    type: bearer
+    token: "{{access-token}}"
+  body:
+    type: json
+    data: |-
+      {}
+
+runtime:
+  assertions:
+    - expression: res.status
+      operator: eq
+      value: "409"
+  scripts:
+    - type: tests
+      code: |-
+        test("rejects accepting an already-resolved suggestion", function() {
+          expect(res.body.error_code).to.equal("SUGGESTION_ALREADY_RESOLVED");
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

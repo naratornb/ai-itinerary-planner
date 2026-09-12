@@ -1,0 +1,40 @@
+info:
+  name: recommend-empty-query
+  type: http
+  seq: 10
+
+http:
+  method: POST
+  url: "{{host-api}}/ai/recommend"
+  headers:
+    - name: content-type
+      value: application/json
+    - name: accept
+      value: application/json
+  auth:
+    type: bearer
+    token: "{{access-token}}"
+  body:
+    type: json
+    data: |-
+      {
+        "query": "   "
+      }
+
+runtime:
+  assertions:
+    - expression: res.status
+      operator: eq
+      value: "422"
+  scripts:
+    - type: tests
+      code: |-
+        test("rejects a blank query", function() {
+          expect(res.body.error_code).to.equal("VALIDATION_ERROR");
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

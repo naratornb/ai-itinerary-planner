@@ -1,0 +1,41 @@
+info:
+  name: reject
+  type: http
+  seq: 6
+
+http:
+  method: POST
+  url: "{{host-api}}/approvals/{{approvals-package-id}}/reject"
+  headers:
+    - name: content-type
+      value: application/json
+    - name: accept
+      value: application/json
+  auth:
+    type: bearer
+    token: "{{admin-access-token}}"
+  body:
+    type: json
+    data: |-
+      {
+        "rejection_reason": "Rejected by automated smoke run."
+      }
+
+runtime:
+  assertions:
+    - expression: res.status
+      operator: eq
+      value: "200"
+  scripts:
+    - type: tests
+      code: |-
+        test("rejection is recorded", function() {
+          expect(res.body.approval.decision).to.equal("rejected");
+          expect(res.body.package.status).to.equal("rejected");
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

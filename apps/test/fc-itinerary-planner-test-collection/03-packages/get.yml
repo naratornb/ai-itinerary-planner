@@ -28,6 +28,13 @@ runtime:
           expect(res.body.hotels).to.have.lengthOf(1);
           expect(res.body.activities).to.have.lengthOf(1);
         });
+        test("pricing breakdown is present and consistent", function() {
+          var p = res.body.pricing;
+          expect(p).to.be.an("object");
+          expect(p.components_total).to.equal(p.flights_total + p.hotels_total + p.activities_total);
+          // The created draft has priced flight/hotel/activity components
+          expect(p.components_total).to.be.greaterThan(0);
+        });
 
 settings:
   encodeUrl: true

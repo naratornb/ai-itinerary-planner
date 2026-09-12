@@ -1,0 +1,44 @@
+info:
+  name: suggest-2
+  type: http
+  seq: 3
+
+http:
+  method: POST
+  url: "{{host-api}}/ai/suggest"
+  headers:
+    - name: content-type
+      value: application/json
+    - name: accept
+      value: application/json
+  auth:
+    type: bearer
+    token: "{{access-token}}"
+  body:
+    type: json
+    data: |-
+      {
+        "package_id": "{{ai-package-id}}",
+        "prompt": "Suggest a rainy day backup plan for Tokyo."
+      }
+
+runtime:
+  assertions:
+    - expression: res.status
+      operator: eq
+      value: "201"
+  scripts:
+    - type: tests
+      code: |-
+        test("returns a second pending suggestion", function() {
+          expect(res.body.status).to.equal("pending");
+        });
+    - type: after-response
+      code: |-
+        bru.setVar("suggestion-2-id", res.body.suggestion_id);
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

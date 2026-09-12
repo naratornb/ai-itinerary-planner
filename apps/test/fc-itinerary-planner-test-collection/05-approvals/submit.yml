@@ -1,0 +1,38 @@
+info:
+  name: submit
+  type: http
+  seq: 4
+
+http:
+  method: POST
+  url: "{{host-api}}/packages/{{approvals-package-id}}/submit"
+  headers:
+    - name: content-type
+      value: application/json
+    - name: accept
+      value: application/json
+  auth:
+    type: bearer
+    token: "{{access-token}}"
+  body:
+    type: json
+    data: |-
+      {}
+
+runtime:
+  assertions:
+    - expression: res.status
+      operator: eq
+      value: "200"
+  scripts:
+    - type: tests
+      code: |-
+        test("package moves to pending review", function() {
+          expect(res.body.status).to.equal("pending_review");
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

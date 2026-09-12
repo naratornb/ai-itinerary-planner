@@ -1,0 +1,29 @@
+info:
+  name: list-forbidden
+  type: http
+  seq: 2
+
+http:
+  method: GET
+  url: "{{host-api}}/approvals"
+  auth:
+    type: bearer
+    token: "{{access-token}}"
+
+runtime:
+  assertions:
+    - expression: res.status
+      operator: eq
+      value: "403"
+  scripts:
+    - type: tests
+      code: |-
+        test("non-admin is forbidden", function() {
+          expect(res.body.error_code).to.equal("FORBIDDEN");
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

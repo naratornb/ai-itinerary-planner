@@ -1,0 +1,206 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "AI Itinerary Planner \u2014 System Overview",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1080,
+      480
+    ]
+  },
+  "components": [
+    {
+      "id": "traveler",
+      "type": "external",
+      "label": "Traveler",
+      "sublabel": "browser",
+      "pos": [
+        30,
+        230
+      ],
+      "size": [
+        130,
+        60
+      ]
+    },
+    {
+      "id": "web",
+      "type": "frontend",
+      "label": "Web App",
+      "sublabel": "Next.js",
+      "brand": "next-js",
+      "pos": [
+        250,
+        230
+      ],
+      "size": [
+        140,
+        60
+      ]
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "API",
+      "sublabel": "FastAPI",
+      "brand": "fastapi",
+      "pos": [
+        470,
+        230
+      ],
+      "size": [
+        140,
+        60
+      ]
+    },
+    {
+      "id": "ai",
+      "type": "backend",
+      "label": "AI Suggestions",
+      "sublabel": "stubbed generator",
+      "pos": [
+        470,
+        380
+      ],
+      "size": [
+        140,
+        60
+      ],
+      "tag": "LLM TODO"
+    },
+    {
+      "id": "auth",
+      "type": "security",
+      "label": "Supabase Auth",
+      "sublabel": "/auth/v1",
+      "pos": [
+        690,
+        80
+      ],
+      "size": [
+        150,
+        60
+      ]
+    },
+    {
+      "id": "postgrest",
+      "type": "cloud",
+      "label": "PostgREST",
+      "sublabel": "/rest/v1",
+      "brand": "supabase",
+      "pos": [
+        690,
+        230
+      ],
+      "size": [
+        150,
+        60
+      ]
+    },
+    {
+      "id": "db",
+      "type": "database",
+      "label": "Postgres",
+      "sublabel": "RLS policies",
+      "brand": "postgresql",
+      "pos": [
+        920,
+        230
+      ],
+      "size": [
+        130,
+        60
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Supabase Cloud",
+      "wraps": [
+        "auth",
+        "postgrest",
+        "db"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "traveler-web",
+      "from": "traveler",
+      "to": "web",
+      "label": "HTTPS",
+      "variant": "emphasis"
+    },
+    {
+      "id": "web-api",
+      "from": "web",
+      "to": "api",
+      "label": "REST /api",
+      "variant": "emphasis"
+    },
+    {
+      "id": "api-auth",
+      "from": "api",
+      "to": "auth",
+      "label": "verify JWT",
+      "variant": "security",
+      "fromSide": "top",
+      "toSide": "left"
+    },
+    {
+      "id": "api-postgrest",
+      "from": "api",
+      "to": "postgrest",
+      "label": "anon / service key",
+      "variant": "emphasis",
+      "labelDy": -24
+    },
+    {
+      "id": "postgrest-db",
+      "from": "postgrest",
+      "to": "db",
+      "label": "SQL + RLS"
+    },
+    {
+      "id": "api-ai",
+      "from": "api",
+      "to": "ai",
+      "label": "generate draft",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDy": 24
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Two Apps, One Contract",
+      "items": [
+        "Next.js planner UI in apps/web",
+        "FastAPI backend in apps/api",
+        "openapi.yaml is the shared contract"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Supabase Owns Trust",
+      "items": [
+        "JWTs verified against /auth/v1/user",
+        "Anon key + RLS gate public marketplace reads",
+        "Service role key only for privileged paths"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "AI Is Still A Stub",
+      "items": [
+        "Suggestions return canned itinerary text",
+        "Keeps the endpoint contract testable without an API key",
+        "Real LLM planned: RAG pipeline, 10 s SLA"
+      ]
+    }
+  ]
+}

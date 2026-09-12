@@ -1,0 +1,32 @@
+info:
+  name: dismiss
+  type: http
+  seq: 6
+
+http:
+  method: PATCH
+  url: "{{host-api}}/ai/suggestions/{{suggestion-2-id}}/dismiss"
+  headers:
+    - name: accept
+      value: application/json
+  auth:
+    type: bearer
+    token: "{{access-token}}"
+
+runtime:
+  assertions:
+    - expression: res.status
+      operator: eq
+      value: "200"
+  scripts:
+    - type: tests
+      code: |-
+        test("marks the suggestion dismissed", function() {
+          expect(res.body.status).to.equal("dismissed");
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

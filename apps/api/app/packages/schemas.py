@@ -40,6 +40,12 @@ class ActivityInput(BaseModel):
     booking_required: bool | None = None
 
 
+class PackageDayInput(BaseModel):
+    day_number: int = Field(ge=1)
+    title: str | None = None
+    summary: str | None = None
+
+
 class TravelPackageCreate(BaseModel):
     title: str = Field(max_length=200)
     description: str
@@ -52,6 +58,7 @@ class TravelPackageCreate(BaseModel):
     flights: list[FlightInput] = []
     hotels: list[HotelInput] = []
     activities: list[ActivityInput] = []
+    days: list[PackageDayInput] = []
 
 
 class TravelPackageUpdate(BaseModel):
@@ -65,6 +72,7 @@ class TravelPackageUpdate(BaseModel):
     base_price_aud: int | None = Field(default=None, ge=0)
     max_group_size: int | None = None
     tags: list[str] | None = None
+    days: list[PackageDayInput] | None = None
 
 
 class SubmitBody(BaseModel):
@@ -74,9 +82,11 @@ class SubmitBody(BaseModel):
 class TravelPackageSummary(BaseModel):
     package_id: str
     title: str
-    destination_country: str
-    destination_city: str
-    duration_days: int
+    # Nullable in the DB (0001 baseline) and writable to NULL via PUT, so the
+    # out-contract must tolerate None or reads 500 on legacy rows.
+    destination_country: str | None = None
+    destination_city: str | None = None
+    duration_days: int | None = None
     base_price_aud: int
     status: str
     creator_id: str
@@ -156,8 +166,16 @@ class PackageCreatorOut(BaseModel):
     influencer_profiles: Any | None = None
 
 
+class PricingOut(BaseModel):
+    flights_total: int = 0
+    hotels_total: int = 0
+    activities_total: int = 0
+    components_total: int = 0
+    base_price_aud: int | None = None
+
+
 class TravelPackageDetail(TravelPackageSummary):
-    description: str
+    description: str | None = None
     max_group_size: int | None = None
     tags: list[str] = []
     flights: list[FlightDetailOut] = []
@@ -167,6 +185,7 @@ class TravelPackageDetail(TravelPackageSummary):
     days: list[PackageDayOut] = []
     creator: PackageCreatorOut | None = None
     latest_approval: Any | None = None
+    pricing: PricingOut | None = None
 
 
 class PaginationMeta(BaseModel):

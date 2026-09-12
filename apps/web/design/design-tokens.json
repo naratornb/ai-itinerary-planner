@@ -42,6 +42,13 @@
     "lg": { "$value": "16px", "$type": "dimension", "$extensions": { "anydesign": { "confidence": "high" } } },
     "pill": { "$value": "999px", "$type": "dimension", "$extensions": { "anydesign": { "confidence": "high" } } }
   },
+  "component": {
+    "copilot": {
+      "desktop-width": { "$value": "340px", "$type": "dimension", "$description": "Desktop editor sidebar width" },
+      "mobile-breakpoint": { "$value": "700px", "$type": "dimension", "$description": "Full-viewport Co-Pilot transition" },
+      "composer-min-height": { "$value": "94px", "$type": "dimension", "$description": "Mock request composer height" }
+    }
+  },
   "$extensions": {
     "anydesign": {
       "source": "repository root",

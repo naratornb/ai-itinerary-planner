@@ -1,0 +1,36 @@
+info:
+  name: list-pending
+  type: http
+  seq: 5
+
+http:
+  method: GET
+  url: "{{host-api}}/approvals?per_page=100&sort=submitted_at_desc"
+  auth:
+    type: bearer
+    token: "{{admin-access-token}}"
+  params:
+    - name: per_page
+      value: "100"
+      type: query
+    - name: sort
+      value: submitted_at_desc
+      type: query
+
+runtime:
+  assertions:
+    - expression: res.status
+      operator: eq
+      value: "200"
+  scripts:
+    - type: tests
+      code: |-
+        test("pending queue contains the submitted package", function() {
+          expect(res.body.data.map(function(p) { return p.package_id; })).to.include(bru.getVar("approvals-package-id"));
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

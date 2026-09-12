@@ -1,0 +1,6 @@
+info:
+  name: 08-logout
+  seq: 9
+  description: |-
+    Runs last on purpose — Supabase logout scope can be global; nothing depends on
+    tokens after this folder.
