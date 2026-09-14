@@ -101,8 +101,7 @@ const MAX_DAY_PHOTOS = 1;
 
 const NEW_DAY_OPTION_ID = "__new-day__";
 
-type AddFlowStep = "type" | "activities" | "create" | "flight" | "hotel" | "creator";
-type ActivityDraft = { title: string; price: string; address: string; startTime: string; duration: string; notes: string };
+type AddFlowStep = "type" | "activities" | "flight" | "hotel" | "creator";
 type CreatorDraft = { title: string; category: string; address: string; time: string; duration: string; price: string; reason: string };
 type HotelDayOption = { id: string; index: number; title: string };
 
@@ -267,6 +266,9 @@ const CITY_CENTERS: Record<string, [number, number]> = {
   Paris: [48.8566, 2.3522],
   Sydney: [-33.8688, 151.2093],
   Bali: [-8.6705, 115.2126],
+  Seoul: [37.5665, 126.9780],
+  Reykjavik: [64.1466, -21.9426],
+  Athens: [37.9838, 23.7275],
 };
 
 function resolveStopCoordinate(hint: string, fallbackIndex: number, city: string | null): [number, number] {
@@ -428,9 +430,6 @@ type AddStopFlowProps = {
   addRecommendedActivity: (title: string, meta: string, price: string) => void;
   moreActivitiesOpen: boolean;
   setMoreActivitiesOpen: Dispatch<SetStateAction<boolean>>;
-  activityDraft: ActivityDraft;
-  setActivityDraft: Dispatch<SetStateAction<ActivityDraft>>;
-  createActivity: () => void;
   activeDayData: BuilderDay | undefined;
   activeDayCity: string | null;
   openAddFlow: (after: number) => void;
@@ -568,29 +567,17 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
                         <span className="status-chevron"><Icon name="chevron" size={14} /></span>
                         {p.moreActivitiesOpen ? "Show fewer activities" : `See ${p.recommendedActivities.length - 3} more`}
                       </button>
-                      {p.moreActivitiesOpen && <ul className="activity-list">
-                        {p.recommendedActivities.slice(3).map((activity) => <li key={activity.title} className="activity-card">
-                          <span className="activity-list-name"><strong>{activity.title}</strong><small>{activity.meta}</small></span>
-                          <span className="activity-list-trail"><b>{activity.price}</b><button className="activity-add-btn" aria-label={`Add ${activity.title}`} onClick={() => p.addRecommendedActivity(activity.title, activity.meta, activity.price)}><Icon name="plus" size={14} /></button></span>
+                      {p.moreActivitiesOpen && <div className="activity-results activity-results-more">
+                        {p.recommendedActivities.slice(3).map((activity) => <div key={activity.title} className="activity-card">
+                          <button className="activity-add-btn" aria-label={`Add ${activity.title}`} onClick={() => p.addRecommendedActivity(activity.title, activity.meta, activity.price)}><Icon name="plus" size={16} /></button>
+                          <strong>{activity.title}</strong>
+                          <small>{activity.meta}</small>
+                          <b>{activity.price}</b>
                           <ActivityDetailPopover activity={activity} />
-                        </li>)}
-                      </ul>}
+                        </div>)}
+                      </div>}
                     </>}
-                    <button className="create-activity-link" onClick={() => p.setAddFlow("create")}><Icon name="plus" size={16} /> Create new activity</button>
-                  </>}
-
-                  {p.addFlow === "create" && <>
-                    <div className="inline-add-head"><button className="inline-back" onClick={() => p.setAddFlow("activities")} aria-label="Back to activities">‹</button><h4>Create new activity</h4><button onClick={() => p.setAddingAfter(null)}>Cancel</button></div>
-                    <div className="activity-form">
-                      <label className="full"><span>Activity</span><input value={p.activityDraft.title} onChange={(event) => p.setActivityDraft({ ...p.activityDraft, title: event.target.value })} /></label>
-                      <label><span>Price</span><div className="price-input"><b>$</b><input inputMode="decimal" value={p.activityDraft.price} onChange={(event) => p.setActivityDraft({ ...p.activityDraft, price: event.target.value.replace(/[^0-9.]/g, "") })} /></div></label>
-                      <label className="full"><span>Address</span><input value={p.activityDraft.address} onChange={(event) => p.setActivityDraft({ ...p.activityDraft, address: event.target.value })} /></label>
-                      <label><span>Start time</span><input type="time" value={p.activityDraft.startTime} onChange={(event) => p.setActivityDraft({ ...p.activityDraft, startTime: event.target.value })} /></label>
-                      <label><span>Duration (min)</span><select value={p.activityDraft.duration} onChange={(event) => p.setActivityDraft({ ...p.activityDraft, duration: event.target.value })}>{DURATION_OPTIONS.map((duration) => <option key={duration}>{duration}</option>)}</select></label>
-                      <label><span>Ends at</span><input value={getEndTime(p.activityDraft.startTime, p.activityDraft.duration)} readOnly /></label>
-                      <label className="full"><span>Notes</span><textarea value={p.activityDraft.notes} onChange={(event) => p.setActivityDraft({ ...p.activityDraft, notes: event.target.value })} placeholder="Share why this is worth a stop" /></label>
-                    </div>
-                    <div className="activity-form-actions"><button className="publish-button" disabled={!p.activityDraft.title.trim()} onClick={p.createActivity}>Add activity</button></div>
+                    <button className="create-activity-link" onClick={() => p.setAddFlow("creator")}><Icon name="plus" size={16} /> Create new activity</button>
                   </>}
                 </section> : <button className="timeline-add" onClick={() => p.openAddFlow(index)}><Icon name="plus" size={14} /> Add stop</button>;
 }
@@ -660,7 +647,6 @@ export default function ItineraryEditor({
   const [activitySearch, setActivitySearch] = useState("");
   const [recommendedActivities, setRecommendedActivities] = useState<{ title: string; meta: string; price: string; rating: number | null; suitableFor: string | null }[]>([]);
   const [moreActivitiesOpen, setMoreActivitiesOpen] = useState(false);
-  const [activityDraft, setActivityDraft] = useState({ title: "", price: "", address: "", startTime: "12:00", duration: "30", notes: "" });
   const [flightSearch, setFlightSearch] = useState("");
   const [selectedFlightIndex, setSelectedFlightIndex] = useState<number | null>(null);
   const [selectedHotelIndex, setSelectedHotelIndex] = useState<number | null>(null);
@@ -689,7 +675,7 @@ export default function ItineraryEditor({
   // Activities carry a plain city name in `address` (buildDaysFromPackage);
   // hotels sometimes carry a full street address instead, so activities are
   // the more reliable signal for "what city is this day actually in."
-  const activeDayCity = items.find((item) => item.type === "ACTIVITY" && item.address)?.address ?? null;
+  const activeDayCity = pkg.destination_city ?? null;
   // buildDaysFromPackage stamps every row of a stay with `hotel-<id|name>`,
   // so the API hotel is looked up by that key rather than by counting rows —
   // the item list here is one day's worth, not the whole trip.
@@ -1280,21 +1266,6 @@ export default function ItineraryEditor({
     insertItem(addingAfter, { time: "16:00", type: "ACTIVITY", title, price, icon: "star", status: "pass", problemDetail: meta });
   };
 
-  const createActivity = () => {
-    if (addingAfter === null || !activityDraft.title.trim()) return;
-    insertItem(addingAfter, {
-      time: activityDraft.startTime,
-      type: "ACTIVITY",
-      title: activityDraft.title.trim(),
-      price: activityDraft.price.trim() ? `$${activityDraft.price.trim()}` : "$0",
-      icon: "star",
-      status: "pass",
-      address: activityDraft.address.trim() || undefined,
-      duration: activityDraft.duration,
-      notes: activityDraft.notes.trim() || undefined,
-    });
-    setActivityDraft({ title: "", price: "", address: "", startTime: "12:00", duration: "30", notes: "" });
-  };
 
   const addSelectedFlight = () => {
     const flight = selectedFlightIndex !== null ? matchingFlights[selectedFlightIndex] : undefined;
@@ -1624,8 +1595,6 @@ export default function ItineraryEditor({
     addRecommendedActivity,
     moreActivitiesOpen,
     setMoreActivitiesOpen,
-    activityDraft, setActivityDraft,
-    createActivity,
     activeDayData,
     activeDayCity,
     openAddFlow,
