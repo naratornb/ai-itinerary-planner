@@ -1992,7 +1992,10 @@ export default function ItineraryEditor({
           </section>
           <CopilotPanel
             client={copilotClient}
-            city={pkg.destination_city ?? ""}
+            // The active day's own city, not the package's overall
+            // destination — a Tokyo→Paris trip's day 5 is in Paris, and a
+            // cityless prompt on that day should mean Paris, not Tokyo.
+            city={activeDayCity ?? pkg.destination_city ?? ""}
             mobileOpen={copilotOpen}
             onClose={() => setCopilotOpen(false)}
             dayLabel={`Day ${activeDay + 1}`}
