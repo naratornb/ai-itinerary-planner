@@ -3,13 +3,13 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
-import ItineraryEditor from "./itinerary-editor";
+import ItineraryReview from "./itinerary-review";
 import { fetchOwnPackage, type CreatorPackageDetail } from "../lib/creator-api";
 import { supabase } from "../lib/supabase/client";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-export default function PackageEditorScreen({ packageId }: { packageId: string }) {
+export default function PackageReviewScreen({ packageId }: { packageId: string }) {
   const router = useRouter();
   const [pkg, setPackage] = useState<CreatorPackageDetail | null>(null);
   const [error, setError] = useState("");
@@ -39,10 +39,10 @@ export default function PackageEditorScreen({ packageId }: { packageId: string }
   if (!pkg) return <main className="editor-load-state" aria-busy="true"><p>Loading package…</p></main>;
 
   return (
-    <ItineraryEditor
+    <ItineraryReview
       pkg={pkg}
-      onBack={() => router.push("/dashboard")}
-      onContinueToReview={() => router.push(`/packages/editor/${encodeURIComponent(packageId)}/review`)}
+      onBackToEditor={() => router.push(`/packages/editor/${encodeURIComponent(packageId)}`)}
+      onBackToDashboard={() => router.push("/dashboard")}
     />
   );
 }

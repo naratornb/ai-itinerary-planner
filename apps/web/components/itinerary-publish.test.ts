@@ -13,7 +13,7 @@ function visit(node: ts.Node) {
     publishHandler = `const handlePublish = ${node.initializer!.getText(file)};`;
   }
   if (ts.isJsxElement(node) && node.openingElement.tagName.getText(file) === "button"
-    && node.children.some((child) => child.getText(file).includes("Continue to publish"))) {
+    && node.children.some((child) => ts.isJsxExpression(child) && child.expression?.getText(file) === "continueButtonLabel")) {
     buttons.push(node.openingElement);
   }
   ts.forEachChild(node, visit);
@@ -24,15 +24,20 @@ visit(file);
 // components. A disabled button must not dispatch its click.
 function clickPublish(button: ts.JsxOpeningElement, score: number | undefined, critical = false, loading = false) {
   const notices: string[] = [];
-  let published = false;
+  let continuedToReview = false;
   const context = {
+    pkg: { package_id: "pkg-1" },
+    packageTitle: "Tokyo Trip",
+    days: [],
+    window: { sessionStorage: { setItem: () => {} } },
+    itinerarySnapshotStorageKey: (id: string) => `package-itinerary-snapshot:${id}`,
     displayScore: score,
     feasResult: score === undefined ? null : { is_feasible: !critical },
     hardErrors: critical ? [{}] : [],
     isReadyToPublish: score !== undefined && score >= 70 && !critical,
     feasLoading: loading,
     showNotice: (message: string) => notices.push(message),
-    setPublished: (value: boolean) => { published = value; },
+    onContinueToReview: () => { continuedToReview = true; },
     setPreviewOpen: () => {},
   };
   function expression(name: string) {
@@ -41,14 +46,14 @@ function clickPublish(button: ts.JsxOpeningElement, score: number | undefined, c
     return attribute.initializer.expression!.getText(file);
   }
   runInNewContext(ts.transpile(`${publishHandler}\nif (!(${expression("disabled")})) (${expression("onClick")})();`), context);
-  return { notices, published };
+  return { notices, continuedToReview };
 }
 
-test("both publish buttons explain insufficient scores without publishing", () => {
+test("both publish buttons explain insufficient scores without continuing", () => {
   assert.equal(buttons.length, 2);
   for (const button of buttons) {
     const result = clickPublish(button, 69);
-    assert.equal(result.published, false);
+    assert.equal(result.continuedToReview, false);
     assert.match(result.notices.join(" "), /69.*70/);
   }
 });
@@ -57,9 +62,9 @@ test("publish explains unchecked content and critical issues; only eligible trip
   for (const button of buttons) {
     assert.match(clickPublish(button, undefined).notices.join(" "), /check content/i);
     const blocked = clickPublish(button, 90, true);
-    assert.equal(blocked.published, false);
+    assert.equal(blocked.continuedToReview, false);
     assert.match(blocked.notices.join(" "), /critical/i);
-    assert.equal(clickPublish(button, 70).published, true);
-    assert.deepEqual(clickPublish(button, 70, false, true), { notices: [], published: false });
+    assert.equal(clickPublish(button, 70).continuedToReview, true);
+    assert.deepEqual(clickPublish(button, 70, false, true), { notices: [], continuedToReview: false });
   }
 });

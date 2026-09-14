@@ -8,10 +8,14 @@ import {
   copilotSuggestionToTimelineItem,
   daySubtitle,
   extractClockTimeInZone,
+  flightDurationMinutes,
+  formatMinutes,
   getEndTime,
   insertItemInDay,
   moveItemInDay,
   removeDay,
+  summarizeDay,
+  summarizePackageComponents,
   timezoneForIata,
   updateItemInDay,
   type BuilderDay,
@@ -291,4 +295,84 @@ test("timezoneForIata knows Sydney and Tokyo, and falls back to Sydney for an un
   assert.equal(timezoneForIata("NRT"), "Asia/Tokyo");
   assert.equal(timezoneForIata("XXX"), "Australia/Sydney");
   assert.equal(timezoneForIata(null), "Australia/Sydney");
+});
+
+test("flightDurationMinutes computes real elapsed minutes across a date change", () => {
+  assert.equal(flightDurationMinutes("2026-07-12T20:00:00Z", "2026-07-13T05:00:00Z"), 540);
+});
+
+test("flightDurationMinutes is undefined for missing or non-positive spans", () => {
+  assert.equal(flightDurationMinutes(null, "2026-07-13T05:00:00Z"), undefined);
+  assert.equal(flightDurationMinutes("2026-07-13T05:00:00Z", "2026-07-13T05:00:00Z"), undefined);
+  assert.equal(flightDurationMinutes("2026-07-13T05:00:00Z", "2026-07-12T20:00:00Z"), undefined);
+});
+
+test("buildDaysFromPackage carries a flight's real duration onto its timeline item", () => {
+  const pkg: CreatorPackageDetail = {
+    package_id: "pkg-3",
+    title: "Trip",
+    duration_days: 2,
+    days: [],
+    hotels: [],
+    activities: [],
+    flights: [{
+      flight_id: "fl-1",
+      airline: "Qantas",
+      flight_number: "QF25",
+      origin_iata: "SYD",
+      destination_iata: "NRT",
+      departure_datetime: "2026-07-12T20:00:00Z",
+      arrival_datetime: "2026-07-12T21:30:00Z",
+      cabin_class: null,
+      price_aud: 850,
+    }],
+  };
+  const [day] = buildDaysFromPackage(pkg);
+  assert.equal(day.items[0]?.duration, "90");
+});
+
+test("formatMinutes renders hours, minutes, or both", () => {
+  assert.equal(formatMinutes(150), "2h 30m");
+  assert.equal(formatMinutes(120), "2h");
+  assert.equal(formatMinutes(45), "45m");
+  assert.equal(formatMinutes(0), "0m");
+});
+
+function makeDay(overrides: Partial<BuilderDay> = {}): BuilderDay {
+  return { id: "day-1", day: 1, title: "Day 1", meta: "", items: [], story: "", photos: [], ...overrides };
+}
+
+test("summarizeDay totals flight minutes, counts activities, and names the hotel", () => {
+  const day = makeDay({
+    items: [
+      { ...firstItem, id: 1, type: "FLIGHT", title: "SYD to NRT", duration: "90" },
+      { ...firstItem, id: 2, type: "ACTIVITY", title: "Ramen crawl" },
+      { ...firstItem, id: 3, type: "HOTEL", title: "Shibuya Inn (Check-in)", stayMarker: "check-in" },
+    ],
+  });
+
+  assert.deepEqual(summarizeDay(day), { flightMinutes: 90, activityCount: 1, hotelName: "Shibuya Inn" });
+});
+
+test("summarizeDay strips the check-in/out/night suffix from the hotel name", () => {
+  const day = makeDay({ items: [{ ...firstItem, id: 1, type: "HOTEL", title: "Shibuya Inn (Night 2 of 3)" }] });
+  assert.equal(summarizeDay(day).hotelName, "Shibuya Inn");
+});
+
+test("summarizeDay reports a day with nothing planned yet", () => {
+  assert.deepEqual(summarizeDay(makeDay()), { flightMinutes: 0, activityCount: 0, hotelName: null });
+});
+
+test("summarizePackageComponents counts a multi-night stay as one hotel, not one per night", () => {
+  const days: BuilderDay[] = [
+    makeDay({ id: "day-1", items: [stayRow(1, "check-in"), { ...firstItem, id: 4, type: "FLIGHT", title: "Flight" }] }),
+    makeDay({ id: "day-2", day: 2, items: [stayRow(2), { ...firstItem, id: 5, type: "ACTIVITY", title: "Museum" }] }),
+    makeDay({ id: "day-3", day: 3, items: [stayRow(3, "check-out")] }),
+  ];
+
+  assert.deepEqual(summarizePackageComponents(days), { flightCount: 1, hotelCount: 1, activityCount: 1 });
+});
+
+test("summarizePackageComponents of no days is all zero", () => {
+  assert.deepEqual(summarizePackageComponents([]), { flightCount: 0, hotelCount: 0, activityCount: 0 });
 });

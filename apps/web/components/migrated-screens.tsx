@@ -24,6 +24,7 @@ import {
   itineraryToPackageInput,
   type WizardSelection,
 } from "../lib/ai/itinerary";
+import { wizardVibesStorageKey } from "../lib/review-draft";
 import { supabase } from "../lib/supabase/client";
 const creatorBannerImg = "/creator-banner.png";
 
@@ -2010,6 +2011,20 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
         // reuse guard in continueWizard needs the id to avoid creating a twin.
         // Skipped only when a newer build for a different setup superseded this one.
         if (inFlightSetupRef.current === runSetup) setCreatedPackageId(package_id);
+        // Vibes/season have no backend field to persist to (not even proposed
+        // in the save/submit handover) — stashed here so the Finalise & Review
+        // page can still show them once, right after creation.
+        try {
+          window.sessionStorage.setItem(
+            wizardVibesStorageKey(package_id),
+            JSON.stringify({
+              vibes: vibes.map((vibeId) => VIBES.find((item) => item.id === vibeId)?.label ?? vibeId),
+              season,
+            }),
+          );
+        } catch {
+          // best-effort only
+        }
       } catch (error) {
         if (inFlightSetupRef.current === runSetup) inFlightSetupRef.current = null;
         if (cancelled) return;

@@ -12,13 +12,13 @@ import {
   copilotSuggestionToTimelineItem,
   daySubtitle,
   extractClockTimeInZone,
+  flightDurationMinutes,
   getEndTime,
   insertItemInDay,
   removeDay,
   timezoneForIata,
   type BuilderDay,
   type DayPhoto,
-  type IconName,
   type TimelineItem,
 } from "../lib/itinerary-builder";
 import type { CopilotSuggestionV1 } from "../lib/copilot";
@@ -31,7 +31,9 @@ import {
   type CreatorHotelDetail,
   type CreatorPackageDetail,
 } from "../lib/creator-api";
+import { itinerarySnapshotStorageKey } from "../lib/review-draft";
 import { supabase } from "../lib/supabase/client";
+import Icon from "./icon";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -63,21 +65,6 @@ function timeToSlot(time: string): string {
   if (isNaN(h) || h < 13) return "Morning";
   if (h < 18) return "Afternoon";
   return "Evening";
-}
-
-function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
-  const paths: Record<IconName, React.ReactNode> = {
-    plane: <><path d="M21 16v-2l-8-5V3.5a1.5 1.5 0 0 0-3 0V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5z" /></>,
-    star: <path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z" />,
-    hotel: <><path d="M3 20V7m18 13V11a2 2 0 0 0-2-2h-7v11M3 14h18M7 10h2" /><path d="M3 20h18" /></>,
-    plus: <><path d="M12 5v14M5 12h14" /></>,
-    alert: <><path d="M12 3 2.8 20h18.4z" /><path d="M12 9v4m0 3h.01" /></>,
-    check: <><circle cx="12" cy="12" r="9" /><path d="m8 12 2.5 2.5L16 9" /></>,
-    clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
-    chevron: <path d="m9 5 7 7-7 7" />,
-    pin: <><path d="M12 21s7-6.1 7-11.5A7 7 0 0 0 5 9.5C5 14.9 12 21 12 21Z" /><circle cx="12" cy="9.5" r="2.3" /></>,
-  };
-  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
 }
 
 // Transfer-gap check thresholds used by annotateItems.
@@ -497,7 +484,7 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
                 </section> : <button className="timeline-add" onClick={() => p.openAddFlow(index)}><Icon name="plus" size={14} /> Add stop</button>;
 }
 
-export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDetail; onBack: () => void }) {
+export default function ItineraryEditor({ pkg, onBack, onContinueToReview }: { pkg: CreatorPackageDetail; onBack: () => void; onContinueToReview: () => void }) {
   const { flights, hotels } = pkg;
   const copilotClient = useMemo(
     () => createCopilotClient(API_URL, pkg.package_id),
@@ -513,7 +500,6 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
   const [days, setDays] = useState(() => buildDaysFromPackage(pkg));
   const [savedSnapshot, setSavedSnapshot] = useState<{ days: BuilderDay[]; title: string } | null>(null);
   const [saving, setSaving] = useState(false);
-  const [published, setPublished] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [isGeneratingStory, setIsGeneratingStory] = useState(false);
   const [editingDayField, setEditingDayField] = useState<"title" | null>(null);
@@ -1027,6 +1013,7 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
     const flight = selectedFlightIndex !== null ? matchingFlights[selectedFlightIndex] : undefined;
     if (addingAfter === null || !flight) return;
     const scheduleDatetime = flight.arrival_datetime ?? flight.departure_datetime;
+    const durationMinutes = flightDurationMinutes(flight.departure_datetime, flight.arrival_datetime);
     insertItem(addingAfter, {
       time: extractClockTimeInZone(scheduleDatetime, timezoneForIata(flight.destination_iata ?? flight.origin_iata)) ?? "09:00",
       type: "FLIGHT",
@@ -1034,6 +1021,7 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
       price: flight.price_aud != null ? `$${flight.price_aud.toLocaleString("en-US")}` : "$0",
       icon: "plane",
       status: "pass",
+      duration: durationMinutes === undefined ? undefined : String(durationMinutes),
     });
     setFlightSearch("");
     setSelectedFlightIndex(null);
@@ -1152,6 +1140,9 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
     hardErrors.length === 0 &&
     feasResult.is_feasible
   );
+  const continueButtonLabel = !isReadyToPublish
+    ? (feasResult && !feasResult.is_feasible ? "Fix issues to continue" : "Check content to continue")
+    : "Continue to review";
 
   const handlePublish = () => {
     if (feasLoading) return;
@@ -1164,8 +1155,15 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
           : "Fix critical feasibility issues and check content again before publishing.");
       return;
     }
-    setPublished(true);
-    showNotice("Package ready to publish");
+    // Flights/hotels/activities added this session aren't saved by PUT yet
+    // (see saveDraft below) — snapshot them so the review page shows exactly
+    // what was just approved here, not a stale server-side fetch.
+    try {
+      window.sessionStorage.setItem(itinerarySnapshotStorageKey(pkg.package_id), JSON.stringify({ title: packageTitle, days }));
+    } catch {
+      // best-effort only
+    }
+    onContinueToReview();
   };
 
   const deleteItem = (itemId: number) => {
@@ -1235,7 +1233,7 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
           <button className="quiet-button" disabled={saving} onClick={() => { void saveDraft(); }}>{saving ? "Saving…" : saved ? "Saved" : "Save Draft"}</button>
           <button className="quiet-button" onClick={() => setPreviewOpen(true)}>Preview</button>
           <button className="publish-button" disabled={feasLoading} onClick={handlePublish}>
-            {!isReadyToPublish ? (feasResult && !feasResult.is_feasible ? "Fix issues to publish" : "Check content to publish") : "Continue to publish"}
+            {continueButtonLabel}
           </button>
         </div>
       </header>
@@ -1536,7 +1534,7 @@ export default function ItineraryEditor({ pkg, onBack }: { pkg: CreatorPackageDe
           </div>
         </section>
       </div>}
-      {previewOpen && <div className="preview-backdrop" role="presentation" onMouseDown={() => setPreviewOpen(false)}><section className="preview-dialog" role="dialog" aria-modal="true" aria-labelledby="preview-title" onMouseDown={(event) => event.stopPropagation()}><button className="preview-close" onClick={() => setPreviewOpen(false)} aria-label="Close preview"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg></button><span>Traveller preview</span><h2 id="preview-title">{packageTitle}</h2><p>{story || "Your itinerary story will appear here. Add a personal introduction before publishing."}</p><div><strong>{days.length} days / 2 nights</strong><strong>${packagePrice.toLocaleString()}</strong></div><button className="publish-button" disabled={feasLoading} onClick={handlePublish}>{!isReadyToPublish ? (feasResult && !feasResult.is_feasible ? "Fix issues to publish" : "Check content to publish") : "Continue to publish"}</button></section></div>}
+      {previewOpen && <div className="preview-backdrop" role="presentation" onMouseDown={() => setPreviewOpen(false)}><section className="preview-dialog" role="dialog" aria-modal="true" aria-labelledby="preview-title" onMouseDown={(event) => event.stopPropagation()}><button className="preview-close" onClick={() => setPreviewOpen(false)} aria-label="Close preview"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg></button><span>Traveller preview</span><h2 id="preview-title">{packageTitle}</h2><p>{story || "Your itinerary story will appear here. Add a personal introduction before publishing."}</p><div><strong>{days.length} days / 2 nights</strong><strong>${packagePrice.toLocaleString()}</strong></div><button className="publish-button" disabled={feasLoading} onClick={handlePublish}>{continueButtonLabel}</button></section></div>}
     </main>
   );
 }
