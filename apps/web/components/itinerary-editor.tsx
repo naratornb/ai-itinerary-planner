@@ -770,6 +770,9 @@ export default function ItineraryEditor({
         const data = await res.json();
         console.log("=== [AI VALIDATE CLIENT RESPONSE] ===", data);
         setFeasResult(data);
+        // Timestamps a check that only ever runs from a click handler, never
+        // during render — safe despite the purity lint's static analysis.
+        // eslint-disable-next-line react-hooks/purity
         setLastCheckedAt(Date.now());
         setResultStale(false);
       }
@@ -929,6 +932,9 @@ export default function ItineraryEditor({
     setTitleDraft(persisted.title);
     setPackageStatus(persisted.status ?? packageStatus);
     setSavedSnapshot({ days: persistedDays, title: persisted.title });
+    // Timestamps a save that only ever runs from a click handler, never
+    // during render — safe despite the purity lint's static analysis.
+    // eslint-disable-next-line react-hooks/purity
     setLastSavedAt(Date.now());
     return persisted;
   };
@@ -1654,7 +1660,7 @@ export default function ItineraryEditor({
                   <h3>Day summary</h3>
                   <span className="field-hint">
                     <button type="button" className="field-hint-trigger" aria-label="What to write in the day summary">?</button>
-                    <span className="field-hint-tooltip" role="tooltip">Describe the schedule, local ambiance, and practical traveller tips for this day. Upload a photo representing this day's itinerary; it's shown as the cover image wherever travellers browse the itinerary.</span>
+                    <span className="field-hint-tooltip" role="tooltip">Describe the schedule, local ambiance, and practical traveller tips for this day. Upload a photo representing this day&apos;s itinerary; it&apos;s shown as the cover image wherever travellers browse the itinerary.</span>
                   </span>
                 </div>
                 <button className="ai-button" disabled={isGeneratingStory} aria-label="Generate story with AI" onClick={() => { void generateContent(); }}><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m12 3 1.2 3.8L17 8l-3.8 1.2L12 13l-1.2-3.8L7 8l3.8-1.2zM18 14l.8 2.2L21 17l-2.2.8L18 20l-.8-2.2L15 17l2.2-.8z" /></svg> {isGeneratingStory ? "Generating story…" : "AI write for me"}</button>
