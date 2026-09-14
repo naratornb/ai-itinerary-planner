@@ -72,6 +72,9 @@ export type CreatorPackageDetail = {
   duration_days: number;
   destination_city?: string | null;
   destination_country?: string | null;
+  // Already returned by GET /packages/{id} (TravelPackageDetail in
+  // apps/api/app/packages/schemas.py) — just missing from this type before.
+  description?: string | null;
   flights: CreatorFlightDetail[];
   hotels: CreatorHotelDetail[];
   activities: CreatorActivityDetail[];
@@ -281,6 +284,9 @@ export type CreatePackageInput = {
 
 export type UpdatePackageInput = {
   title?: string;
+  // Already accepted by PUT /packages/{id} (TravelPackageUpdate in
+  // apps/api/app/packages/schemas.py) — just unused by any caller before.
+  description?: string;
   base_price_aud?: number;
   days?: PackageDayInput[];
 };
@@ -380,10 +386,15 @@ export async function uploadPackageMedia(
   accessToken: string,
   packageId: string,
   file: File,
+  isCover = false,
 ) {
   const body = new FormData();
   body.append("package_id", packageId);
   body.append("file", file);
+  // Omitted when false: POST /media/upload already defaults is_cover to
+  // false (apps/api/app/media/router.py), so this only changes behavior
+  // for a caller that explicitly opts in.
+  if (isCover) body.append("is_cover", "true");
   // No Content-Type header: the browser has to set the multipart boundary.
   const response = await fetcher(`${apiUrl.replace(/\/$/, "")}/media/upload`, {
     method: "POST",
@@ -393,6 +404,55 @@ export async function uploadPackageMedia(
   if (response.status === 401) throw new Error("Your session expired. Please sign in again.");
   if (!response.ok) throw new Error("Unable to upload this photo. Please try again.");
   return response.json() as Promise<PackageMedia>;
+}
+
+export type SubmitPackageResponse = {
+  package_id: string;
+  status: string;
+};
+
+export class SubmitPackageError extends Error {
+  status: number;
+  code?: string;
+
+  constructor(message: string, status: number, code?: string) {
+    super(message);
+    this.name = "SubmitPackageError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
+// Mirrors POST /packages/{package_id}/submit in the Sept 2026 save/submit
+// handover — not deployed at time of writing, so this will genuinely fail
+// (404/other) until the backend ships it.
+export async function submitPackage(
+  fetcher: typeof fetch,
+  apiUrl: string,
+  accessToken: string,
+  packageId: string,
+  submissionNote?: string,
+) {
+  const response = await fetcher(
+    `${apiUrl.replace(/\/$/, "")}/packages/${encodeURIComponent(packageId)}/submit`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify(submissionNote ? { submission_note: submissionNote } : {}),
+    },
+  );
+  if (response.status === 401) throw new SubmitPackageError("Your session expired. Please sign in again.", 401);
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    const message = body?.message
+      || (response.status === 404 ? "Submission isn't available yet. Please try again later." : null)
+      || "Something went wrong. Please try again later.";
+    throw new SubmitPackageError(message, response.status, body?.error_code);
+  }
+  return response.json() as Promise<SubmitPackageResponse>;
 }
 
 export async function deletePackageMedia(
