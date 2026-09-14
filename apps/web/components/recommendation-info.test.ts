@@ -97,3 +97,36 @@ test("manual and AI destination steps use the same recommended and searched opti
   assert.deepEqual(optionsForSearch!(destinations, recommended, ""), recommended);
   assert.deepEqual(optionsForSearch!(destinations, recommended, "gree"), [destinations[0]]);
 });
+
+test("manual package steps unlock only when their required fields are complete", () => {
+  type Draft = {
+    title: string;
+    description: string;
+    destination_country: string;
+    destination_city: string;
+    duration_days: string;
+    base_price_aud: string;
+    max_group_size: string;
+  };
+  const isStepValid = (screens as unknown as {
+    isManualPackageStepValid?: (draft: Draft, step: number) => boolean;
+  }).isManualPackageStepValid;
+  const draft: Draft = {
+    title: "Kyoto Autumn Cultural Tour",
+    description: "A guided cultural itinerary.",
+    destination_country: "Japan",
+    destination_city: "Kyoto",
+    duration_days: "4",
+    base_price_aud: "2200",
+    max_group_size: "",
+  };
+
+  assert.equal(typeof isStepValid, "function");
+  assert.equal(isStepValid!(draft, 0), true);
+  assert.equal(isStepValid!({ ...draft, title: "" }, 0), false);
+  assert.equal(isStepValid!(draft, 1), true);
+  assert.equal(isStepValid!({ ...draft, destination_city: "" }, 1), false);
+  assert.equal(isStepValid!(draft, 2), true);
+  assert.equal(isStepValid!({ ...draft, base_price_aud: "" }, 2), false);
+  assert.equal(isStepValid!(draft, 3), true);
+});

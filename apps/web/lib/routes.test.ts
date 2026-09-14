@@ -9,6 +9,7 @@ test("every migrated screen has a stable absolute route", () => {
     marketplace: "/marketplace",
     dashboard: "/dashboard",
     builder: "/packages/new",
+    manualBuilder: "/packages/new/manual",
     wizard: "/packages/new/ai",
   });
   assert.equal(routeFor("login"), APP_ROUTES.login);

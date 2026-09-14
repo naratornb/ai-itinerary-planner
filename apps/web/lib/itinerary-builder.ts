@@ -8,7 +8,10 @@ export type IconName =
   | "clock"
   | "chevron"
   | "pin"
-  | "hourglass";
+  | "hourglass"
+  | "trash"
+  | "pencil"
+  | "refresh";
 
 export type TimelineItem = {
   id: number;

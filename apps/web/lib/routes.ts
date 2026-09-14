@@ -3,6 +3,7 @@ export const APP_ROUTES = {
   marketplace: "/marketplace",
   dashboard: "/dashboard",
   builder: "/packages/new",
+  manualBuilder: "/packages/new/manual",
   wizard: "/packages/new/ai",
 } as const;
 

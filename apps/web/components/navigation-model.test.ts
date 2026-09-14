@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { creatorNavigationItems } from "./navigation-model";
+import { creatorDashboardBackLink } from "./navigation-model";
 
-test("creator navigation uses route-based package links", () => {
-  assert.equal(creatorNavigationItems[0]?.href, "/dashboard");
-  assert.equal(creatorNavigationItems[1]?.href, "/packages/new");
+test("package creation links back to the creator dashboard", () => {
+  assert.deepEqual(creatorDashboardBackLink, {
+    label: "Back to dashboard",
+    href: "/dashboard",
+  });
 });
 
 test("dashboard action heading and buttons share the same centered alignment", async () => {

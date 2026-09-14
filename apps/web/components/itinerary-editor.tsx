@@ -11,7 +11,6 @@ import {
   buildDaysFromPackage,
   computePackagePrice,
   copilotSuggestionToTimelineItem,
-  daySubtitle,
   extractClockTimeInZone,
   getEndTime,
   insertItemInDay,
@@ -74,14 +73,17 @@ function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
   const paths: Record<IconName, React.ReactNode> = {
     plane: <><path d="M21 16v-2l-8-5V3.5a1.5 1.5 0 0 0-3 0V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5z" /></>,
     star: <path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z" />,
-    hotel: <><path d="M3 20V7m18 13V11a2 2 0 0 0-2-2h-7v11M3 14h18M7 10h2" /><path d="M3 20h18" /></>,
+    hotel: <><path d="M2 4v16" /><path d="M2 8h18a2 2 0 0 1 2 2v10" /><path d="M2 17h20" /><path d="M6 8v9" /></>,
     plus: <><path d="M12 5v14M5 12h14" /></>,
-    alert: <><path d="M12 3 2.8 20h18.4z" /><path d="M12 9v4m0 3h.01" /></>,
+    alert: <path d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />,
     check: <><circle cx="12" cy="12" r="9" /><path d="m8 12 2.5 2.5L16 9" /></>,
     clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
     chevron: <path d="m9 5 7 7-7 7" />,
     pin: <><path d="M12 21s7-6.1 7-11.5A7 7 0 0 0 5 9.5C5 14.9 12 21 12 21Z" /><circle cx="12" cy="9.5" r="2.3" /></>,
     hourglass: <><path d="M5 22h14" /><path d="M5 2h14" /><path d="M17 22v-4.17a2 2 0 0 0-.59-1.42L12 12l-4.41 4.41A2 2 0 0 0 7 17.83V22" /><path d="M7 2v4.17a2 2 0 0 0 .59 1.42L12 12l4.41-4.41A2 2 0 0 0 17 6.17V2" /></>,
+    trash: <><path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><path d="M19 6l-.867 12.142A2 2 0 0 1 16.138 20H7.862a2 2 0 0 1-1.995-1.858L5 6" /><path d="M10 11v6M14 11v6" /></>,
+    pencil: <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />,
+    refresh: <><path d="M3 12a9 9 0 0 1 15.3-6.4L21 8" /><path d="M21 3v5h-5" /><path d="M21 12a9 9 0 0 1-15.3 6.4L3 16" /><path d="M3 21v-5h5" /></>,
   };
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
 }
@@ -93,6 +95,9 @@ const LONG_ACTIVITY_MIN = 240;   // minutes — 4 hours
 const ACTIVITY_CATEGORIES = ["Activity", "Restaurant", "Shopping", "Attraction", "Other"];
 const DURATION_OPTIONS = ["30", "60", "90", "120", "180"];
 const MAX_ITEM_PHOTOS = 6;
+// The detail page only renders one hero image per day (assignDayImages maps
+// one media item per day slot) — a second upload here would never be shown.
+const MAX_DAY_PHOTOS = 1;
 
 const NEW_DAY_OPTION_ID = "__new-day__";
 
@@ -117,6 +122,35 @@ const REFERENCE_FLIGHT_GUIDANCE = "Travellers will see similar flights for their
 function sentenceCase(value: string) {
   const normalized = value.replace(/[_-]+/g, " ").trim().toLowerCase();
   return normalized ? normalized[0].toUpperCase() + normalized.slice(1) : "";
+}
+
+// Item-type breakdown for a day's tab badge row — same 4 icons as the
+// "Select item type" add-stop screen (flight, hotel, activity, creator pick).
+function dayItemTypeCounts(day: BuilderDay) {
+  const counts = { FLIGHT: 0, HOTEL: 0, ACTIVITY: 0, "CREATOR PICK": 0 };
+  for (const item of day.items) {
+    if (item.type in counts) counts[item.type as keyof typeof counts] += 1;
+  }
+  return [
+    { key: "flight", icon: "plane" as const, count: counts.FLIGHT, label: "Reference flights" },
+    { key: "hotel", icon: "hotel" as const, count: counts.HOTEL, label: "Hotels" },
+    { key: "activity", icon: "star" as const, count: counts.ACTIVITY, label: "Activities" },
+    { key: "creator", icon: "check" as const, count: counts["CREATOR PICK"], label: "Creator picks" },
+  ].filter((entry) => entry.count > 0);
+}
+
+function formatRelativeTime(fromMs: number, nowMs: number = Date.now()) {
+  const minutes = Math.floor((nowMs - fromMs) / 60_000);
+  if (minutes < 1) return "Just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ago`;
+}
+
+// Rule engine prefixes issue `field` with "Day N" (e.g. "Day 3 – Morning") — see lib/feasibility.ts.
+function parseIssueDay(field?: string): number | null {
+  const match = field?.match(/^Day (\d+)/);
+  return match ? Number(match[1]) : null;
 }
 
 export function referenceFlightPresentation(item: TimelineItem) {
@@ -339,12 +373,8 @@ function annotateItems(raw: TimelineItem[]): TimelineItem[] {
   });
 }
 
-function Panel({ title, children, className = "" }: { title: string; children: React.ReactNode; className?: string }) {
-  return <section className={`editor-panel ${className}`}><h2>{title}</h2>{children}</section>;
-}
-
-function StatusToggle({ tone, count, label, expanded, onClick }: { tone: "critical" | "warning" | "pass"; count?: number; label: string; expanded: boolean; onClick: () => void }) {
-  return <button className="status-toggle" aria-expanded={expanded} onClick={onClick}><span className={`${tone}-icon`}><Icon name={tone === "pass" ? "check" : "alert"} size={16} /></span>{count !== undefined && <strong>{count}</strong>}<span>{label}</span><span className="status-chevron"><Icon name="chevron" size={17} /></span></button>;
+function Panel({ title, icon, badge, children, className = "" }: { title: string; icon?: React.ReactNode; badge?: React.ReactNode; children: React.ReactNode; className?: string }) {
+  return <section className={`editor-panel ${className}`}><div className="editor-panel-header"><h2>{icon}{title}</h2>{badge}</div>{children}</section>;
 }
 
 // Hover (desktop) or tab-focus (keyboard/touch) reveals rating and
@@ -385,6 +415,12 @@ type AddStopFlowProps = {
   createHotel: () => void;
   creatorDraft: CreatorDraft;
   setCreatorDraft: Dispatch<SetStateAction<CreatorDraft>>;
+  creatorPhotos: DayPhoto[];
+  setCreatorPhotos: Dispatch<SetStateAction<DayPhoto[]>>;
+  addCreatorPhotos: (files: File[]) => Promise<void>;
+  removeCreatorPhoto: (photo: DayPhoto) => void;
+  trackUpload: <T,>(operation: Promise<T>) => Promise<T>;
+  toSafeImageSrc: (value: string) => string;
   createCreatorPick: () => void;
   activitySearch: string;
   setActivitySearch: Dispatch<SetStateAction<string>>;
@@ -497,6 +533,19 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
                       <label><span>Price</span><div className="price-input"><b>$</b><input inputMode="decimal" value={p.creatorDraft.price} onChange={(event) => p.setCreatorDraft({ ...p.creatorDraft, price: event.target.value.replace(/[^0-9.]/g, "") })} /></div></label>
                       <label className="full"><span>Why you recommend it</span><textarea value={p.creatorDraft.reason} onChange={(event) => p.setCreatorDraft({ ...p.creatorDraft, reason: event.target.value })} placeholder="Share the detail travellers should know" /></label>
                     </div>
+                    <div className="edit-photo">
+                      <div className="edit-photo-head"><span>Photos</span><small>Optional &middot; {p.creatorPhotos.length} / {MAX_ITEM_PHOTOS}</small></div>
+                      <div>
+                        {p.creatorPhotos.map((photo, index) => <figure key={photo.src}>
+                          <img src={p.toSafeImageSrc(photo.src)} alt={photo.alt || (index === 0 ? "Creator pick cover" : "Creator pick photo")} />
+                          {index === 0
+                            ? <b><Icon name="star" size={10} />Cover</b>
+                            : <button type="button" className="set-cover-btn" onClick={() => p.setCreatorPhotos([photo, ...p.creatorPhotos.filter((_, i) => i !== index)])}>Set as cover</button>}
+                          <button type="button" className="remove-photo-btn" aria-label="Remove photo" onClick={() => p.removeCreatorPhoto(photo)}><Icon name="plus" size={10} /></button>
+                        </figure>)}
+                        {p.creatorPhotos.length < MAX_ITEM_PHOTOS && <label><input type="file" accept="image/png,image/jpeg" multiple onChange={(event) => { const files = Array.from(event.target.files ?? []).slice(0, MAX_ITEM_PHOTOS - p.creatorPhotos.length); event.target.value = ""; if (files.length) void p.trackUpload(p.addCreatorPhotos(files)); }} /><Icon name="plus" size={18} />Add photo</label>}
+                      </div>
+                    </div>
                     <div className="activity-form-actions"><button className="publish-button" disabled={!p.creatorDraft.title.trim()} onClick={p.createCreatorPick}>Add creator pick</button></div>
                   </>}
 
@@ -569,11 +618,14 @@ export default function ItineraryEditor({
   const [editingTitle, setEditingTitle] = useState(false);
   const [feasResult, setFeasResult] = useState<FeasibilityResult | null>(null);
   const [feasLoading, setFeasLoading] = useState(false);
+  const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(null);
+  const [resultStale, setResultStale] = useState(false);
   const [activeDay, setActiveDay] = useState(0);
   const [days, setDays] = useState(() => buildDaysFromPackage(pkg));
   const dayTabsRef = useRef<HTMLDivElement>(null);
   const [dayScroll, setDayScroll] = useState({ canLeft: false, canRight: false });
   const [savedSnapshot, setSavedSnapshot] = useState<{ days: BuilderDay[]; title: string } | null>(null);
+  const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [packageStatus, setPackageStatus] = useState(pkg.status ?? "draft");
   const [submitting, setSubmitting] = useState(false);
@@ -615,11 +667,20 @@ export default function ItineraryEditor({
   const [hotelNotes, setHotelNotes] = useState("");
   const [hotelCheckInDayId, setHotelCheckInDayId] = useState<string | null>(null);
   const [hotelCheckOutDayId, setHotelCheckOutDayId] = useState<string | null>(null);
+  const [editingStayGroupId, setEditingStayGroupId] = useState<string | null>(null);
+  const [editStayCheckInDayId, setEditStayCheckInDayId] = useState<string | null>(null);
+  const [editStayCheckOutDayId, setEditStayCheckOutDayId] = useState<string | null>(null);
   const [creatorDraft, setCreatorDraft] = useState({ title: "", category: "Activity", address: "", time: "12:00", duration: "60", price: "", reason: "" });
-  const [copilotOpen, setCopilotOpen] = useState(true);
+  const [creatorPhotos, setCreatorPhotos] = useState<DayPhoto[]>([]);
+  const [copilotOpen, setCopilotOpen] = useState(false);
   // "Saved" only holds while nothing has changed since the last successful PUT.
   const saved = savedSnapshot?.days === days && savedSnapshot?.title === packageTitle;
   const activeDayData = days[activeDay] ?? days[0];
+  const goToIssueDay = (field?: string) => {
+    const dayNumber = parseIssueDay(field);
+    const index = dayNumber !== null ? days.findIndex((d) => d.day === dayNumber) : -1;
+    if (index !== -1) setActiveDay(index);
+  };
   // Feasibility annotation is a pure function of the day's items, so it's
   // derived here once instead of being re-applied inside every handler.
   const items = useMemo(() => annotateItems(activeDayData?.items ?? []), [activeDayData]);
@@ -726,8 +787,9 @@ export default function ItineraryEditor({
   }
 
   const runFeasibilityCheck = async () => {
+    // Keep showing the last result (and let creators keep working from it)
+    // while a re-check is in flight — only replace it once fresh data lands.
     setFeasLoading(true);
-    setFeasResult(null);
     try {
       const res = await fetch("/api/ai/validate", {
         method: "POST",
@@ -738,6 +800,8 @@ export default function ItineraryEditor({
         const data = await res.json();
         console.log("=== [AI VALIDATE CLIENT RESPONSE] ===", data);
         setFeasResult(data);
+        setLastCheckedAt(Date.now());
+        setResultStale(false);
       }
     } catch (err) {
       console.error("Failed to run feasibility check:", err);
@@ -746,20 +810,20 @@ export default function ItineraryEditor({
     }
   };
 
-  // Invalidate the check result whenever itinerary content changes after a check has been run.
-  // This forces creators to re-check before they can submit edited content.
+  // Mark the check result stale whenever itinerary content changes after a
+  // check has been run — this blocks submission (see isReadyToSubmit) but
+  // deliberately keeps the last result on screen instead of clearing it, so
+  // creators can keep working from the issue list while they fix things.
   const isFirstMount = useRef(true);
   useEffect(() => {
     if (isFirstMount.current) {
       isFirstMount.current = false;
       return;
     }
-    if (!feasLoading) {
-      setFeasResult(null);
-    }
+    if (feasResult) setResultStale(true);
     // All itinerary content (items, story, photos) lives inside `days`; the
     // derived `items` is deliberately excluded so switching day tabs doesn't
-    // clear an unchanged result.
+    // mark an unchanged result stale.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [days, packageTitle]);
 
@@ -895,6 +959,7 @@ export default function ItineraryEditor({
     setTitleDraft(persisted.title);
     setPackageStatus(persisted.status ?? packageStatus);
     setSavedSnapshot({ days: persistedDays, title: persisted.title });
+    setLastSavedAt(Date.now());
     return persisted;
   };
 
@@ -1032,6 +1097,11 @@ export default function ItineraryEditor({
     showNotice("Photo removed");
   };
 
+  const changeDayPhoto = async (photo: DayPhoto, file: File) => {
+    await removeDayPhoto(photo);
+    await addDayPhoto(file);
+  };
+
   const addItemPhotos = async (files: File[]) => {
     const previews = files.map((file) => ({
       file,
@@ -1075,6 +1145,40 @@ export default function ItineraryEditor({
     setEditingItem((current) => current
       ? { ...current, photos: current.photos.filter((entry) => entry.src !== photo.src) }
       : current);
+  };
+
+  const addCreatorPhotos = async (files: File[]) => {
+    const previews = files.map((file) => ({
+      file,
+      photo: { src: URL.createObjectURL(file), alt: file.name } satisfies DayPhoto,
+    }));
+    setCreatorPhotos((current) => [...current, ...previews.map(({ photo }) => photo)]);
+    try {
+      const token = await accessToken();
+      if (!token) throw new Error("Your session expired. Please sign in again.");
+      const uploaded = await Promise.all(previews.map(async ({ file, photo }) => ({
+        preview: photo.src,
+        fileName: file.name,
+        media: await uploadPackageMedia(fetch, API_URL, token, pkg.package_id, file),
+      })));
+      setCreatorPhotos((current) => current.map((photo) => {
+        const match = uploaded.find(({ preview }) => preview === photo.src);
+        return match
+          ? { src: match.media.url, alt: match.fileName, media_id: match.media.media_id }
+          : photo;
+      }));
+      showNotice(`${files.length} photo${files.length === 1 ? "" : "s"} uploaded`);
+    } catch (error) {
+      const previewUrls = new Set(previews.map(({ photo }) => photo.src));
+      setCreatorPhotos((current) => current.filter((photo) => !previewUrls.has(photo.src)));
+      showNotice(error instanceof Error ? error.message : "Unable to upload these photos.");
+    } finally {
+      previews.forEach(({ photo }) => URL.revokeObjectURL(photo.src));
+    }
+  };
+
+  const removeCreatorPhoto = (photo: DayPhoto) => {
+    setCreatorPhotos((current) => current.filter((entry) => entry.src !== photo.src));
   };
 
   const startEditingItem = (item: TimelineItem) => {
@@ -1239,6 +1343,16 @@ export default function ItineraryEditor({
   const hotelCheckOutDayIndex = selectedHotelCheckOutDayOption.index;
   const hotelNightsCount = Math.max(1, hotelCheckOutDayIndex - hotelCheckInDayIndex);
 
+  const editStayCheckInIndex = editStayCheckInDayId === NEW_DAY_OPTION_ID
+    ? days.length
+    : Math.max(0, days.findIndex((day) => day.id === editStayCheckInDayId));
+  const editStayCheckOutDayOptions = [
+    ...days
+      .map((day, index) => ({ id: day.id, index, title: day.title }))
+      .filter((option) => option.index > editStayCheckInIndex),
+    { id: NEW_DAY_OPTION_ID, index: Math.max(days.length, editStayCheckInIndex + 1), title: "New day" },
+  ];
+
   const createHotel = () => {
     if (!selectedHotelOption) return;
     const hotelName = selectedHotelOption.hotel_name ?? "Hotel";
@@ -1292,6 +1406,47 @@ export default function ItineraryEditor({
     showNotice(nights > 1 ? `${hotelName} added across ${nights} nights` : `${hotelName} added`);
   };
 
+  // Moves an existing hotel stay to a different Day range: removes every item
+  // sharing stayGroupId, then re-spreads fresh check-in/overnight/check-out
+  // items across the new days (extending `days` if the new range runs past
+  // the end) — same shape as createHotel's spread, but for an edit in place.
+  const updateHotelStayDays = (stayGroupId: string, checkInDayId: string, checkOutDayId: string) => {
+    const checkInIndex = checkInDayId === NEW_DAY_OPTION_ID ? days.length : Math.max(0, days.findIndex((d) => d.id === checkInDayId));
+    const checkOutIndexRaw = checkOutDayId === NEW_DAY_OPTION_ID ? Math.max(days.length, checkInIndex + 1) : days.findIndex((d) => d.id === checkOutDayId);
+    const checkOutIndex = Math.max(checkInIndex + 1, checkOutIndexRaw);
+    const nights = checkOutIndex - checkInIndex;
+    const template = days.flatMap((day) => day.items).find((it) => it.stayGroupId === stayGroupId);
+    if (!template) return;
+    const hotelName = template.hotelName ?? "Hotel";
+    setDays((current) => {
+      let next = current.map((day) => ({ ...day, items: day.items.filter((it) => it.stayGroupId !== stayGroupId) }));
+      while (next.length <= checkOutIndex) {
+        const dayNumber = next.length + 1;
+        next.push({ id: `day-${Date.now()}-${dayNumber}`, day: dayNumber, title: "Untitled day", meta: "Add your first stop", items: [], story: "", photos: [], date: nextCalendarDate(next[next.length - 1]?.date) });
+      }
+      for (let offset = 0; offset <= nights; offset += 1) {
+        const isCheckOutDay = offset === nights;
+        nextItemId.current += 1;
+        const newItem: TimelineItem = {
+          ...template,
+          id: nextItemId.current,
+          time: offset === 0 ? "Check-in" : isCheckOutDay ? "Check-out" : "Overnight stay",
+          title: isCheckOutDay
+            ? `${hotelName} (Check-out)`
+            : nights > 1 ? `${hotelName} (Night ${offset + 1} of ${nights})` : hotelName,
+          stayMarker: offset === 0 ? "check-in" : isCheckOutDay ? "check-out" : undefined,
+        };
+        const dayIndex = checkInIndex + offset;
+        next[dayIndex] = { ...next[dayIndex], items: [...next[dayIndex].items, newItem] };
+      }
+      return next;
+    });
+    setEditingStayGroupId(null);
+    setExpandedHotelId(null);
+    setActiveDay(checkInIndex);
+    showNotice(`${hotelName} moved to ${nights > 1 ? `${nights} nights` : "1 night"} from Day ${checkInIndex + 1}`);
+  };
+
   const createCreatorPick = () => {
     if (addingAfter === null || !creatorDraft.title.trim()) return;
     insertItem(addingAfter, {
@@ -1305,8 +1460,10 @@ export default function ItineraryEditor({
       address: creatorDraft.address.trim() || undefined,
       duration: creatorDraft.duration,
       notes: creatorDraft.reason.trim() || undefined,
+      photos: creatorPhotos,
     });
     setCreatorDraft({ title: "", category: "Activity", address: "", time: "12:00", duration: "60", price: "", reason: "" });
+    setCreatorPhotos([]);
   };
 
   const addCopilotSuggestion = (suggestion: CopilotSuggestionV1) => {
@@ -1336,10 +1493,18 @@ export default function ItineraryEditor({
 
   const isReadyToSubmit = Boolean(
     feasResult &&
+    !resultStale &&
     (displayScore ?? 0) >= 70 &&
     hardErrors.length === 0 &&
     feasResult.is_feasible
   );
+
+  const scorePassing = Boolean(feasResult) && !resultStale && (displayScore ?? 0) >= 70;
+
+  // The static checklist below always lists 4 criteria; they're treated as
+  // satisfied whenever there are no critical issues, mirroring the pass/fail
+  // logic the submit button itself relies on (isReadyToSubmit's hardErrors check).
+  const passedCount = feasResult ? (hardErrors.length === 0 ? 4 : 0) : undefined;
 
   const submissionButtonLabel = isLocked
     ? STATUS_LABELS[packageStatus] ?? packageStatus
@@ -1348,7 +1513,9 @@ export default function ItineraryEditor({
     : submitting
       ? "Submitting…"
       : !isReadyToSubmit
-        ? (feasResult && !feasResult.is_feasible ? "Fix issues to submit" : "Check content to submit")
+        // A stale result can't be trusted to say whether issues remain, so
+        // it falls back to "Check content to submit" like the unchecked case.
+        ? (feasResult && !resultStale && !feasResult.is_feasible ? "Fix issues to submit" : "Check content to submit")
         : "Submit for review";
 
   // Submitting sends the saved draft to an admin; it does not make the
@@ -1357,11 +1524,16 @@ export default function ItineraryEditor({
     if (feasLoading || saving || uploadingCount > 0 || submittingRef.current || isLocked) return;
     setPreviewOpen(false);
     if (!isReadyToSubmit) {
-      showNotice(!feasResult
-        ? "Please check content before submitting."
-        : (displayScore ?? 0) < 70
-          ? `Your trip score is ${displayScore ?? 0}/100. A minimum score of 70 is required to submit. Improve your itinerary and check content again.`
-          : "Fix critical feasibility issues and check content again before submitting.");
+      // Never checked, or checked against content that's since changed:
+      // run the check itself instead of just telling the creator to go
+      // click "Check content" — one less step for the common case.
+      if (!feasResult || resultStale) {
+        void runFeasibilityCheck();
+        return;
+      }
+      showNotice((displayScore ?? 0) < 70
+        ? `Your trip score is ${displayScore ?? 0}/100. A minimum score of 70 is required to submit. Improve your itinerary and check content again.`
+        : "Fix critical feasibility issues and check content again before submitting.");
       return;
     }
     submittingRef.current = true;
@@ -1441,6 +1613,11 @@ export default function ItineraryEditor({
     hotelNotes, setHotelNotes,
     createHotel,
     creatorDraft, setCreatorDraft,
+    creatorPhotos, setCreatorPhotos,
+    addCreatorPhotos,
+    removeCreatorPhoto,
+    trackUpload,
+    toSafeImageSrc,
     createCreatorPick,
     activitySearch, setActivitySearch,
     recommendedActivities,
@@ -1476,7 +1653,7 @@ export default function ItineraryEditor({
         <button type="button" className="day-scroll-btn" disabled={!dayScroll.canLeft} onClick={() => scrollDayTabs(-1)} aria-label="Scroll days left"><Icon name="chevron" size={18} /></button>
         <div className="day-tabs" ref={dayTabsRef}>
           {days.map((day, index) => <div key={day.day} className={`day-tab-wrap ${activeDay === index ? "active" : ""}`}>
-            <button aria-current={activeDay === index ? "page" : undefined} className={`day-tab ${activeDay === index ? "active" : ""}`} onClick={() => setActiveDay(index)}><span>DAY {day.day} <b>{day.items.length}</b></span><strong>{day.title}</strong><small>{daySubtitle(day)}</small></button>
+            <button aria-current={activeDay === index ? "page" : undefined} className={`day-tab ${activeDay === index ? "active" : ""}`} onClick={() => setActiveDay(index)}><span>DAY {day.day} <b>{day.items.length}</b></span><strong>{day.title}</strong><span className="day-tab-types">{dayItemTypeCounts(day).map((entry) => <span key={entry.key} className="day-tab-type-badge" aria-label={`${entry.count} ${entry.label}`}><Icon name={entry.icon} size={13} />{entry.count}</span>)}</span></button>
             <button className="delete-day-tab" disabled={days.length === 1 || isLocked} onClick={() => setPendingDeleteDay(index)} aria-label={`Delete Day ${day.day}`}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M6 6l12 12M18 6 6 18" /></svg></button>
           </div>)}
           <button className="add-day" disabled={isLocked} onClick={() => { const nextDay = days.length + 1; setDays([...days, { id: `day-${Date.now()}`, day: nextDay, title: "Untitled day", meta: "Add your first stop", items: [], story: "", photos: [], date: nextCalendarDate(days[days.length - 1]?.date) }]); setActiveDay(days.length); showNotice("A new day was added"); }}><Icon name="plus" size={24} /><span>Add Day</span></button>
@@ -1494,21 +1671,40 @@ export default function ItineraryEditor({
               : <button className="package-title-button" onClick={() => startEditingDayField("title")} aria-label={`Edit day title, currently ${activeDayData?.title ?? "Untitled day"}`} title="Edit day title"><h2>{activeDayData?.title || "Untitled day"}</h2></button>}
           </div></div>
 
-          <section className="story-section">
-            <div className="section-label"><h3>Day photos</h3><span>{photos.length} uploaded</span></div>
-            <div className="photo-grid">
-              {photos.map((photo) => <figure key={photo.src}>
-                <img src={toSafeImageSrc(photo.src)} alt={photo.alt} />
-                <button type="button" className="remove-photo-btn" aria-label={`Remove ${photo.alt}`} onClick={() => { void removeDayPhoto(photo); }}><Icon name="plus" size={10} /></button>
-              </figure>)}
-              <label className="photo-add"><input type="file" accept="image/png,image/jpeg" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (!file) return; void trackUpload(addDayPhoto(file)); }} /><Icon name="plus" size={30} /><span>Add photo</span><small>JPG or PNG</small></label>
-            </div>
-          </section>
+          <div className="day-panel-row day-panel">
+            <section className="story-section day-panel-col">
+              <div className="day-photo-single">
+                {photos.map((photo) => <figure key={photo.src}>
+                  <img src={toSafeImageSrc(photo.src)} alt={photo.alt} />
+                  <label className="change-photo-btn" aria-label={`Change ${photo.alt}`}>
+                    <input type="file" accept="image/png,image/jpeg" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (!file) return; void trackUpload(changeDayPhoto(photo, file)); }} />
+                    Change photo
+                  </label>
+                </figure>)}
+                {photos.length < MAX_DAY_PHOTOS && <label className="photo-add"><input type="file" accept="image/png,image/jpeg" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (!file) return; void trackUpload(addDayPhoto(file)); }} /><span className="photo-add-icon"><Icon name="plus" size={18} /></span><span className="photo-add-label">Add photo</span><small>JPG or PNG</small></label>}
+              </div>
+            </section>
 
-          <section className="story-copy">
-            <div className="section-label"><h3>Your story</h3><button className="ai-button" disabled={isGeneratingStory} aria-label="Generate story with AI" onClick={() => { void generateContent(); }}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m12 3 1.2 3.8L17 8l-3.8 1.2L12 13l-1.2-3.8L7 8l3.8-1.2zM18 14l.8 2.2L21 17l-2.2.8L18 20l-.8-2.2L15 17l2.2-.8z" /></svg> {isGeneratingStory ? "Generating story…" : "AI write for me"}</button></div>
-            <textarea value={story} onChange={(event) => setStory(event.target.value)} placeholder="Share your insider tips and personal recommendations…" aria-label="Your story" />
-          </section>
+            <section className="story-copy day-panel-col">
+              <div className="day-panel-header">
+                <div className="day-panel-heading">
+                  <h3>Day summary</h3>
+                  <span className="field-hint">
+                    <button type="button" className="field-hint-trigger" aria-label="What to write in the day summary">?</button>
+                    <span className="field-hint-tooltip" role="tooltip">Describe the schedule, local ambiance, and practical traveller tips for this day. Upload a photo representing this day's itinerary; it's shown as the cover image wherever travellers browse the itinerary.</span>
+                  </span>
+                </div>
+                <button className="ai-button" disabled={isGeneratingStory} aria-label="Generate story with AI" onClick={() => { void generateContent(); }}><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m12 3 1.2 3.8L17 8l-3.8 1.2L12 13l-1.2-3.8L7 8l3.8-1.2zM18 14l.8 2.2L21 17l-2.2.8L18 20l-.8-2.2L15 17l2.2-.8z" /></svg> {isGeneratingStory ? "Generating story…" : "AI write for me"}</button>
+              </div>
+              <textarea value={story} onChange={(event) => setStory(event.target.value)} placeholder="Share your insider tips and personal recommendations…" aria-label="Your story" />
+              <div className="story-copy-footer">
+                <span className="story-copy-stats">
+                  {story.length} characters · {story.trim() ? story.trim().split(/\s+/).length : 0} words
+                  {saved && lastSavedAt && <span className="story-copy-saved">Draft saved {formatRelativeTime(lastSavedAt)}</span>}
+                </span>
+              </div>
+            </section>
+          </div>
 
           <section className="timeline-section">
             <h3>Timeline</h3>
@@ -1527,6 +1723,48 @@ export default function ItineraryEditor({
                 // Only the check-in row speaks for the whole stay; the night
                 // and check-out rows keep their own per-night wording/price.
                 const isStayHead = item.stayMarker === "check-in";
+                const stayDays = item.stayGroupId
+                  ? days.map((d, i) => ({ id: d.id, index: i, title: d.title })).filter((d) => days[d.index].items.some((it) => it.stayGroupId === item.stayGroupId))
+                  : [];
+                const stayCheckInDayId = stayDays[0]?.id ?? null;
+                const stayCheckOutDayId = stayDays[stayDays.length - 1]?.id ?? null;
+                const stayNightsFromDays = stayDays.length > 0 ? stayDays.length - 1 : null;
+                const stayRangeLabel = stayDays.length > 0
+                  ? `${stayNightsFromDays} night${stayNightsFromDays === 1 ? "" : "s"} · Day ${stayDays[0].index + 1} – Day ${stayDays[stayDays.length - 1].index + 1}`
+                  : nights ? `${nights} night${nights === 1 ? "" : "s"}` : "Not provided";
+                const isEditingStay = Boolean(item.stayGroupId) && editingStayGroupId === item.stayGroupId;
+                const startEditingStay = () => {
+                  setEditingStayGroupId(item.stayGroupId!);
+                  setEditStayCheckInDayId(stayCheckInDayId);
+                  setEditStayCheckOutDayId(stayCheckOutDayId);
+                };
+                const stayRow = <div className={isEditingStay ? "full" : undefined}>
+                  <dt>Stay</dt>
+                  {isEditingStay ? <dd>
+                    <div className="stay-edit-form">
+                      <div className="stay-edit-fields">
+                        <label><span>Check-in day</span>
+                          <select value={editStayCheckInDayId ?? ""} onChange={(event) => setEditStayCheckInDayId(event.target.value)}>
+                            {days.map((day, i) => <option key={day.id} value={day.id}>{`Day ${i + 1}: ${day.title}`}</option>)}
+                            <option value={NEW_DAY_OPTION_ID}>{`Day ${days.length + 1} (new day)`}</option>
+                          </select>
+                        </label>
+                        <label><span>Checkout day</span>
+                          <select value={editStayCheckOutDayId ?? ""} onChange={(event) => setEditStayCheckOutDayId(event.target.value)}>
+                            {editStayCheckOutDayOptions.map((option) => <option key={option.id} value={option.id}>{option.id === NEW_DAY_OPTION_ID ? `Day ${option.index + 1} (new day)` : `Day ${option.index + 1}: ${option.title}`}</option>)}
+                          </select>
+                        </label>
+                      </div>
+                      <div className="stay-edit-actions">
+                        <button type="button" className="stay-edit-cancel" onClick={() => setEditingStayGroupId(null)}>Cancel</button>
+                        <button type="button" className="stay-edit-save" disabled={!editStayCheckInDayId || !editStayCheckOutDayId} onClick={() => updateHotelStayDays(item.stayGroupId!, editStayCheckInDayId!, editStayCheckOutDayId!)}>Save</button>
+                      </div>
+                    </div>
+                  </dd> : <dd className="stat-with-action">
+                    <span>{stayRangeLabel}</span>
+                    {isStayHead && item.stayGroupId && <button type="button" className="stat-edit-btn" aria-label="Edit stay dates" onClick={startEditingStay}><Icon name="pencil" size={13} /></button>}
+                  </dd>}
+                </div>;
                 const hotelTitle = hotel?.hotel_name && isStayHead
                   ? `${hotel.hotel_name}${nights ? ` (${nights} night${nights === 1 ? "" : "s"})` : ""}`
                   : item.title;
@@ -1554,15 +1792,27 @@ export default function ItineraryEditor({
                 return <div key={item.id} className={`timeline-group ${addingAfter === index ? "adding" : ""} ${dropTarget?.index === index ? `drop-${dropTarget.position}` : ""}`} onDragOver={(event) => { event.preventDefault(); if (draggedItemId === item.id) return; const rect = event.currentTarget.getBoundingClientRect(); setDropTarget({ index, position: event.clientY < rect.top + rect.height / 2 ? "before" : "after" }); }} onDrop={(event) => { event.preventDefault(); dropItem(); endDrag(); }}>
                 <article className={`timeline-item ${scheduleConflict ? "critical" : item.status} ${draggedItemId === item.id ? "dragging" : ""} ${canExpand ? "editable" : ""} ${isExpanded ? "expanded" : ""}`} onClick={(event) => { if (!canExpand || (event.target as HTMLElement).closest("button")) return; toggleExpand(); }} onKeyDown={(event) => { if (!canExpand || (event.target as HTMLElement).closest("button")) return; if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggleExpand(); } }} tabIndex={canExpand ? 0 : undefined} role={canExpand ? "button" : undefined} aria-expanded={canExpand ? isExpanded : undefined}>
                   <button className="drag-handle" draggable aria-label={`Move ${hotelTitle}. Use drag and drop, or the up and down arrow keys.`} onDragStart={(event) => { setEditingItem(null); setDraggedItemId(item.id); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", String(item.id)); }} onDragEnd={endDrag} onKeyDown={(event) => { if (event.key === "ArrowUp") { event.preventDefault(); moveItem(index, index - 1); } if (event.key === "ArrowDown") { event.preventDefault(); moveItem(index, index + 1); } }}><span /><span /><span /><span /><span /><span /></button>
-                  <div className="item-time"><Icon name={item.icon} /><strong className={isTimeValue ? undefined : "item-time-word"}>{item.time}</strong></div>
+                  <div className="item-time">
+                    <div className="item-time-row"><Icon name={item.icon} /><strong className={isTimeValue ? undefined : "item-time-word"}>{item.time}</strong></div>
+                    {isTimeValue && item.type === "FLIGHT" && item.arrivalTime && <span className="item-time-end">to {item.arrivalTime}</span>}
+                    {isTimeValue && item.type !== "FLIGHT" && item.duration && <span className="item-time-end">to {getEndTime(item.time, item.duration)}</span>}
+                  </div>
                   <div className="item-copy">
-                    <div className="item-copy-head"><span>{referenceFlight?.label ?? item.type}</span>{stayMarkerLabel && <span className="stay-marker">{stayMarkerLabel}</span>}</div>
-                    {referenceFlight && <p className="reference-flight-subtitle">{referenceFlight.subtitle}</p>}
+                    <div className="item-copy-head">
+                      <span className={`item-type-pill${item.type === "FLIGHT" ? " item-type-pill-flight" : item.type === "HOTEL" ? " item-type-pill-hotel" : ""}`}>{referenceFlight?.label ?? item.type}</span>
+                      {!referenceFlight && item.duration && <span className="item-copy-meta-item"><Icon name="clock" size={12} />{item.duration} min</span>}
+                      {!referenceFlight && item.address && <span className="item-copy-meta-item"><Icon name="pin" size={12} />{item.address}</span>}
+                      {stayMarkerLabel && <span className="stay-marker">{stayMarkerLabel}</span>}
+                    </div>
                     <h4>{referenceFlight?.title ?? hotelTitle}</h4>
                     {referenceFlight?.schedule && <p className="reference-flight-schedule">{referenceFlight.schedule}</p>}
                     {scheduleConflict ? <div className="item-alert"><Icon name="alert" size={15} /><div><strong>Scheduling conflict</strong><span>{scheduleConflict}</span></div></div> : item.problem && <div className="item-alert"><Icon name="alert" size={15} /><div><strong>{item.problem}</strong><span>{item.problemDetail}</span></div></div>}
                   </div>
-                  <div className="item-price"><span>{referenceFlight?.priceLabel ?? "Price"}</span><strong className={isPriceValue ? undefined : "item-price-word"}>{withWrapBeforeSlash(displayedPrice)}</strong></div>
+                  <div className="item-price"><span>{referenceFlight?.priceLabel ?? "Estimated"}</span><strong className={isPriceValue ? undefined : "item-price-word"}>{withWrapBeforeSlash(displayedPrice)}</strong></div>
+                  <div className="item-actions">
+                    {canExpand && <button type="button" className="item-action-icon" aria-label={`Edit ${hotelTitle}`} onClick={toggleExpand}><Icon name="pencil" size={15} /></button>}
+                    <button type="button" className="item-action-icon item-action-icon-delete" aria-label={`Delete ${hotelTitle}`} onClick={() => requestDeleteItem(item)}><Icon name="trash" size={15} /></button>
+                  </div>
                 </article>
                 {flight && expandedFlightId === item.id && <section id={`flight-details-${item.id}`} className="timeline-detail-panel" aria-label={`${flight.airline ?? "Flight"} reference flight details`}>
                   <div className="detail-card">
@@ -1588,7 +1838,6 @@ export default function ItineraryEditor({
                       <div><dt>Arrival</dt><dd>{extractClockTimeInZone(flight.arrival_datetime, timezoneForIata(flight.destination_iata)) ?? "Not provided"}</dd></div>
                     </dl>
                   </div>
-                  <button className="item-delete" onClick={() => requestDeleteItem(item)}>Delete</button>
                 </section>}
                 {hasHotelDetails && expandedHotelId === item.id && <section id={`hotel-details-${item.id}`} className="timeline-detail-panel" aria-label={`${hotel?.hotel_name ?? item.title ?? "Hotel"} details`}>
                   <div className="detail-card">
@@ -1608,30 +1857,30 @@ export default function ItineraryEditor({
                         <div><dt>Room type</dt><dd>{hotel.room_type || "Not provided"}</dd></div>
                         <div><dt>Check-in</dt><dd>{STANDARD_HOTEL_CHECKIN_TIME}</dd></div>
                         <div><dt>Check-out</dt><dd>{STANDARD_HOTEL_CHECKOUT_TIME}</dd></div>
-                        <div><dt>Stay</dt><dd>{nights ? `${nights} night${nights === 1 ? "" : "s"}` : "Not provided"}</dd></div>
+                        {stayRow}
                         <div><dt>Rating</dt><dd className="rating-value">{hotel.star_rating ? <><Icon name="star" size={14} />{hotel.star_rating} / 5</> : "Not provided"}</dd></div>
                         <div><dt>Per night</dt><dd>{hotel.price_per_night_aud === null ? "Not provided" : `$${hotel.price_per_night_aud.toLocaleString("en-AU")} AUD`}</dd></div>
-                        <div className="full"><dt>Address</dt><dd>{hotel.address || [hotel.city].filter(Boolean).join(", ") || "Not provided"}</dd></div>
                       </> : <>
                         <div><dt>Room type</dt><dd>{item.roomType || "Not provided"}</dd></div>
                         <div><dt>Check-in</dt><dd>{STANDARD_HOTEL_CHECKIN_TIME}</dd></div>
                         <div><dt>Check-out</dt><dd>{STANDARD_HOTEL_CHECKOUT_TIME}</dd></div>
+                        {stayRow}
                         <div><dt>Rating</dt><dd className="rating-value">{item.starRating ? <><Icon name="star" size={14} />{item.starRating} / 5</> : "Not provided"}</dd></div>
-                        <div className="full"><dt>Address</dt><dd>{item.address || "Not provided"}</dd></div>
                         {item.notes && <div className="full"><dt>Notes</dt><dd>{item.notes}</dd></div>}
                       </>}
                     </dl>
                   </div>
-                  <button className="item-delete" onClick={() => requestDeleteItem(item)}>Delete</button>
                 </section>}
                 {editingItem?.id === item.id && <section className={`inline-edit${isFixedActivity ? " inline-edit-compact" : ""}`} aria-label={`${isFixedActivity ? "View" : "Edit"} ${item.title}`}>
                   {isFixedActivity ? <>
                     <div className="detail-card">
                       <div className="detail-card-top">
                         <div className="detail-card-heading">
-                          <span className="detail-card-badge"><Icon name="star" size={14} />{editingItem.category}</span>
-                          <h3>{editingItem.title}</h3>
-                          <p className="detail-card-subtitle"><Icon name="pin" size={14} />{editingItem.address || "Address not provided"}</p>
+                          <div className="detail-card-title-row detail-card-title-row-inline">
+                            <span className="detail-card-badge"><Icon name="star" size={14} />{editingItem.category}</span>
+                            <h3>{editingItem.title}</h3>
+                            <p className="detail-card-subtitle"><Icon name="pin" size={14} />{editingItem.address || "Address not provided"}</p>
+                          </div>
                         </div>
                       </div>
                       <div className="activity-card-stats">
@@ -1675,7 +1924,7 @@ export default function ItineraryEditor({
                       {editingItem.photos.length < MAX_ITEM_PHOTOS && <label><input type="file" accept="image/png,image/jpeg" multiple onChange={(event) => { const files = Array.from(event.target.files ?? []).slice(0, MAX_ITEM_PHOTOS - editingItem.photos.length); event.target.value = ""; if (files.length) void trackUpload(addItemPhotos(files)); }} /><Icon name="plus" size={18} />Add photo</label>}
                     </div>
                   </div>
-                  <div className="inline-edit-actions"><button className="item-delete" onClick={() => requestDeleteItem(item)}>Delete</button><button className="quiet-button" onClick={() => setEditingItem(null)}>Cancel</button><button className="publish-button" disabled={!editingItem.title.trim()} onClick={saveEditedItem}>Save changes</button></div>
+                  <div className="inline-edit-actions"><button className="quiet-button" onClick={() => setEditingItem(null)}>Cancel</button><button className="publish-button" disabled={!editingItem.title.trim()} onClick={saveEditedItem}>Save changes</button></div>
                 </section>}
                 <AddStopFlow index={index} {...addFlowProps} />
               </div>})}
@@ -1692,68 +1941,86 @@ export default function ItineraryEditor({
         </div>
 
         <aside className="editor-sidebar">
-          <button className="copilot-mobile-trigger" type="button" onClick={() => setCopilotOpen(true)}>Open Itinerary Co-Pilot</button>
-          <Panel title="Package quality" className="quality-panel">
-            <div className="quality-score"><strong>{displayScore !== undefined ? displayScore : "(-)"}</strong><span>/100</span></div>
-            <div className="score-track" role="meter" aria-label={displayScore !== undefined ? `Package quality score, ${displayScore} out of 100. Minimum score to submit is 70.` : "Package quality score not yet checked. Minimum score to submit is 70."} aria-valuemin={0} aria-valuemax={100} aria-valuenow={displayScore ?? 0}>
-              <span className="score-fill" style={{ width: displayScore !== undefined ? `${Math.min(100, Math.max(0, displayScore))}%` : "0%" }} />
-              <i aria-hidden="true" />
-              <span className="score-threshold" aria-label="Minimum submission score is 70"><small>Minimum submission score:</small><strong>70</strong></span>
+          <button className="copilot-mobile-trigger" type="button" onClick={() => setCopilotOpen(true)} aria-label="Open Itinerary Co-Pilot">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="m12 3 1.2 3.8L17 8l-3.8 1.2L12 13l-1.2-3.8L7 8l3.8-1.2zM18 14l.8 2.2L21 17l-2.2.8L18 20l-.8-2.2L15 17l2.2-.8z" /></svg>
+            <span>Ask Co-Pilot</span>
+          </button>
+          <section className="editor-panel status-panel" aria-label="Feasibility check">
+            <div className="feas-head">
+              <div className="feas-head-top">
+                <div className="feas-head-title">
+                  <h2>Feasibility check</h2>
+                </div>
+                <button type="button" className="feas-recheck-button" onClick={runFeasibilityCheck} disabled={feasLoading}>
+                  {feasLoading ? <span className="button-spinner" aria-hidden="true" /> : <Icon name="refresh" size={12} />}
+                  {feasLoading ? "Checking…" : feasResult ? "Re-check" : "Check content"}
+                </button>
+              </div>
             </div>
-            <div className="quality-meta">
-              <button
-                className="quiet-button check-content-button"
-                onClick={runFeasibilityCheck}
-                disabled={feasLoading}
-              >
-                {feasLoading ? "Checking..." : "Check content"}
-              </button>
-              {isReadyToSubmit ? (
-                <strong><Icon name="check" size={14} />Ready to submit</strong>
-              ) : (
-                <strong className="warning">
-                  <Icon name="alert" size={14} />
-                  {!feasResult
-                    ? "Please check content"
-                    : hardErrors.length > 0
-                      ? "Fix critical issues"
-                      : "Score below 70"}
-                </strong>
-              )}
+            <div className="feas-body">
+              <div className="feas-score-section">
+                <div className="feas-score-topline">
+                  <span className="feas-score-caption-group">
+                    <span className="feas-score-caption">Score</span>
+                    <span className="field-hint">
+                      <button type="button" className="field-hint-trigger" aria-label="About the score">?</button>
+                      <span className="field-hint-tooltip" role="tooltip">This score shows how ready your package is to publish. It checks things like pricing, scheduling, and required details across the whole itinerary. You need at least 70 to submit.</span>
+                    </span>
+                  </span>
+                  <span className="feas-score-threshold-label">Minimum score: 70</span>
+                </div>
+                <div className={`feas-score-display${!feasResult || resultStale ? " feas-score-display-stale" : scorePassing ? " feas-score-display-pass" : ""}`}>
+                  <strong>{displayScore !== undefined ? displayScore : "—"}</strong><span>/100</span>
+                </div>
+                <div className={`score-track${resultStale ? " score-track-stale" : scorePassing ? " score-track-pass" : ""}`} role="meter" aria-label={displayScore !== undefined ? `Package quality score, ${displayScore} out of 100${resultStale ? " (stale — content changed since this was calculated)" : ""}. Minimum score to submit is 70.` : "Package quality score not yet checked. Minimum score to submit is 70."} aria-valuemin={0} aria-valuemax={100} aria-valuenow={displayScore ?? 0}>
+                  <span className="score-fill" style={{ width: displayScore !== undefined ? `${Math.min(100, Math.max(0, displayScore))}%` : "0%" }} />
+                  <i aria-hidden="true" />
+                </div>
+              </div>
+              <div className="feas-stat-row">
+                <button type="button" className={`feas-stat feas-stat-critical${expandedFeasibility === "critical" ? " expanded" : ""}`} disabled={!feasResult} aria-expanded={expandedFeasibility === "critical"} onClick={() => setExpandedFeasibility(expandedFeasibility === "critical" ? null : "critical")}>
+                  <span className="feas-stat-label"><span className="feas-stat-dot" />Critical</span>
+                  <strong>{feasResult ? hardErrors.length : "—"}</strong>
+                </button>
+                <button type="button" className={`feas-stat feas-stat-warning${expandedFeasibility === "suggestions" ? " expanded" : ""}`} disabled={!feasResult} aria-expanded={expandedFeasibility === "suggestions"} onClick={() => setExpandedFeasibility(expandedFeasibility === "suggestions" ? null : "suggestions")}>
+                  <span className="feas-stat-label"><span className="feas-stat-dot" />Suggest</span>
+                  <strong>{feasResult ? softWarnings.length : "—"}</strong>
+                </button>
+                <button type="button" className={`feas-stat feas-stat-pass${expandedFeasibility === "passed" ? " expanded" : ""}`} disabled={!feasResult} aria-expanded={expandedFeasibility === "passed"} onClick={() => setExpandedFeasibility(expandedFeasibility === "passed" ? null : "passed")}>
+                  <span className="feas-stat-label"><span className="feas-stat-dot" />Passed</span>
+                  <strong>{feasResult ? passedCount : "—"}</strong>
+                </button>
+              </div>
             </div>
-          </Panel>
-          <Panel title="Feasibility status" className="status-panel">
-            <StatusToggle tone="critical" count={hardErrors.length} label="Critical issues" expanded={expandedFeasibility === "critical"} onClick={() => setExpandedFeasibility(expandedFeasibility === "critical" ? null : "critical")} />
             {expandedFeasibility === "critical" && <div className="status-details">
-              {hardErrors.map((err, idx) => (
-                <article key={idx}>
-                  <span className="critical-icon"><Icon name="alert" size={16} /></span>
-                  <div>
-                    <strong>{err.affected_item}</strong>
-                    <p>{err.message}</p>
-                    <small>Fix: {err.action}</small>
-                  </div>
-                </article>
-              ))}
-              {hardErrors.length === 0 && <p style={{ padding: "8px", fontSize: "0.85rem", color: "#16a34a" }}>No critical issues detected.</p>}
+              {hardErrors.map((err, idx) => {
+                const dayNumber = parseIssueDay(err.field);
+                return (
+                  <article key={idx} className="issue-card issue-card-critical">
+                    <p className="issue-card-title"><span className="issue-card-dot" />{err.affected_item}</p>
+                    <p className="issue-card-message">{err.message}</p>
+                    {dayNumber !== null && <button type="button" className="issue-card-goto" onClick={() => goToIssueDay(err.field)}>Go to Day {dayNumber}<Icon name="chevron" size={13} /></button>}
+                  </article>
+                );
+              })}
+              {hardErrors.length === 0 && <p style={{ padding: "8px", fontSize: "0.85rem" }}>No critical issues detected.</p>}
             </div>}
-            <StatusToggle tone="warning" count={softWarnings.length} label="Suggestions" expanded={expandedFeasibility === "suggestions"} onClick={() => setExpandedFeasibility(expandedFeasibility === "suggestions" ? null : "suggestions")} />
-            {expandedFeasibility === "suggestions" && <div className="status-details suggestions-details">
-              {softWarnings.map((warn, idx) => (
-                <article key={idx}>
-                  <span className="warning-icon"><Icon name="alert" size={16} /></span>
-                  <div>
-                    <strong>{warn.affected_item}</strong>
-                    <p>{warn.message}</p>
-                    <small>Fix: {warn.action}</small>
-                  </div>
-                </article>
-              ))}
-              {softWarnings.length === 0 && <p style={{ padding: "8px", fontSize: "0.85rem", color: "#6b7280" }}>No suggestions.</p>}
+            {expandedFeasibility === "suggestions" && <div className="status-details">
+              {softWarnings.map((warn, idx) => {
+                const dayNumber = parseIssueDay(warn.field);
+                return (
+                  <article key={idx} className="issue-card issue-card-warning">
+                    <p className="issue-card-title"><span className="issue-card-dot" />{warn.affected_item}</p>
+                    <p className="issue-card-message">{warn.message}</p>
+                    {dayNumber !== null && <button type="button" className="issue-card-goto" onClick={() => goToIssueDay(warn.field)}>Go to Day {dayNumber}<Icon name="chevron" size={13} /></button>}
+                  </article>
+                );
+              })}
+              {softWarnings.length === 0 && <p style={{ padding: "8px", fontSize: "0.85rem" }}>No suggestions.</p>}
             </div>}
-            <StatusToggle tone="pass" label="Passed" expanded={expandedFeasibility === "passed"} onClick={() => setExpandedFeasibility(expandedFeasibility === "passed" ? null : "passed")} />
             {expandedFeasibility === "passed" && <ul className="passed-details"><li><Icon name="check" size={15} />Daily schedule has a clear start and end</li><li><Icon name="check" size={15} />All stops have pricing</li><li><Icon name="check" size={15} />Accommodation is included</li><li><Icon name="check" size={15} />Required package photos are uploaded</li></ul>}
-          </Panel>
+            <p className="quality-footer">Last update: {feasResult && lastCheckedAt ? formatRelativeTime(lastCheckedAt) : "Not yet checked"}</p>
+          </section>
           <CopilotPanel
             client={copilotClient}
             city={pkg.destination_city ?? ""}
@@ -1762,7 +2029,16 @@ export default function ItineraryEditor({
             dayLabel={`Day ${activeDay + 1}`}
             onAddSuggestion={addCopilotSuggestion}
           />
-          <Panel title="Pricing & earnings" className="pricing-panel"><span>Total package price</span><strong>${packagePrice.toLocaleString()}</strong><hr/><span>Your commission (20%)</span><strong className="commission">${Math.round(packagePrice * .2).toLocaleString()}</strong></Panel>
+          <Panel
+            title="Pricing & earnings"
+            className="pricing-panel"
+            icon={<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--fc-success)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4" /><path d="M3 5v14a2 2 0 0 0 2 2h16v-5" /><path d="M18 12a2 2 0 0 0 0 4h4v-4Z" /></svg>}
+          >
+            <div className="pricing-columns">
+              <div><span>Package total</span><strong>${packagePrice.toLocaleString()}</strong></div>
+              <div><span>Your 20% cut</span><strong className="commission">${Math.round(packagePrice * .2).toLocaleString()}</strong></div>
+            </div>
+          </Panel>
           <Panel title="Route map" className="route-panel"><RouteMap stops={routeStops} /></Panel>
         </aside>
       </fieldset>

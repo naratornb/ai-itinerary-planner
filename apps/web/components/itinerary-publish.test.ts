@@ -54,6 +54,7 @@ async function clickSubmit(
   loading = false,
   uploadingCount = 0,
   failure?: "save" | "submit",
+  stale = false,
 ) {
   const notices: string[] = [];
   const events: string[] = [];
@@ -63,7 +64,8 @@ async function clickSubmit(
     displayScore: score,
     feasResult: score === undefined ? null : { is_feasible: !critical },
     hardErrors: critical ? [{}] : [],
-    isReadyToSubmit: score !== undefined && score >= 70 && !critical,
+    isReadyToSubmit: score !== undefined && score >= 70 && !critical && !stale,
+    resultStale: stale,
     feasLoading: loading,
     saving: false,
     uploadingCount,
@@ -89,6 +91,7 @@ async function clickSubmit(
       if (failure === "submit") throw new Error("Submit failed");
       return { package_id: "pkg-1", status: "pending_review" };
     },
+    runFeasibilityCheck: () => { events.push("feasibility-check"); },
     pkg: { package_id: "pkg-1" },
     // Referenced as call arguments to submitPackage(fetch, API_URL, ...) —
     // the mock above ignores them, but they must resolve to something.
@@ -124,7 +127,17 @@ test("a ready package is submitted for review rather than described as published
 
 test("submission explains unchecked content and critical issues; only eligible trips proceed", async () => {
   for (const button of buttons) {
-    assert.match((await clickSubmit(button, undefined)).notices.join(" "), /check content/i);
+    const unchecked = await clickSubmit(button, undefined);
+    assert.deepEqual(unchecked.events, ["feasibility-check"]);
+    assert.equal(unchecked.notices.length, 0);
+    assert.equal(unchecked.packageStatus, "draft");
+
+    // A stale result (content edited after a critical-failing check) must
+    // re-check rather than get stuck showing the old "fix issues" verdict.
+    const staleAfterFix = await clickSubmit(button, 90, true, false, 0, undefined, true);
+    assert.deepEqual(staleAfterFix.events, ["feasibility-check"]);
+    assert.equal(staleAfterFix.notices.length, 0);
+    assert.equal(staleAfterFix.packageStatus, "draft");
 
     const blocked = await clickSubmit(button, 90, true);
     assert.equal(blocked.packageStatus, "draft");

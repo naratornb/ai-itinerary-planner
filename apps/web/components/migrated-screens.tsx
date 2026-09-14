@@ -28,11 +28,11 @@ import {
 } from "../lib/ai/itinerary";
 import { supabase } from "../lib/supabase/client";
 import { creatorPackageRoute } from "../lib/routes";
-import { dashboardActionAlignment } from "./navigation-model";
+import { creatorDashboardBackLink, dashboardActionAlignment } from "./navigation-model";
 const creatorBannerImg = "/creator-banner.png";
 
 
-export type Screen = "login" | "marketplace" | "dashboard" | "builder" | "ai-wizard";
+export type Screen = "login" | "marketplace" | "dashboard" | "builder" | "manual-builder" | "ai-wizard";
 
 export function nextRecommendationInfoOpen(
   open: boolean,
@@ -1419,11 +1419,17 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
 
                 {/* Row action */}
                 <div style={{ textAlign: dashboardActionAlignment.buttons, display: "flex", justifyContent: dashboardActionAlignment.buttons, gap: 8 }}>
-                  <Link className="dashboard-row-action" href={packageHref}>{pkg.rowAction}</Link>
+                  <Link className="dashboard-row-action" href={packageHref}>
+                    {pkg.rowAction === "Edit" && <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>}
+                    {pkg.rowAction}
+                  </Link>
                   {pkg.statusKey === "draft" && (
                     <button className="dashboard-row-action dashboard-row-action-delete"
                       onClick={() => { setDeleteError(""); setPendingDelete({ id: pkg.id, name: pkg.name }); }}
-                    >Delete</button>
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><path d="M19 6l-.867 12.142A2 2 0 0 1 16.138 20H7.862a2 2 0 0 1-1.995-1.858L5 6" /><path d="M10 11v6M14 11v6" /></svg>
+                      Delete
+                    </button>
                   )}
                 </div>
               </div>
@@ -1459,14 +1465,8 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
   );
 }
 
-// ─── Creator Nav (dashboard only) ─────────────────────────────────────────────
-const CREATOR_NAV_ITEMS = ["Dashboard", "My Packages", "Bookings", "Earnings", "Analytics"];
-
-export function CreatorNav({ activeItem, onItem, onNav }: {
-  activeItem: string;
-  onItem: (s: string) => void;
-  onNav: (s: Screen) => void;
-}) {
+// ─── Creator header ───────────────────────────────────────────────────────────
+export function CreatorNav({ onNav }: { onNav: (s: Screen) => void }) {
   const [profileOpen, setProfileOpen] = useState(false);
   const [creatorProfile, setCreatorProfile] = useState({
     displayName: "Creator",
@@ -1597,78 +1597,46 @@ export function CreatorNav({ activeItem, onItem, onNav }: {
         </div>
       </div>
 
-      {/* ── White workspace nav: tabs ── */}
-      <div style={{
-        width: "100%", height: 52, background: C.white,
-        borderBottom: `1px solid ${C.border}`,
-        display: "flex", alignItems: "stretch",
-      }}>
-        <div style={{
-          width: CONTAINER, margin: "0 auto",
-          display: "flex", alignItems: "stretch", gap: 32,
-        }}>
-          {CREATOR_NAV_ITEMS.map((item) => {
-            const active = activeItem === item;
-            return (
-              <button key={item} onClick={() => onItem(item)} style={{
-                fontFamily: "var(--fc-font-body)", fontSize: 15,
-                fontWeight: active ? 600 : 500,
-                color: active ? C.ink : C.secondary,
-                background: "none", border: "none",
-                borderBottom: active ? `3px solid ${C.red}` : "3px solid transparent",
-                padding: "0 2px",
-                cursor: "pointer", transition: "color 120ms, border-color 120ms",
-                whiteSpace: "nowrap",
-              }}
-                onMouseEnter={(e) => { if (!active) e.currentTarget.style.color = C.ink; }}
-                onMouseLeave={(e) => { if (!active) e.currentTarget.style.color = C.secondary; }}
-              >{item}</button>
-            );
-          })}
-        </div>
-      </div>
-
     </div>
+  );
+}
+
+function CreatorCreationSubnav({ confirmBeforeLeaving = false }: { confirmBeforeLeaving?: boolean }) {
+  return (
+    <nav
+      aria-label="Package creation navigation"
+      style={{
+        position: "sticky", top: 0, zIndex: 90,
+        height: 64, flexShrink: 0,
+        background: C.white, borderBottom: `1px solid ${C.border}`,
+      }}
+    >
+      <div style={{ width: "min(calc(100% - 80px), 1200px)", height: "100%", margin: "0 auto", display: "flex", alignItems: "center" }}>
+        <Link
+          href={creatorDashboardBackLink.href}
+          onClick={(event) => {
+            if (confirmBeforeLeaving && !window.confirm("Leave without finishing this package? Your progress will be lost.")) {
+              event.preventDefault();
+            }
+          }}
+          style={{
+            width: "fit-content", minHeight: 48, display: "inline-flex", alignItems: "center", gap: 8,
+            fontFamily: "var(--fc-font-body)", fontSize: 15, fontWeight: 500,
+            color: C.ink, textDecoration: "none",
+          }}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="m15 18-6-6 6-6" />
+          </svg>
+          {creatorDashboardBackLink.label}
+        </Link>
+      </div>
+    </nav>
   );
 }
 
 // ─── Builder Screen ────────────────────────────────────────────────────────────
 const BUILDER_API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
-function DraftField({
-  label, value, onChange, type = "text", textarea = false, placeholder,
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  type?: string;
-  textarea?: boolean;
-  placeholder?: string;
-}) {
-  const [focused, setFocused] = useState(false);
-  const sharedStyle: React.CSSProperties = {
-    width: "100%", boxSizing: "border-box",
-    padding: textarea ? "14px" : "0 14px",
-    height: textarea ? undefined : 48,
-    minHeight: textarea ? 84 : undefined,
-    fontSize: 16, color: C.ink, fontFamily: "var(--fc-font-body)",
-    border: `1.5px solid ${focused ? C.blue : C.ink}`, borderRadius: 6, outline: "none",
-    resize: textarea ? "vertical" : undefined,
-  };
-  return (
-    <div style={{ position: "relative" }}>
-      <label style={{
-        position: "absolute", top: -9, left: 12, background: C.white,
-        padding: "0 4px", fontSize: 12, color: C.secondary, lineHeight: 1, zIndex: 1,
-      }}>{label}</label>
-      {textarea ? (
-        <textarea value={value} placeholder={placeholder} onFocus={() => setFocused(true)} onBlur={() => setFocused(false)} onChange={(event) => onChange(event.target.value)} style={sharedStyle} />
-      ) : (
-        <input type={type} value={value} placeholder={placeholder} onFocus={() => setFocused(true)} onBlur={() => setFocused(false)} onChange={(event) => onChange(event.target.value)} style={sharedStyle} />
-      )}
-    </div>
-  );
-}
 
 const NEW_PACKAGE_DRAFT = {
   title: "",
@@ -1705,75 +1673,35 @@ export function isNewPackageDraftValid(draft: NewPackageDraft) {
   );
 }
 
+export function isManualPackageStepValid(draft: NewPackageDraft, step: number) {
+  if (step === 0) return Boolean(draft.title.trim() && draft.description.trim());
+  if (step === 1) return Boolean(draft.destination_country.trim() && draft.destination_city.trim());
+  if (step === 2) {
+    return Boolean(
+      Number(draft.duration_days) >= 1
+      && draft.base_price_aud.trim() !== ""
+      && Number(draft.base_price_aud) >= 0,
+    );
+  }
+  return isNewPackageDraftValid(draft);
+}
+
 export function BuilderScreen({ onNav }: { onNav: (s: Screen) => void }) {
-  const router = useRouter();
   const [hovScratch, setHovScratch] = useState(false);
-  const [newPackageOpen, setNewPackageOpen] = useState(false);
-  const [draft, setDraft] = useState(NEW_PACKAGE_DRAFT);
-  const [creating, setCreating] = useState(false);
-  const [createError, setCreateError] = useState("");
-  const [destinationSearch, setDestinationSearch] = useState("");
-  const { destinations, recommended, destinationsLoading } = useDestinationCatalog();
-  const selectedDestination = draft.destination_city && draft.destination_country
-    ? `${draft.destination_city}, ${draft.destination_country}`
-    : null;
-  const selectManualDestination = (destination: DestinationOption) => {
-    const selection = destinationSelection(destination);
-    setDestinationSearch(selection.search);
-    setDraft((current) => applyCatalogDestination(current, destination));
-  };
-
-  const createDraftPackage = async () => {
-    setCreating(true);
-    setCreateError("");
-    try {
-      const { data } = await supabase.auth.getSession();
-      const accessToken = data.session?.access_token;
-      if (!accessToken) throw new Error("Please sign in again.");
-      const { package_id } = await createPackage(fetch, BUILDER_API_URL, accessToken, {
-        title: draft.title.trim(),
-        description: draft.description.trim(),
-        destination_country: draft.destination_country.trim(),
-        destination_city: draft.destination_city.trim(),
-        duration_days: Number(draft.duration_days) || 1,
-        base_price_aud: Number(draft.base_price_aud) || 0,
-        max_group_size: draft.max_group_size.trim() ? Number(draft.max_group_size) : null,
-      });
-      setNewPackageOpen(false);
-      setDraft(NEW_PACKAGE_DRAFT);
-      setDestinationSearch("");
-      router.push(`/packages/editor/${encodeURIComponent(package_id)}`);
-    } catch (error) {
-      setCreateError(error instanceof Error ? error.message : "Unable to create this package.");
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  const draftValid = isNewPackageDraftValid(draft);
-
-  useEffect(() => {
-    if (!newPackageOpen) return;
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !creating) setNewPackageOpen(false);
-    };
-    window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [newPackageOpen, creating]);
 
   const steps = [
-    { n: 1, label: "Pick destination", icon: "M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z" },
-    { n: 2, label: "AI drafts your itinerary", icon: "M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 14l-5-5 1.41-1.41L12 14.17l7.59-7.59L21 8l-9 9z" },
-    { n: 3, label: "Review, customise & publish", icon: "M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" },
-    { n: 4, label: "Share & earn on bookings", icon: "M11.8 10.9c-2.27-.59-3-1.2-3-2.15 0-1.09 1.01-1.85 2.7-1.85 1.78 0 2.44.85 2.5 2.1h2.21c-.07-1.72-1.12-3.3-3.21-3.81V3h-3v2.16c-1.94.42-3.5 1.68-3.5 3.61 0 2.31 1.91 3.46 4.7 4.13 2.5.6 3 1.48 3 2.41 0 .69-.49 1.79-2.7 1.79-2.06 0-2.87-.92-2.98-2.1h-2.2c.12 2.19 1.76 3.42 3.68 3.83V21h3v-2.15c1.95-.37 3.5-1.5 3.5-3.55 0-2.84-2.43-3.81-4.7-4.4z" },
+    { n: 1, label: "Choose destination & travel style" },
+    { n: 2, label: "Set duration & season" },
+    { n: 3, label: "AI drafts your itinerary" },
+    { n: 4, label: "Review, customise & submit for review" },
   ];
 
   return (
-    <div style={{ height: "calc(100vh - 116px)", background: C.subtle, overflowY: "auto" }}>
+    <div className="ai-wizard-screen" style={{ minHeight: "calc(100vh - 64px)", background: C.subtle }}>
+      <CreatorCreationSubnav />
 
       {/* Content */}
-      <div style={{ maxWidth: 680, margin: "0 auto", padding: "64px 24px 48px" }}>
-
+      <div style={{ width: "min(calc(100% - 48px), 800px)", margin: "0 auto", padding: "28px 24px 48px" }}>
 
           {/* Heading */}
           <div style={{ marginBottom: 30 }}>
@@ -1880,7 +1808,7 @@ export function BuilderScreen({ onNav }: { onNav: (s: Screen) => void }) {
 
           {/* Build from scratch */}
           <button
-            onClick={() => setNewPackageOpen(true)}
+            onClick={() => onNav("manual-builder")}
             onMouseEnter={() => setHovScratch(true)}
             onMouseLeave={() => setHovScratch(false)}
             style={{
@@ -1916,80 +1844,26 @@ export function BuilderScreen({ onNav }: { onNav: (s: Screen) => void }) {
 
       </div>
 
-      {newPackageOpen && (
-        <div
-          role="presentation"
-          onMouseDown={() => { if (!creating) { setNewPackageOpen(false); setCreateError(""); } }}
-          style={{ position: "fixed", inset: 0, zIndex: 200, background: "rgba(33,33,33,0.45)", display: "grid", placeItems: "center", padding: 24 }}
-        >
-          <section
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="new-package-title"
-            onMouseDown={(event) => event.stopPropagation()}
-            style={{ width: "100%", maxWidth: 840, maxHeight: "90vh", overflowY: "auto", background: C.white, borderRadius: C.radiusLg, boxShadow: C.shadowRaised, padding: 32 }}
-          >
-            <h2 id="new-package-title" style={{ fontFamily: "var(--fc-font-body)", fontSize: 20, fontWeight: 700, color: C.ink, margin: "0 0 4px" }}>New package</h2>
-            <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, color: C.secondary, margin: "0 0 24px", lineHeight: "21px" }}>
-              Fill in the essentials — add flights, hotels and activities in the editor next.
-            </p>
-
-            <div style={{ display: "grid", gap: 20 }}>
-              <DraftField label="Title *" value={draft.title} onChange={(value) => setDraft({ ...draft, title: value })} placeholder="e.g. Kyoto Autumn Cultural Tour" />
-              <DraftField label="Description *" value={draft.description} onChange={(value) => setDraft({ ...draft, description: value })} textarea placeholder="What makes this trip worth booking?" />
-              <DestinationPicker
-                idPrefix="manual"
-                search={destinationSearch}
-                selected={selectedDestination}
-                destinations={destinations}
-                recommended={recommended}
-                loading={destinationsLoading}
-                onSearchChange={(value) => {
-                  setDestinationSearch(value);
-                  setDraft((current) => applyCatalogDestination(current, null));
-                }}
-                onSelect={selectManualDestination}
-              />
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16 }}>
-                <DraftField label="Duration (days) *" type="number" value={draft.duration_days} onChange={(value) => setDraft({ ...draft, duration_days: value })} />
-                <DraftField label="Base price (AUD) *" type="number" value={draft.base_price_aud} onChange={(value) => setDraft({ ...draft, base_price_aud: value })} placeholder="2200" />
-                <DraftField label="Max group size" type="number" value={draft.max_group_size} onChange={(value) => setDraft({ ...draft, max_group_size: value })} placeholder="Optional" />
-              </div>
-            </div>
-
-            {createError && (
-              <p role="alert" style={{ margin: "16px 0 0", padding: "10px 12px", borderRadius: 6, background: "#FFF1F2", color: "#B42318", fontSize: 14, lineHeight: "20px" }}>
-                {createError}
-              </p>
-            )}
-
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: 12, marginTop: 28 }}>
-              <BtnSecondary onClick={() => { setNewPackageOpen(false); setCreateError(""); }}>Cancel</BtnSecondary>
-              <button
-                type="button"
-                disabled={!draftValid || creating}
-                onClick={() => void createDraftPackage()}
-                style={{
-                  display: "inline-flex", alignItems: "center", justifyContent: "center",
-                  minHeight: 44, padding: "12px 20px",
-                  background: !draftValid || creating ? C.disabled : C.blue,
-                  color: C.white, border: "none", borderRadius: C.radiusMd,
-                  fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 500, lineHeight: "20px",
-                  cursor: !draftValid || creating ? "not-allowed" : "pointer",
-                }}
-              >
-                {creating ? "Creating…" : "Create package"}
-              </button>
-            </div>
-          </section>
-        </div>
-      )}
     </div>
   );
 }
 
 // ─── AI Wizard Screen ──────────────────────────────────────────────────────────
-const WIZARD_STEPS = ["Destination", "Travel style", "Duration", "Season"];
+type WizardStepKind = "destination" | "style" | "duration" | "season";
+const AI_STEP_KINDS: WizardStepKind[] = ["destination", "style", "duration", "season"];
+// Manual builds skip the duration step (the creator sets days in the editor)
+// and skip AI generation, so there's nothing to fake-load either.
+const MANUAL_STEP_KINDS: WizardStepKind[] = ["destination", "style", "season"];
+const STEP_LABEL_BY_KIND: Record<WizardStepKind, string> = {
+  destination: "Destination", style: "Travel style", duration: "Duration", season: "Season",
+};
+
+const SEASON_CARDS = [
+  { id: "spring", label: "Spring", desc: "Blooming scenery and fresh, vibrant energy", tags: ["Mild weather", "Fresh blooms", "Garden walks"], img: "https://images.unsplash.com/photo-1622285422722-b1b3eb36c728?w=600&h=320&fit=crop" },
+  { id: "summer", label: "Summer", desc: "Warm days and endless outdoor adventures", tags: ["Long days", "Outdoor fun", "Lively atmosphere"], img: "https://images.unsplash.com/photo-1461937995729-a2e442122d18?w=600&h=320&fit=crop" },
+  { id: "autumn", label: "Autumn", desc: "Colorful foliage and cozy moments", tags: ["Foliage tours", "Crisp air", "Harvest season"], img: "https://images.unsplash.com/photo-1542574929305-245cb48f9c87?w=600&h=320&fit=crop" },
+  { id: "winter", label: "Winter", desc: "Cool weather and relaxed experiences", tags: ["Winter scenery", "Cosy stays", "Fewer crowds"], img: "https://images.unsplash.com/photo-1551927411-95e412943b58?w=600&h=320&fit=crop" },
+] as const;
 
 type DestinationOption = { city: string; country: string; avgRating: number };
 
@@ -2187,6 +2061,51 @@ function DestinationPicker({
   );
 }
 
+function PackageWizardProgress({
+  labels,
+  step,
+  summaries,
+  onStepSelect,
+}: {
+  labels: readonly string[];
+  step: number;
+  summaries: string[];
+  onStepSelect: (step: number) => void;
+}) {
+  return (
+    <div className="ai-wizard-progress" aria-label="Package setup progress">
+      {labels.map((label, index) => (
+        <div className="ai-wizard-progress-step" key={label}>
+          <div className="ai-wizard-progress-node">
+            <div style={{
+              width: 28, height: 28, borderRadius: "50%", flexShrink: 0,
+              background: index <= step ? C.ink : C.white,
+              border: index <= step ? "none" : `2px solid ${C.border}`,
+              display: "flex", alignItems: "center", justifyContent: "center",
+            }}>
+              {index < step
+                ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>
+                : <span style={{ fontSize: 12, fontWeight: 700, color: index === step ? C.white : C.secondary }}>{index + 1}</span>}
+            </div>
+            {index < step ? (
+              <button className="ai-wizard-progress-copy" type="button" onClick={() => onStepSelect(index)} style={{ minHeight: 48, padding: "4px 2px", display: "grid", alignContent: "center", justifyItems: "start", gap: 4, color: C.secondary, background: "transparent", border: 0, cursor: "pointer" }}>
+                <span style={{ fontSize: 13, fontWeight: 500, textDecoration: "underline", textUnderlineOffset: 4 }}>{label}</span>
+                {summaries[index] && <span style={{ maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", fontSize: 11, color: C.disabled }}>{summaries[index]}</span>}
+              </button>
+            ) : (
+              <span className="ai-wizard-progress-copy" style={{ minHeight: 48, display: "grid", alignContent: "center", gap: 4, color: index === step ? C.ink : C.secondary, whiteSpace: "nowrap" }}>
+                <span style={{ fontSize: 13, fontWeight: index === step ? 600 : 400 }}>{label}</span>
+                {summaries[index] && <span style={{ maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", fontSize: 11, color: C.disabled }}>{summaries[index]}</span>}
+              </span>
+            )}
+          </div>
+          {index < labels.length - 1 && <div className="ai-wizard-progress-connector" />}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 const VIBES = [
   { id: "chill",      label: "Chill",            desc: "Spa days, yoga sessions, and slow-paced downtime",          img: "https://images.unsplash.com/photo-1602002418816-5c0aeef426aa?w=600&h=320&fit=crop" },
   { id: "adventure",  label: "Adventure",        desc: "Active experiences and outdoor activities",                 img: "https://images.unsplash.com/photo-1533240332313-0db49b459ad6?w=600&h=320&fit=crop" },
@@ -2264,6 +2183,14 @@ export function generationStatusMessage(elapsedMs: number, complete: boolean) {
 
 export function generationProgressLabel(progress: number) {
   return `${Math.round(Math.min(100, Math.max(0, progress)))}%`;
+}
+
+export function seasonChoiceComplete(season: string | null, noPreference: boolean) {
+  return season !== null || noPreference;
+}
+
+export function seasonSecondaryAction(season: string | null): "build-without-season" | "clear-season" {
+  return season === null ? "build-without-season" : "clear-season";
 }
 
 function GenerationIcon({ id }: { id: (typeof GENERATION_STEPS)[number]["id"] }) {
@@ -2347,8 +2274,9 @@ function PackageGenerationLoader({ elapsedMs, complete }: { elapsedMs: number; c
   );
 }
 
-export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequestId = 0 }: { onNav: (s: Screen) => void; initialStep?: number; requestedStep?: number; stepRequestId?: number }) {
+export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequestId = 0, variant = "ai" }: { onNav: (s: Screen) => void; initialStep?: number; requestedStep?: number; stepRequestId?: number; variant?: "ai" | "manual" }) {
   const router = useRouter();
+  const kinds = variant === "manual" ? MANUAL_STEP_KINDS : AI_STEP_KINDS;
   const [step, setStep] = useState(initialStep);
   const [selected, setSelected] = useState<string | null>(null);
   const [dest, setDest] = useState("");
@@ -2359,14 +2287,18 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
   const [duration, setDuration] = useState<"short" | "mid" | "long" | "custom" | null>(null);
   const [customDurationDays, setCustomDurationDays] = useState(7);
   const [season, setSeason] = useState<string | null>(null);
+  const [noSeasonPreference, setNoSeasonPreference] = useState(false);
   const [generationElapsedMs, setGenerationElapsedMs] = useState(0);
   const [generationComplete, setGenerationComplete] = useState(false);
   const [createdPackageId, setCreatedPackageId] = useState<string | null>(null);
   const [builtSetup, setBuiltSetup] = useState<string | null>(null);
   const inFlightSetupRef = useRef<string | null>(null);
   const [createError, setCreateError] = useState("");
+  const [manualCreating, setManualCreating] = useState(false);
 
-  const isLoading = step === 4;
+  // Manual builds skip AI generation entirely, so they never enter the
+  // full-screen generation step — creation happens inline on the last step.
+  const isLoading = variant === "ai" && step === AI_STEP_KINDS.length;
 
   useEffect(() => {
     if (requestedStep === undefined) return;
@@ -2439,7 +2371,7 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
             ? "The request timed out. Please try again."
             : error instanceof Error ? error.message : "Unable to create this package.",
         );
-        setStep(3);
+        setStep(AI_STEP_KINDS.length - 1);
       }
     })();
     return () => { cancelled = true; };
@@ -2452,122 +2384,125 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
     return () => window.clearTimeout(timeout);
   }, [isLoading, generationComplete, createdPackageId, router]);
 
+  const kind = kinds[step];
+  const isLastStep = step === kinds.length - 1;
   // Step 0 requires an actual pick from the catalog — typing alone (without
   // selecting a result) must not be enough to continue.
-  const canContinue = step === 0 ? selected !== null : step === 1 ? vibes.length > 0 : step === 2 ? duration !== null : step === 3 ? season !== null : true;
+  const canContinue = (kind === "destination" ? selected !== null
+    : kind === "style" ? vibes.length > 0
+    : kind === "duration" ? duration !== null
+    : seasonChoiceComplete(season, noSeasonPreference)) && !manualCreating;
   const selectDestination = (d: DestinationOption) => {
     const { name, search } = destinationSelection(d);
     setSelected(name);
     setDest(name);
     setDestinationSearch(search);
   };
-  const stepSummaries = [
-    selected ?? dest.trim(),
-    vibes.map((vibe) => VIBES.find((item) => item.id === vibe)?.label).filter(Boolean).join(", "),
-    duration === "custom" ? `Custom, ${customDurationDays} days` : duration ? `${duration.charAt(0).toUpperCase() + duration.slice(1)} trip` : "",
-    season ? season.charAt(0).toUpperCase() + season.slice(1) : "",
-  ];
-  const currentSetup = JSON.stringify({
+  const summaryByKind: Record<WizardStepKind, string> = {
     destination: selected ?? dest.trim(),
-    vibes: [...vibes].sort(),
-    duration,
-    customDurationDays: duration === "custom" ? customDurationDays : null,
-    season,
-  });
-  const continueWizard = () => {
-    if (step === 3) {
+    style: vibes.map((vibe) => VIBES.find((item) => item.id === vibe)?.label).filter(Boolean).join(", "),
+    duration: duration === "custom" ? `Custom, ${customDurationDays} days` : duration ? `${duration.charAt(0).toUpperCase() + duration.slice(1)} trip` : "",
+    season: season ? season.charAt(0).toUpperCase() + season.slice(1) : noSeasonPreference ? "Year-round" : "",
+  };
+  const stepSummaries = kinds.map((k) => summaryByKind[k]);
+  const setupForSeason = (selectedSeason: string | null) => JSON.stringify({
+      destination: selected ?? dest.trim(),
+      vibes: [...vibes].sort(),
+      duration,
+      customDurationDays: duration === "custom" ? customDurationDays : null,
+      season: selectedSeason,
+    });
+  const currentSetup = setupForSeason(season);
+  const startBuild = (setup: string) => {
       // Rebuilding an unchanged setup would orphan a duplicate draft — reuse the one we made.
-      if (createdPackageId && builtSetup === currentSetup) {
+      if (createdPackageId && builtSetup === setup) {
         router.push(`/packages/editor/${encodeURIComponent(createdPackageId)}`);
         return;
       }
-      setBuiltSetup(currentSetup);
+      setBuiltSetup(setup);
       setCreatedPackageId(null);
       setCreateError("");
       setGenerationElapsedMs(0);
       setGenerationComplete(false);
-      setStep(4);
+      setStep(AI_STEP_KINDS.length);
+  };
+  // Manual builds skip AI drafting — create the package directly and go
+  // straight to the editor, no fake generation screen.
+  const createManualPackage = async (seasonOverride: string | null = season) => {
+    setCreateError("");
+    setManualCreating(true);
+    try {
+      const { data } = await supabase.auth.getSession();
+      const accessToken = data.session?.access_token;
+      if (!accessToken) { router.push("/login"); return; }
+      const styleLabels = vibes.map((vibe) => VIBES.find((item) => item.id === vibe)?.label ?? vibe);
+      const base = wizardDraftToPackageInput({
+        destination: selected ?? dest.trim(),
+        vibes: styleLabels,
+        duration: duration ?? "short",
+        customDurationDays,
+        season: seasonOverride ?? "",
+      });
+      const description = `${styleLabels.length ? `A ${styleLabels.join(", ")} trip` : "A custom trip"}${seasonOverride ? `, built for ${seasonOverride}` : ", built from scratch"}.`;
+      const { package_id } = await createPackage(fetch, BUILDER_API_URL, accessToken, { ...base, description });
+      router.push(`/packages/editor/${encodeURIComponent(package_id)}`);
+    } catch (error) {
+      setCreateError(error instanceof Error ? error.message : "Unable to create this package.");
+    } finally {
+      setManualCreating(false);
+    }
+  };
+  const continueWizard = () => {
+    if (!isLastStep) {
+      setStep((currentStep) => currentStep + 1);
       return;
     }
-    setStep((currentStep) => currentStep + 1);
+    if (variant === "manual") {
+      void createManualPackage();
+      return;
+    }
+    startBuild(currentSetup);
   };
 
+  const hasWizardProgress = Boolean(selected || dest.trim() || vibes.length > 0 || duration || season);
+
   return (
-    <div style={{ height: "calc(100vh - 116px)", background: "#FAFAFA", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+    <div className="ai-wizard-screen" style={{ minHeight: "calc(100vh - 64px)", background: "#FAFAFA", display: "flex", flexDirection: "column" }}>
+      <CreatorCreationSubnav confirmBeforeLeaving={hasWizardProgress && !isLoading} />
       {isLoading ? (
         <PackageGenerationLoader elapsedMs={generationElapsedMs} complete={generationComplete} />
       ) : (
-      <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", maxWidth: 960, margin: "0 auto", width: "100%", padding: "40px 32px 0" }}>
+      <div className="ai-wizard-layout">
 
         {/* Progress steps */}
-        <div style={{ display: "flex", alignItems: "center", gap: 0, marginBottom: 36 }}>
-          {WIZARD_STEPS.map((label, i) => (
-            <div key={i} style={{ display: "flex", alignItems: "center", flex: i < WIZARD_STEPS.length - 1 ? 1 : 0 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <div style={{
-                  width: 28, height: 28, borderRadius: "50%", flexShrink: 0,
-                  background: i < step ? C.ink : i === step ? C.ink : C.white,
-                  border: i === step ? `2px solid ${C.ink}` : i < step ? "none" : `2px solid ${C.border}`,
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  transition: "all 300ms",
-                }}>
-                  {i < step
-                    ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>
-                    : <span style={{ fontFamily: "var(--fc-font-body)", fontSize: 12, fontWeight: 700, color: i === step ? C.white : C.secondary }}>{i + 1}</span>
-                  }
-                </div>
-                {i < step ? (
-                  <button
-                    type="button"
-                    onClick={() => setStep(i)}
-                    aria-label={`Return to ${label}`}
-                    style={{
-                      minHeight: 48, padding: "4px 2px",
-                      display: "grid", alignContent: "center", justifyItems: "start", gap: 4,
-                      fontFamily: "var(--fc-font-body)", color: C.secondary, whiteSpace: "nowrap",
-                      background: "transparent", border: 0, cursor: "pointer",
-                    }}
-                  ><span style={{ fontSize: 13, fontWeight: 500, textDecoration: "underline", textUnderlineOffset: 4 }}>{label}</span>{stepSummaries[i] && <span style={{ maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", fontSize: 11, color: C.disabled }}>{stepSummaries[i]}</span>}</button>
-                ) : (
-                  <span style={{ minHeight: 48, display: "grid", alignContent: "center", gap: 4, fontFamily: "var(--fc-font-body)", color: i === step ? C.ink : C.secondary, whiteSpace: "nowrap" }}>
-                    <span style={{ fontSize: 13, fontWeight: i === step ? 600 : 400 }}>{label}</span>
-                    {stepSummaries[i] && <span style={{ maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", fontSize: 11, fontWeight: 400, color: C.disabled }}>{stepSummaries[i]}</span>}
-                  </span>
-                )}
-              </div>
-              {i < WIZARD_STEPS.length - 1 && (
-                <div style={{ flex: 1, height: 1.5, background: C.border, margin: "0 12px", transition: "background 300ms" }} />
-              )}
-            </div>
-          ))}
-        </div>
+        <PackageWizardProgress labels={kinds.map((k) => STEP_LABEL_BY_KIND[k])} step={step} summaries={stepSummaries} onStepSelect={setStep} />
+
+        <main className="ai-wizard-main">
 
         {/* Heading */}
-        <div style={{ marginBottom: 24 }}>
+        <div className="ai-wizard-heading" style={{ marginBottom: 24 }}>
           <h1 style={{
             fontFamily: "var(--fc-font-body)", fontSize: 28, fontWeight: 700,
             color: C.ink, margin: "0 0 6px", letterSpacing: "-0.02em",
-          }}>{step === 0 ? "Start with a destination" : step === 1 ? "What kind of experience are you creating?" : step === 2 ? "Set the duration" : "Set your season"}</h1>
+          }}>{kind === "destination" ? "Start with a destination" : kind === "style" ? "What kind of experience are you creating?" : kind === "duration" ? "Set the duration" : "Set your season"}</h1>
           <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 15, color: C.secondary, margin: 0 }}>
-            {step === 0 ? "Set the foundation for your package" : step === 1 ? "Choose up to 3 styles. We'll use them to shape your package." : step === 2 ? "Plan how the journey unfolds" : "Define when this package is best experienced"}
+            {kind === "destination" ? "Set the foundation for your package" : kind === "style" ? (variant === "manual" ? "Choose up to 3 styles that describe your package." : "Choose up to 3 styles. We'll use them to shape your package.") : kind === "duration" ? "Plan how the journey unfolds" : "Choose when this trip is at its best. Travellers will select their own dates."}
           </p>
         </div>
 
         {/* Step content */}
-        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden", paddingBottom: 20 }}>{step === 3 ? (
+        <div className="ai-wizard-content" style={{ minHeight: 0, overflowX: "hidden", paddingBottom: 20 }}>{kind === "season" ? (
           /* ── Step 4: Season ── */
-          <div style={{ height: "100%", minHeight: 0, display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gridTemplateRows: "repeat(2, minmax(0, 1fr))", gap: 12 }}>
-            {([
-              { id: "spring", label: "Spring", desc: "Blooming scenery and fresh, vibrant energy", img: "https://images.unsplash.com/photo-1622285422722-b1b3eb36c728?w=600&h=320&fit=crop" },
-              { id: "summer", label: "Summer", desc: "Warm days and endless outdoor adventures",   img: "https://images.unsplash.com/photo-1461937995729-a2e442122d18?w=600&h=320&fit=crop" },
-              { id: "autumn", label: "Autumn",  desc: "Colorful foliage and cozy moments",          img: "https://images.unsplash.com/photo-1542574929305-245cb48f9c87?w=600&h=320&fit=crop" },
-              { id: "winter", label: "Winter",  desc: "Cool weather and relaxed experiences",       img: "https://images.unsplash.com/photo-1551927411-95e412943b58?w=600&h=320&fit=crop" },
-            ] as { id: string; label: string; desc: string; img: string }[]).map((s) => {
+          <div className="ai-wizard-season-grid" style={{ minHeight: 0, display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 12 }}>
+            {SEASON_CARDS.map((s) => {
               const isSel = season === s.id;
               const isHov = hovCard === s.id;
               return (
-                <button key={s.id}
-                  onClick={() => setSeason(s.id)}
+                <button className="ai-wizard-season-card" key={s.id}
+                  onClick={() => {
+                    setSeason(s.id);
+                    setNoSeasonPreference(false);
+                  }}
                   onMouseEnter={() => setHovCard(s.id)}
                   onMouseLeave={() => setHovCard(null)}
                   style={{
@@ -2577,29 +2512,29 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
                     borderRadius: 12, cursor: "pointer",
                     boxShadow: isSel ? `0 0 0 3px rgba(0,114,234,0.12)` : isHov ? "0 2px 10px rgba(33,33,33,0.08)" : "0 1px 3px rgba(33,33,33,0.05)",
                     transition: "all 160ms ease",
-                    display: "flex", flexDirection: "column",
                   }}
                 >
-                  <div style={{ position: "relative", flex: "1 1 100px", minHeight: 76, overflow: "hidden" }}>
+                  <div className="ai-wizard-season-image" style={{ position: "relative", overflow: "hidden" }}>
                     <img src={s.img} alt={s.label} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block", transition: "transform 320ms ease" }}
                       onMouseEnter={(e) => { (e.currentTarget as HTMLImageElement).style.transform = "scale(1.05)"; }}
                       onMouseLeave={(e) => { (e.currentTarget as HTMLImageElement).style.transform = "scale(1)"; }}
                     />
-                    {isSel && (
-                      <div style={{ position: "absolute", top: 10, right: 10, width: 22, height: 22, borderRadius: "50%", background: C.blue, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 2px 6px rgba(0,0,0,0.2)" }}>
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>
-                      </div>
-                    )}
+                    {isSel && <span aria-label="Selected" style={{ position: "absolute", top: 10, right: 10, width: 24, height: 24, display: "grid", placeItems: "center", borderRadius: "50%", background: C.blue, color: C.white, boxShadow: "0 2px 6px rgba(0,0,0,0.2)" }}><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg></span>}
                   </div>
-                  <div style={{ flexShrink: 0, padding: "10px 14px 12px", background: isSel ? "#EFF6FF" : C.white, transition: "background 160ms" }}>
-                    <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 700, color: isSel ? C.blue : C.ink, margin: "0 0 3px", letterSpacing: "-0.01em", transition: "color 160ms" }}>{s.label}</p>
-                    <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 12, color: C.secondary, margin: 0, lineHeight: "16px" }}>{s.desc}</p>
+                  <div className="ai-wizard-season-content" style={{ minHeight: 96, background: isSel ? "#EFF6FF" : C.white, transition: "background 160ms" }}>
+                    <div className="ai-wizard-season-summary">
+                      <p className="ai-wizard-season-title" style={{ minHeight: 22, fontFamily: "var(--fc-font-body)", fontWeight: 700, color: isSel ? C.blue : C.ink, margin: 0, letterSpacing: "-0.01em", transition: "color 160ms" }}>{s.label}</p>
+                      <p className="ai-wizard-season-description" style={{ fontFamily: "var(--fc-font-body)", color: C.secondary, margin: 0 }}>{s.desc}</p>
+                    </div>
+                    <div className="ai-wizard-season-tags">
+                      {s.tags.map((tag) => <span className="ai-wizard-season-meta" key={tag} style={{ padding: "2px 7px", borderRadius: 5, background: isSel ? "#DCEEFF" : C.subtle, color: isSel ? "#005AA8" : C.secondary }}>{tag}</span>)}
+                    </div>
                   </div>
                 </button>
               );
             })}
           </div>
-        ) : step === 2 ? (
+        ) : kind === "duration" ? (
           /* ── Step 3: Duration ── */
           <div>
             <div role="radiogroup" aria-label="Trip length" style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12, marginBottom: 18 }}>
@@ -2633,9 +2568,9 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
               <span style={{ fontFamily: "var(--fc-font-body)", fontSize: 13 }}>{duration === "custom" ? "AI will build the trip for your exact duration." : "AI will choose the exact duration within the selected range."}</span>
             </div>
           </div>
-        ) : step === 1 ? (
+        ) : kind === "style" ? (
           /* ── Step 2: Travel style ── */
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gridTemplateRows: "repeat(2, 1fr)", gap: 16, height: "100%" }}>
+          <div className="ai-wizard-style-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gridTemplateRows: "repeat(2, minmax(0, 1fr))", gap: 16 }}>
             {VIBES.map((v) => {
               const isSel = vibes.includes(v.id);
               const isHov = hovCard === v.id;
@@ -2696,12 +2631,12 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
             onSelect={selectDestination}
           />
         )}</div>
-        {createError && step === 3 && (
+        {createError && isLastStep && (
           <p role="alert" style={{ margin: "12px 0 0", fontFamily: "var(--fc-font-body)", fontSize: 13, color: "#B42318" }}>
             {createError}
           </p>
         )}
-        <div style={{ flexShrink: 0, display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 0 20px", borderTop: `1px solid ${C.border}`, background: "#FAFAFA" }}>
+        <div className="ai-wizard-footer" style={{ flexShrink: 0, display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, padding: "16px 0 20px", borderTop: `1px solid ${C.border}`, background: "#FAFAFA" }}>
           <button onClick={() => step === 0 ? onNav("builder") : setStep((s) => s - 1)} style={{
             height: 44, padding: "0 24px",
             fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 500,
@@ -2713,32 +2648,53 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
             onMouseLeave={(e) => { e.currentTarget.style.borderColor = C.border; }}
           >Back</button>
 
-          <button
-            disabled={!canContinue}
-            onClick={continueWizard}
-            style={{
-              height: 44, padding: "0 32px",
-              fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 600,
-              color: C.white,
-              background: canContinue ? C.blue : C.disabled,
-              border: "none", borderRadius: 8,
-              cursor: canContinue ? "pointer" : "not-allowed",
-              boxShadow: "none",
-              transition: "opacity 140ms, box-shadow 140ms",
-              display: "flex", alignItems: "center", gap: 8,
-            }}
-            onMouseEnter={(e) => { if (canContinue) e.currentTarget.style.opacity = "0.88"; }}
-            onMouseLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
-          >
-            {step === 3 ? "Build your trip" : "Continue"}
-            {step < 3 && (
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M5 12h14M12 5l7 7-7 7"/>
-              </svg>
+          <div className="ai-wizard-footer-actions">
+            {kind === "season" && (
+              <button
+                type="button"
+                className="ai-wizard-no-season"
+                disabled={manualCreating}
+                aria-label={seasonSecondaryAction(season) === "clear-season" ? "Clear the selected season." : variant === "manual" ? "Create without a seasonal preference." : "Build without a seasonal preference."}
+                onClick={() => {
+                  if (seasonSecondaryAction(season) === "clear-season") {
+                    setSeason(null);
+                    return;
+                  }
+                  setSeason(null);
+                  setNoSeasonPreference(true);
+                  if (variant === "manual") void createManualPackage(null);
+                  else startBuild(setupForSeason(null));
+                }}
+              >{seasonSecondaryAction(season) === "clear-season" ? "Clear season" : variant === "manual" ? "Create without season" : "Build without season"}</button>
             )}
-          </button>
+            <button
+              disabled={!canContinue}
+              onClick={continueWizard}
+              style={{
+                height: 44, padding: "0 32px",
+                fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 600,
+                color: C.white,
+                background: canContinue ? C.blue : C.disabled,
+                border: "none", borderRadius: 8,
+                cursor: canContinue ? "pointer" : "not-allowed",
+                boxShadow: "none",
+                transition: "opacity 140ms, box-shadow 140ms",
+                display: "flex", alignItems: "center", gap: 8,
+              }}
+              onMouseEnter={(e) => { if (canContinue) e.currentTarget.style.opacity = "0.88"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
+            >
+              {isLastStep ? (manualCreating ? "Creating…" : variant === "manual" ? "Create package" : "Build your trip") : "Continue"}
+              {!isLastStep && (
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M5 12h14M12 5l7 7-7 7"/>
+                </svg>
+              )}
+            </button>
+          </div>
         </div>
 
+        </main>
       </div>
       )}
     </div>
