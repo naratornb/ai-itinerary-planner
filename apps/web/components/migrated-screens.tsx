@@ -1680,6 +1680,31 @@ const NEW_PACKAGE_DRAFT = {
   max_group_size: "",
 };
 
+type NewPackageDraft = typeof NEW_PACKAGE_DRAFT;
+
+export function applyCatalogDestination(
+  draft: NewPackageDraft,
+  destination: { city: string; country: string } | null,
+): NewPackageDraft {
+  return {
+    ...draft,
+    destination_country: destination?.country ?? "",
+    destination_city: destination?.city ?? "",
+  };
+}
+
+export function isNewPackageDraftValid(draft: NewPackageDraft) {
+  return Boolean(
+    draft.title.trim()
+    && draft.description.trim()
+    && draft.destination_country.trim()
+    && draft.destination_city.trim()
+    && Number(draft.duration_days) >= 1
+    && draft.base_price_aud.trim() !== ""
+    && Number(draft.base_price_aud) >= 0,
+  );
+}
+
 export function BuilderScreen({ onNav }: { onNav: (s: Screen) => void }) {
   const router = useRouter();
   const [hovScratch, setHovScratch] = useState(false);
@@ -1687,6 +1712,16 @@ export function BuilderScreen({ onNav }: { onNav: (s: Screen) => void }) {
   const [draft, setDraft] = useState(NEW_PACKAGE_DRAFT);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState("");
+  const [destinationSearch, setDestinationSearch] = useState("");
+  const { destinations, recommended, destinationsLoading } = useDestinationCatalog();
+  const selectedDestination = draft.destination_city && draft.destination_country
+    ? `${draft.destination_city}, ${draft.destination_country}`
+    : null;
+  const selectManualDestination = (destination: DestinationOption) => {
+    const selection = destinationSelection(destination);
+    setDestinationSearch(selection.search);
+    setDraft((current) => applyCatalogDestination(current, destination));
+  };
 
   const createDraftPackage = async () => {
     setCreating(true);
@@ -1706,6 +1741,7 @@ export function BuilderScreen({ onNav }: { onNav: (s: Screen) => void }) {
       });
       setNewPackageOpen(false);
       setDraft(NEW_PACKAGE_DRAFT);
+      setDestinationSearch("");
       router.push(`/packages/editor/${encodeURIComponent(package_id)}`);
     } catch (error) {
       setCreateError(error instanceof Error ? error.message : "Unable to create this package.");
@@ -1714,9 +1750,7 @@ export function BuilderScreen({ onNav }: { onNav: (s: Screen) => void }) {
     }
   };
 
-  const draftValid = draft.title.trim() && draft.description.trim()
-    && draft.destination_country.trim() && draft.destination_city.trim()
-    && Number(draft.duration_days) >= 1 && draft.base_price_aud.trim() !== "" && Number(draft.base_price_aud) >= 0;
+  const draftValid = isNewPackageDraftValid(draft);
 
   useEffect(() => {
     if (!newPackageOpen) return;
@@ -1893,7 +1927,7 @@ export function BuilderScreen({ onNav }: { onNav: (s: Screen) => void }) {
             aria-modal="true"
             aria-labelledby="new-package-title"
             onMouseDown={(event) => event.stopPropagation()}
-            style={{ width: "100%", maxWidth: 480, maxHeight: "90vh", overflowY: "auto", background: C.white, borderRadius: C.radiusLg, boxShadow: C.shadowRaised, padding: 32 }}
+            style={{ width: "100%", maxWidth: 840, maxHeight: "90vh", overflowY: "auto", background: C.white, borderRadius: C.radiusLg, boxShadow: C.shadowRaised, padding: 32 }}
           >
             <h2 id="new-package-title" style={{ fontFamily: "var(--fc-font-body)", fontSize: 20, fontWeight: 700, color: C.ink, margin: "0 0 4px" }}>New package</h2>
             <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, color: C.secondary, margin: "0 0 24px", lineHeight: "21px" }}>
@@ -1903,10 +1937,19 @@ export function BuilderScreen({ onNav }: { onNav: (s: Screen) => void }) {
             <div style={{ display: "grid", gap: 20 }}>
               <DraftField label="Title *" value={draft.title} onChange={(value) => setDraft({ ...draft, title: value })} placeholder="e.g. Kyoto Autumn Cultural Tour" />
               <DraftField label="Description *" value={draft.description} onChange={(value) => setDraft({ ...draft, description: value })} textarea placeholder="What makes this trip worth booking?" />
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-                <DraftField label="Destination country *" value={draft.destination_country} onChange={(value) => setDraft({ ...draft, destination_country: value })} placeholder="Japan" />
-                <DraftField label="Destination city *" value={draft.destination_city} onChange={(value) => setDraft({ ...draft, destination_city: value })} placeholder="Kyoto" />
-              </div>
+              <DestinationPicker
+                idPrefix="manual"
+                search={destinationSearch}
+                selected={selectedDestination}
+                destinations={destinations}
+                recommended={recommended}
+                loading={destinationsLoading}
+                onSearchChange={(value) => {
+                  setDestinationSearch(value);
+                  setDraft((current) => applyCatalogDestination(current, null));
+                }}
+                onSelect={selectManualDestination}
+              />
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16 }}>
                 <DraftField label="Duration (days) *" type="number" value={draft.duration_days} onChange={(value) => setDraft({ ...draft, duration_days: value })} />
                 <DraftField label="Base price (AUD) *" type="number" value={draft.base_price_aud} onChange={(value) => setDraft({ ...draft, base_price_aud: value })} placeholder="2200" />
@@ -1962,10 +2005,187 @@ export function destinationMatchesSearch(
   return `${destination.city}, ${destination.country}`.toLowerCase().includes(query.trim().toLowerCase());
 }
 
+export function destinationOptionsForSearch(
+  destinations: DestinationOption[],
+  recommended: DestinationOption[],
+  query: string,
+) {
+  return query
+    ? destinations.filter((destination) => destinationMatchesSearch(destination, query))
+    : recommended;
+}
+
 // A destination needs at least this many catalog activities before it's
 // eligible for "Recommended" — otherwise a high average rating could be an
 // artifact of two or three activities, not a real signal the creator can build on.
 const MIN_ACTIVITIES_FOR_RECOMMENDATION = 10;
+
+function useDestinationCatalog() {
+  const [destinations, setDestinations] = useState<DestinationOption[]>([]);
+  const [recommended, setRecommended] = useState<DestinationOption[]>([]);
+  const [destinationsLoading, setDestinationsLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const places = new Map<string, { city: string; country: string }>();
+      const activityCounts = new Map<string, number>();
+      const ratingTotals = new Map<string, { sum: number; count: number }>();
+      const pageSize = 1000;
+      for (let offset = 0; offset < 10_000; offset += pageSize) {
+        const { data, error } = await supabase
+          .from("activities")
+          .select("city,country,rating")
+          .order("city", { ascending: true })
+          .range(offset, offset + pageSize - 1);
+        if (error || !data || cancelled) break;
+        for (const row of data) {
+          const key = `${row.city}|${row.country}`;
+          if (!places.has(key)) places.set(key, { city: row.city, country: row.country });
+          activityCounts.set(key, (activityCounts.get(key) ?? 0) + 1);
+          if (row.rating != null) {
+            const totals = ratingTotals.get(key) ?? { sum: 0, count: 0 };
+            totals.sum += row.rating;
+            totals.count += 1;
+            ratingTotals.set(key, totals);
+          }
+        }
+        if (data.length < pageSize) break;
+      }
+      if (cancelled) return;
+      const found: DestinationOption[] = [...places.entries()].map(([key, place]) => {
+        const totals = ratingTotals.get(key);
+        return { ...place, avgRating: totals && totals.count > 0 ? totals.sum / totals.count : 0 };
+      });
+      found.sort((a, b) => a.city.localeCompare(b.city));
+      setDestinations(found);
+      setRecommended(
+        found
+          .filter((destination) => (activityCounts.get(`${destination.city}|${destination.country}`) ?? 0) >= MIN_ACTIVITIES_FOR_RECOMMENDATION)
+          .sort((a, b) => b.avgRating - a.avgRating)
+          .slice(0, 6),
+      );
+      setDestinationsLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  return { destinations, recommended, destinationsLoading };
+}
+
+function DestinationPicker({
+  idPrefix,
+  search,
+  selected,
+  destinations,
+  recommended,
+  loading,
+  onSearchChange,
+  onSelect,
+}: {
+  idPrefix: string;
+  search: string;
+  selected: string | null;
+  destinations: DestinationOption[];
+  recommended: DestinationOption[];
+  loading: boolean;
+  onSearchChange: (value: string) => void;
+  onSelect: (destination: DestinationOption) => void;
+}) {
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [recommendationInfoOpen, setRecommendationInfoOpen] = useState(false);
+  const [hovered, setHovered] = useState<string | null>(null);
+  const filtered = destinations.filter((destination) => destinationMatchesSearch(destination, search));
+  const visible = destinationOptionsForSearch(destinations, recommended, search);
+  const listboxId = `${idPrefix}-destination-listbox`;
+  const tooltipId = `${idPrefix}-destination-recommendation-tooltip`;
+
+  return (
+    <div>
+      <label style={{ display: "block", margin: "0 0 24px" }}>
+        <span style={{ display: "block", fontFamily: "var(--fc-font-body)", fontSize: 12, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: C.secondary, marginBottom: 10 }}>
+          Search destinations
+        </span>
+        <div style={{ position: "relative" }}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={C.secondary} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ position: "absolute", left: 16, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }}>
+            <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
+          </svg>
+          <input
+            value={search}
+            onChange={(event) => { onSearchChange(event.target.value); setDropdownOpen(true); }}
+            placeholder="Search by city or country…"
+            role="combobox"
+            aria-expanded={dropdownOpen}
+            aria-autocomplete="list"
+            aria-controls={listboxId}
+            style={{
+              width: "100%", boxSizing: "border-box", height: 52,
+              paddingLeft: 48, paddingRight: search ? 48 : 16,
+              fontFamily: "var(--fc-font-body)", fontSize: 15, color: C.ink,
+              border: `1.5px solid ${C.border}`, borderRadius: 12, outline: "none",
+              background: C.white, boxShadow: C.shadowCard,
+              transition: "border-color 140ms, box-shadow 140ms",
+            }}
+            onFocus={(event) => { event.currentTarget.style.borderColor = C.blue; event.currentTarget.style.boxShadow = `0 0 0 3px ${C.focusRing}`; setDropdownOpen(true); }}
+            onBlur={(event) => { event.currentTarget.style.borderColor = C.border; event.currentTarget.style.boxShadow = C.shadowCard; setDropdownOpen(false); }}
+            onKeyDown={(event) => { if (event.key === "Escape") event.currentTarget.blur(); }}
+          />
+          {search && (
+            <button type="button" aria-label="Clear destination search" onClick={() => onSearchChange("")} style={{ position: "absolute", right: 6, top: 4, width: 44, height: 44, display: "grid", placeItems: "center", border: 0, background: "transparent", color: C.secondary, cursor: "pointer" }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
+            </button>
+          )}
+          {dropdownOpen && (
+            <div id={listboxId} role="listbox" aria-label="City or country results" style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, zIndex: 20, maxHeight: 320, overflowY: "auto", background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, boxShadow: C.shadowRaised }}>
+              {loading && <p style={{ margin: 0, padding: "14px 16px", fontFamily: "var(--fc-font-body)", fontSize: 13, color: C.secondary }}>Loading destinations…</p>}
+              {!loading && filtered.length === 0 && <p style={{ margin: 0, padding: "14px 16px", fontFamily: "var(--fc-font-body)", fontSize: 13, color: C.secondary }}>No destinations found{search ? ` for “${search}”` : ""}.</p>}
+              {filtered.map((destination) => {
+                const name = `${destination.city}, ${destination.country}`;
+                return (
+                  <button key={name} type="button" role="option" aria-selected={selected === name} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setHovered(name)} onMouseLeave={() => setHovered(null)} onClick={() => { onSelect(destination); setDropdownOpen(false); }} style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", border: 0, borderBottom: `1px solid ${C.border}`, background: destinationOptionBackground(selected === name, hovered === name), cursor: "pointer", textAlign: "left", transition: "background-color 120ms ease" }}>
+                    <span><span style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 600, color: selected === name ? C.blue : C.ink }}>{destination.city}</span><span style={{ fontFamily: "var(--fc-font-body)", fontSize: 13, color: C.secondary }}>, {destination.country}</span></span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+        <p style={{ margin: "8px 2px 0", fontFamily: "var(--fc-font-body)", fontSize: 12.5, lineHeight: "17px", color: C.secondary }}>
+          Some destinations are currently unavailable due to safety considerations.
+        </p>
+      </label>
+
+      <div style={{ minHeight: 32, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, marginBottom: 10 }}>
+        <div style={{ fontFamily: "var(--fc-font-body)", fontSize: 12, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: C.secondary, margin: 0, display: "flex", alignItems: "center", gap: 6 }}>
+          {search ? `${filtered.length} matching destinations` : "Recommended destinations"}
+          {!search && (
+            <span onMouseEnter={() => setRecommendationInfoOpen((open) => nextRecommendationInfoOpen(open, "focus"))} onMouseLeave={() => setRecommendationInfoOpen((open) => nextRecommendationInfoOpen(open, "leave"))} style={{ position: "relative", display: "inline-flex" }}>
+              <button type="button" aria-label="How destinations are recommended" aria-expanded={recommendationInfoOpen} aria-describedby={recommendationInfoOpen ? tooltipId : undefined} onFocus={() => setRecommendationInfoOpen((open) => nextRecommendationInfoOpen(open, "focus"))} onBlur={() => setRecommendationInfoOpen((open) => nextRecommendationInfoOpen(open, "leave"))} onClick={() => setRecommendationInfoOpen((open) => nextRecommendationInfoOpen(open, "click"))} style={{ width: 18, height: 18, display: "grid", placeItems: "center", padding: 0, border: 0, borderRadius: "50%", background: C.subtle, color: C.secondary, cursor: "pointer", fontFamily: "var(--fc-font-body)", fontSize: 12, fontWeight: 700, lineHeight: 1, textTransform: "none", letterSpacing: "normal" }}>?</button>
+              {recommendationInfoOpen && <div id={tooltipId} role="tooltip" style={{ position: "absolute", top: "calc(100% + 8px)", left: "50%", transform: "translateX(-50%)", width: 240, padding: "10px 12px", zIndex: 30, background: C.ink, color: "#fff", borderRadius: 8, boxShadow: C.shadowRaised, fontFamily: "var(--fc-font-body)", fontSize: 12, fontWeight: 400, lineHeight: 1.5, textTransform: "none", letterSpacing: "normal" }}>Ranked by each destination&rsquo;s average activity rating in our catalog.</div>}
+            </span>
+          )}
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 12, marginBottom: 20 }}>
+        {visible.map((destination) => {
+          const name = `${destination.city}, ${destination.country}`;
+          const isSelected = selected === name;
+          const isHovered = hovered === name;
+          return (
+            <button key={name} type="button" onClick={() => onSelect(destination)} onMouseEnter={() => setHovered(name)} onMouseLeave={() => setHovered(null)} style={{ minHeight: 64, textAlign: "left", padding: "16px 18px", overflow: "hidden", background: C.white, border: `2px solid ${isSelected ? C.blue : isHovered ? "#BDBDBD" : C.border}`, borderRadius: 12, cursor: "pointer", boxShadow: isSelected ? "0 0 0 3px rgba(0,114,234,0.15)" : isHovered ? C.shadowCard : "none", transition: "border-color 140ms, box-shadow 140ms", position: "relative" }}>
+              {isSelected && <div style={{ position: "absolute", top: 12, right: 12, width: 22, height: 22, borderRadius: "50%", background: C.blue, display: "flex", alignItems: "center", justifyContent: "center" }}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg></div>}
+              <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 15, fontWeight: 700, color: isSelected ? C.blue : C.ink, margin: 0, paddingRight: isSelected ? 24 : 0 }}>{destination.city}</p>
+              <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 13, color: isSelected ? C.blue : C.secondary, margin: "2px 0 0" }}>{destination.country}</p>
+            </button>
+          );
+        })}
+        {loading && <div style={{ gridColumn: "1 / -1", padding: 28, border: `1px dashed ${C.border}`, borderRadius: 12, background: C.white, textAlign: "center" }}><p style={{ margin: 0, fontFamily: "var(--fc-font-body)", fontSize: 13, color: C.secondary }}>Loading destinations…</p></div>}
+        {!loading && search && visible.length === 0 && <div style={{ gridColumn: "1 / -1", padding: 28, border: `1px dashed ${C.border}`, borderRadius: 12, background: C.white, textAlign: "center" }}><p style={{ margin: "0 0 5px", fontFamily: "var(--fc-font-body)", fontSize: 15, fontWeight: 600, color: C.ink }}>No destinations found for “{search}”</p><p style={{ margin: 0, fontFamily: "var(--fc-font-body)", fontSize: 13, color: C.secondary }}>Try a different city or country.</p></div>}
+      </div>
+    </div>
+  );
+}
 
 const VIBES = [
   { id: "chill",      label: "Chill",            desc: "Spa days, yoga sessions, and slow-paced downtime",          img: "https://images.unsplash.com/photo-1602002418816-5c0aeef426aa?w=600&h=320&fit=crop" },
@@ -2002,23 +2222,145 @@ export function wizardDraftToPackageInput(draft: {
   };
 }
 
+const GENERATION_STEPS = [
+  {
+    id: "flights", label: "Flights", description: "Finding the best options...",
+    statuses: ["Checking routes that keep your trip moving smoothly...", "Looking for fewer layovers and better arrival times..."],
+  },
+  {
+    id: "hotels", label: "Hotels", description: "Selecting great places...",
+    statuses: ["Finding a hotel your suitcase can call home...", "Checking locations that make mornings easier..."],
+  },
+  {
+    id: "activities", label: "Activities", description: "Adding local experiences...",
+    statuses: ["Looking beyond the obvious tourist stops...", "Mixing local favourites with memorable detours...", "Leaving a little room for happy surprises..."],
+  },
+  {
+    id: "finalising", label: "Finalising", description: "Putting everything together...",
+    statuses: ["Bringing every part of your trip together...", "Making sure each day flows naturally...", "Tucking the final details into place...", "Giving the itinerary one last thoughtful look..."],
+  },
+] as const;
+
+const GENERATION_STEP_STARTS = [0, 5_000, 11_000, 18_000] as const;
+
+export function generationVisualState(elapsedMs: number, complete: boolean) {
+  if (complete) return { activeStep: GENERATION_STEPS.length, progress: 100 };
+  const elapsed = Math.max(0, elapsedMs);
+  if (elapsed < 5_000) return { activeStep: 0, progress: (elapsed / 5_000) * 30 };
+  if (elapsed < 11_000) return { activeStep: 1, progress: 30 + ((elapsed - 5_000) / 6_000) * 25 };
+  if (elapsed < 18_000) return { activeStep: 2, progress: 55 + ((elapsed - 11_000) / 7_000) * 25 };
+  return { activeStep: 3, progress: Math.min(92, 80 + ((elapsed - 18_000) / 42_000) * 12) };
+}
+
+export function generationStatusMessage(elapsedMs: number, complete: boolean) {
+  if (complete) return "Your trip is ready.";
+  const elapsed = Math.max(0, elapsedMs);
+  const { activeStep } = generationVisualState(elapsed, false);
+  if (activeStep === 3 && elapsed >= 30_000) return "Still working on the finishing touches...";
+  const messages = GENERATION_STEPS[activeStep].statuses;
+  const timeInStep = elapsed - GENERATION_STEP_STARTS[activeStep];
+  return messages[Math.floor(timeInStep / 3_000) % messages.length];
+}
+
+export function generationProgressLabel(progress: number) {
+  return `${Math.round(Math.min(100, Math.max(0, progress)))}%`;
+}
+
+function GenerationIcon({ id }: { id: (typeof GENERATION_STEPS)[number]["id"] }) {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {id === "flights" ? (
+        <><path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 4 2 2 4 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2Z"/></>
+      ) : id === "hotels" ? (
+        <><rect x="4" y="2" width="16" height="20" rx="2"/><path d="M9 22v-4h6v4M8 6h.01M12 6h.01M16 6h.01M8 10h.01M12 10h.01M16 10h.01M8 14h.01M12 14h.01M16 14h.01"/></>
+      ) : id === "activities" ? (
+        <><path d="m3 6 6-3 6 3 6-3v15l-6 3-6-3-6 3Z"/><path d="M9 3v15M15 6v15"/></>
+      ) : (
+        <><path d="m12 3 1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5Z"/><path d="m18.5 15 .8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8Z"/></>
+      )}
+    </svg>
+  );
+}
+
+function GenerationStep({
+  step,
+  state,
+}: {
+  step: (typeof GENERATION_STEPS)[number];
+  state: "pending" | "active" | "complete";
+}) {
+  return (
+    <div className={state === "active" ? "generation-step generation-step-active" : "generation-step"} style={{
+      minHeight: 76, display: "grid", gridTemplateColumns: "40px minmax(0, 1fr) 24px", alignItems: "center", gap: 14,
+      padding: "12px 16px", border: `1px solid ${state === "active" ? "#9BCBFA" : C.border}`, borderRadius: C.radiusMd,
+      background: state === "active" ? "#F4F9FF" : C.white,
+      opacity: state === "pending" ? 0.62 : 1,
+      transition: "opacity 220ms ease-out, border-color 220ms ease-out, background 220ms ease-out",
+    }}>
+      <div style={{ width: 40, height: 40, display: "grid", placeItems: "center", borderRadius: 10, background: state === "active" ? "#E7F2FE" : C.subtle, color: state === "active" ? C.blue : state === "complete" ? C.secondary : C.disabled, transition: "color 220ms ease-out, background 220ms ease-out" }}>
+        <GenerationIcon id={step.id} />
+      </div>
+      <div>
+        <p style={{ margin: "0 0 3px", fontFamily: "var(--fc-font-body)", fontSize: 15, lineHeight: "20px", fontWeight: 700, color: state === "pending" ? C.secondary : C.ink }}>{step.label}</p>
+        <p style={{ margin: 0, fontFamily: "var(--fc-font-body)", fontSize: 13, lineHeight: "18px", color: C.secondary }}>{step.description}</p>
+      </div>
+      {state === "complete" ? (
+        <span className="generation-check" aria-label="Complete" style={{ width: 24, height: 24, display: "grid", placeItems: "center", borderRadius: "50%", background: "#E7F8F0" }}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={C.success} strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        </span>
+      ) : state === "active" ? (
+        <span className="generation-spinner" aria-label="In progress" style={{ width: 20, height: 20, borderRadius: "50%", border: `2px solid #CFE5FC`, borderTopColor: C.blue }} />
+      ) : (
+        <span aria-label="Pending" style={{ width: 20, height: 20, borderRadius: "50%", border: `2px solid ${C.border}` }} />
+      )}
+    </div>
+  );
+}
+
+function PackageGenerationLoader({ elapsedMs, complete }: { elapsedMs: number; complete: boolean }) {
+  const { activeStep, progress } = generationVisualState(elapsedMs, complete);
+  const status = generationStatusMessage(elapsedMs, complete);
+
+  return (
+    <div style={{ flex: 1, minHeight: 0, overflowY: "auto", display: "grid", placeItems: "center", padding: "40px 24px" }}>
+      <div style={{ width: "min(520px, 100%)" }}>
+        <div style={{ textAlign: "center", marginBottom: 28 }}>
+          <h1 style={{ fontFamily: "var(--fc-font-body)", fontSize: 32, lineHeight: "40px", fontWeight: 700, color: C.ink, margin: "0 0 8px", letterSpacing: "-0.02em" }}>Building your perfect trip...</h1>
+          <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 15, lineHeight: "22px", color: C.secondary, margin: 0 }}>Our AI is crafting a personalised travel package just for you</p>
+        </div>
+
+        <div style={{ display: "grid", gap: 10 }}>
+          {GENERATION_STEPS.map((step, index) => (
+            <GenerationStep key={step.id} step={step} state={index < activeStep ? "complete" : index === activeStep ? "active" : "pending"} />
+          ))}
+        </div>
+
+        <p aria-live="polite" style={{ margin: "24px 0 12px", minHeight: 20, textAlign: "center", fontFamily: "var(--fc-font-body)", fontSize: 14, lineHeight: "20px", fontWeight: 500, color: C.secondary }}>{status}</p>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div role="progressbar" aria-label="Trip package generation progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress)} style={{ flex: 1, height: 7, overflow: "hidden", borderRadius: C.radiusPill, background: C.border }}>
+            <div className="generation-progress-fill" style={{ width: "100%", height: "100%", borderRadius: C.radiusPill, background: complete ? C.success : C.blue, transform: `scaleX(${progress / 100})`, transformOrigin: "left center" }} />
+          </div>
+          <span style={{ minWidth: 36, textAlign: "right", fontFamily: "var(--fc-font-body)", fontSize: 13, lineHeight: "18px", fontWeight: 600, fontVariantNumeric: "tabular-nums", color: C.secondary }}>{generationProgressLabel(progress)}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequestId = 0 }: { onNav: (s: Screen) => void; initialStep?: number; requestedStep?: number; stepRequestId?: number }) {
   const router = useRouter();
   const [step, setStep] = useState(initialStep);
   const [selected, setSelected] = useState<string | null>(null);
   const [dest, setDest] = useState("");
   const [destinationSearch, setDestinationSearch] = useState("");
-  const [destinations, setDestinations] = useState<DestinationOption[]>([]);
-  const [recommended, setRecommended] = useState<DestinationOption[]>([]);
-  const [destinationsLoading, setDestinationsLoading] = useState(true);
-  const [destinationDropdownOpen, setDestinationDropdownOpen] = useState(false);
-  const [recommendationInfoOpen, setRecommendationInfoOpen] = useState(false);
+  const { destinations, recommended, destinationsLoading } = useDestinationCatalog();
   const [hovCard, setHovCard] = useState<string | null>(null);
   const [vibes, setVibes] = useState<string[]>([]);
   const [duration, setDuration] = useState<"short" | "mid" | "long" | "custom" | null>(null);
   const [customDurationDays, setCustomDurationDays] = useState(7);
   const [season, setSeason] = useState<string | null>(null);
-  const [progress, setProgress] = useState(0);
+  const [generationElapsedMs, setGenerationElapsedMs] = useState(0);
+  const [generationComplete, setGenerationComplete] = useState(false);
   const [createdPackageId, setCreatedPackageId] = useState<string | null>(null);
   const [builtSetup, setBuiltSetup] = useState<string | null>(null);
   const inFlightSetupRef = useRef<string | null>(null);
@@ -2031,76 +2373,13 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
     setStep(requestedStep);
   }, [requestedStep, stepRequestId]);
 
-  // The catalog only has ~70 distinct city/country pairs, so one fetch on
-  // mount (RLS grants public SELECT — see supabase/migrations/0003_rls_policies.sql)
-  // covers the whole picker; filtering then happens client-side with no
-  // re-fetch per keystroke. PostgREST caps a single response at 1000 rows,
-  // so page through activities (paginated) until a short page signals the end.
-  // Average rating (used by the recommendation ranking below) comes from
-  // this same pass.
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const places = new Map<string, { city: string; country: string }>();
-      const activityCounts = new Map<string, number>();
-      const ratingTotals = new Map<string, { sum: number; count: number }>();
-      const pageSize = 1000;
-      for (let offset = 0; offset < 10_000; offset += pageSize) {
-        const { data, error } = await supabase
-          .from("activities")
-          .select("city,country,rating")
-          .order("city", { ascending: true })
-          .range(offset, offset + pageSize - 1);
-        if (error || !data || cancelled) break;
-        for (const row of data) {
-          const key = `${row.city}|${row.country}`;
-          if (!places.has(key)) places.set(key, { city: row.city, country: row.country });
-          activityCounts.set(key, (activityCounts.get(key) ?? 0) + 1);
-          if (row.rating != null) {
-            const totals = ratingTotals.get(key) ?? { sum: 0, count: 0 };
-            totals.sum += row.rating;
-            totals.count += 1;
-            ratingTotals.set(key, totals);
-          }
-        }
-        if (data.length < pageSize) break;
-      }
-      if (cancelled) return;
-      const found: DestinationOption[] = [...places.entries()].map(([key, place]) => {
-        const totals = ratingTotals.get(key);
-        return { ...place, avgRating: totals && totals.count > 0 ? totals.sum / totals.count : 0 };
-      });
-      found.sort((a, b) => a.city.localeCompare(b.city));
-      setDestinations(found);
-      // Recommended = highest average activity rating in the catalog, so the
-      // creator starts from destinations with genuinely well-reviewed material
-      // to build a package from — not a random sample. Destinations without
-      // enough activities to make that average meaningful are excluded first.
-      setRecommended(
-        found
-          .filter((d) => (activityCounts.get(`${d.city}|${d.country}`) ?? 0) >= MIN_ACTIVITIES_FOR_RECOMMENDATION)
-          .sort((a, b) => b.avgRating - a.avgRating)
-          .slice(0, 6),
-      );
-      setDestinationsLoading(false);
-    })();
-    return () => { cancelled = true; };
-  }, []);
-
-  // Climbs to 92% on a fixed schedule, then keeps creeping toward — but
-  // never reaching — 99% for as long as the build actually takes, so a
-  // slow request never sits dead-flat at one number. The jump to 100% only
-  // happens once the package is actually created, in the effect below.
   useEffect(() => {
     if (!isLoading) return;
-    setProgress(0);
-    const interval = setInterval(() => {
-      setProgress((p) => {
-        if (p < 92) return Math.min(92, p + (p < 60 ? 1.2 : p < 85 ? 0.6 : 0.3));
-        return p + (99 - p) * 0.0015;
-      });
-    }, 60);
-    return () => clearInterval(interval);
+    const startedAt = Date.now() - generationElapsedMs;
+    const interval = window.setInterval(() => setGenerationElapsedMs(Date.now() - startedAt), 100);
+    return () => window.clearInterval(interval);
+    // A new run resets elapsed time before entering the loading step.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoading]);
 
   useEffect(() => {
@@ -2150,7 +2429,7 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
         // Skipped only when a newer build for a different setup superseded this one.
         if (inFlightSetupRef.current === runSetup) {
           setCreatedPackageId(package_id);
-          setProgress(100); // real completion, not the crawl-to-92 fake schedule
+          setGenerationComplete(true);
         }
       } catch (error) {
         if (inFlightSetupRef.current === runSetup) inFlightSetupRef.current = null;
@@ -2168,22 +2447,19 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
   }, [isLoading]);
 
   useEffect(() => {
-    if (!isLoading || progress < 100 || !createdPackageId) return;
-    const timeout = window.setTimeout(() => router.push(`/packages/editor/${encodeURIComponent(createdPackageId)}`), 500);
+    if (!isLoading || !generationComplete || !createdPackageId) return;
+    const timeout = window.setTimeout(() => router.push(`/packages/editor/${encodeURIComponent(createdPackageId)}`), 350);
     return () => window.clearTimeout(timeout);
-  }, [isLoading, progress, createdPackageId, router]);
+  }, [isLoading, generationComplete, createdPackageId, router]);
 
   // Step 0 requires an actual pick from the catalog — typing alone (without
   // selecting a result) must not be enough to continue.
   const canContinue = step === 0 ? selected !== null : step === 1 ? vibes.length > 0 : step === 2 ? duration !== null : step === 3 ? season !== null : true;
-  const filteredDestinations = destinations.filter((destination) =>
-    destinationMatchesSearch(destination, destinationSearch));
   const selectDestination = (d: DestinationOption) => {
     const { name, search } = destinationSelection(d);
     setSelected(name);
     setDest(name);
     setDestinationSearch(search);
-    setDestinationDropdownOpen(false);
   };
   const stepSummaries = [
     selected ?? dest.trim(),
@@ -2208,7 +2484,8 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
       setBuiltSetup(currentSetup);
       setCreatedPackageId(null);
       setCreateError("");
-      setProgress(0);
+      setGenerationElapsedMs(0);
+      setGenerationComplete(false);
       setStep(4);
       return;
     }
@@ -2218,26 +2495,7 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
   return (
     <div style={{ height: "calc(100vh - 116px)", background: "#FAFAFA", display: "flex", flexDirection: "column", overflow: "hidden" }}>
       {isLoading ? (
-        /* ── Loading screen ── */
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 0 }}>
-          <h1 style={{ fontFamily: "var(--fc-font-body)", fontSize: 32, fontWeight: 700, color: C.ink, margin: "0 0 10px", letterSpacing: "-0.02em" }}>
-            Building your perfect trip ...
-          </h1>
-          <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 15, color: C.secondary, margin: "0 0 36px" }}>
-            Our AI is crafting a personalised travel package trip just for you
-          </p>
-          <div style={{ width: 320, height: 260, borderRadius: 16, overflow: "hidden", marginBottom: 40, background: C.subtle }}>
-            <img src="https://images.unsplash.com/photo-1654693289021-3ff2c9df4092?w=640&h=520&fit=crop" alt="Building trip" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-          </div>
-          <div style={{ width: 560, display: "flex", alignItems: "center", gap: 14 }}>
-            <div style={{ flex: 1, height: 8, borderRadius: 99, background: C.border, overflow: "hidden" }}>
-              <div style={{ height: "100%", width: "100%", borderRadius: 99, background: C.ink, transform: `scaleX(${Math.min(progress, 100) / 100})`, transformOrigin: "left center", transition: "transform 60ms linear" }} />
-            </div>
-            <span style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 600, color: C.ink, minWidth: 40, textAlign: "right" }}>
-              {Math.min(Math.round(progress), 100)}%
-            </span>
-          </div>
-        </div>
+        <PackageGenerationLoader elapsedMs={generationElapsedMs} complete={generationComplete} />
       ) : (
       <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", maxWidth: 960, margin: "0 auto", width: "100%", padding: "40px 32px 0" }}>
 
@@ -2423,159 +2681,20 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
           </div>
         ) : (
           /* ── Step 1: Destination ── */
-          <div>
-          <label style={{ display: "block", margin: "0 0 24px" }}>
-            <span style={{ display: "block", fontFamily: "var(--fc-font-body)", fontSize: 12, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: C.secondary, marginBottom: 10 }}>
-              Search destinations
-            </span>
-            <div style={{ position: "relative" }}>
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={C.secondary} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-                style={{ position: "absolute", left: 16, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }}>
-                <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
-              </svg>
-              <input
-                value={destinationSearch}
-                onChange={(e) => { setDestinationSearch(e.target.value); setSelected(null); setDest(""); setDestinationDropdownOpen(true); }}
-                placeholder="Search by city or country…"
-                role="combobox"
-                aria-expanded={destinationDropdownOpen}
-                aria-autocomplete="list"
-                aria-controls="wizard-destination-listbox"
-                style={{
-                  width: "100%", boxSizing: "border-box", height: 52,
-                  paddingLeft: 48, paddingRight: destinationSearch ? 48 : 16,
-                  fontFamily: "var(--fc-font-body)", fontSize: 15, color: C.ink,
-                  border: `1.5px solid ${C.border}`, borderRadius: 12, outline: "none",
-                  background: C.white, boxShadow: C.shadowCard,
-                  transition: "border-color 140ms, box-shadow 140ms",
-                }}
-                onFocus={(e) => { e.currentTarget.style.borderColor = C.blue; e.currentTarget.style.boxShadow = `0 0 0 3px ${C.focusRing}`; setDestinationDropdownOpen(true); }}
-                onBlur={(e) => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.boxShadow = C.shadowCard; setDestinationDropdownOpen(false); }}
-                onKeyDown={(e) => { if (e.key === "Escape") e.currentTarget.blur(); }}
-              />
-              {destinationSearch && <button type="button" aria-label="Clear destination search" onClick={() => { setDestinationSearch(""); setSelected(null); setDest(""); }} style={{ position: "absolute", right: 6, top: 4, width: 44, height: 44, display: "grid", placeItems: "center", border: 0, background: "transparent", color: C.secondary, cursor: "pointer" }}>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
-              </button>}
-              {destinationDropdownOpen && (
-                <div id="wizard-destination-listbox" role="listbox" aria-label="City or country results" style={{
-                  position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, zIndex: 20,
-                  maxHeight: 320, overflowY: "auto",
-                  background: C.white, border: `1px solid ${C.border}`, borderRadius: 12,
-                  boxShadow: C.shadowRaised,
-                }}>
-                  {destinationsLoading && <p style={{ margin: 0, padding: "14px 16px", fontFamily: "var(--fc-font-body)", fontSize: 13, color: C.secondary }}>Loading destinations…</p>}
-                  {!destinationsLoading && filteredDestinations.length === 0 && (
-                    <p style={{ margin: 0, padding: "14px 16px", fontFamily: "var(--fc-font-body)", fontSize: 13, color: C.secondary }}>No destinations found{destinationSearch ? ` for “${destinationSearch}”` : ""}.</p>
-                  )}
-                  {filteredDestinations.map((d) => {
-                    const name = `${d.city}, ${d.country}`;
-                    const isHovered = hovCard === name;
-                    return (
-                      <button key={name} type="button" role="option" aria-selected={selected === name}
-                        onMouseDown={(e) => e.preventDefault()}
-                        onMouseEnter={() => setHovCard(name)}
-                        onMouseLeave={() => setHovCard(null)}
-                        onClick={() => selectDestination(d)}
-                        style={{
-                          width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
-                          padding: "10px 16px", border: 0, borderBottom: `1px solid ${C.border}`,
-                          background: destinationOptionBackground(selected === name, isHovered), cursor: "pointer", textAlign: "left",
-                          transition: "background-color 120ms ease",
-                        }}
-                      >
-                        <span>
-                          <span style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 600, color: selected === name ? C.blue : C.ink }}>{d.city}</span>
-                          <span style={{ fontFamily: "var(--fc-font-body)", fontSize: 13, color: C.secondary }}>, {d.country}</span>
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-            <p style={{ margin: "8px 2px 0", fontFamily: "var(--fc-font-body)", fontSize: 12.5, lineHeight: "17px", color: C.secondary }}>
-              Some destinations are currently unavailable due to safety considerations.
-            </p>
-          </label>
-          <div style={{ minHeight: 32, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, marginBottom: 10 }}>
-            <div style={{ fontFamily: "var(--fc-font-body)", fontSize: 12, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: C.secondary, margin: 0, display: "flex", alignItems: "center", gap: 6 }}>
-              {destinationSearch ? `${filteredDestinations.length} matching destinations` : "Recommended destinations"}
-              {!destinationSearch && (
-                <span
-                  onMouseEnter={() => setRecommendationInfoOpen((open) => nextRecommendationInfoOpen(open, "focus"))}
-                  onMouseLeave={() => setRecommendationInfoOpen((open) => nextRecommendationInfoOpen(open, "leave"))}
-                  style={{ position: "relative", display: "inline-flex" }}
-                >
-                  <button type="button" aria-label="How destinations are recommended"
-                    aria-expanded={recommendationInfoOpen}
-                    aria-describedby={recommendationInfoOpen ? "destination-recommendation-tooltip" : undefined}
-                    onFocus={() => setRecommendationInfoOpen((open) => nextRecommendationInfoOpen(open, "focus"))}
-                    onBlur={() => setRecommendationInfoOpen((open) => nextRecommendationInfoOpen(open, "leave"))}
-                    onClick={() => setRecommendationInfoOpen((open) => nextRecommendationInfoOpen(open, "click"))}
-                    style={{
-                      width: 18, height: 18, display: "grid", placeItems: "center", padding: 0,
-                      border: 0, borderRadius: "50%", background: C.subtle,
-                      color: C.secondary, cursor: "pointer",
-                      fontFamily: "var(--fc-font-body)", fontSize: 12, fontWeight: 700, lineHeight: 1,
-                      textTransform: "none", letterSpacing: "normal",
-                    }}
-                  >
-                    ?
-                  </button>
-                  {recommendationInfoOpen && (
-                    <div id="destination-recommendation-tooltip" role="tooltip" style={{
-                      position: "absolute", top: "calc(100% + 8px)", left: "50%", transform: "translateX(-50%)",
-                      width: 240, padding: "10px 12px", zIndex: 30,
-                      background: C.ink, color: "#fff", borderRadius: 8, boxShadow: C.shadowRaised,
-                      fontFamily: "var(--fc-font-body)", fontSize: 12, fontWeight: 400, lineHeight: 1.5,
-                      textTransform: "none", letterSpacing: "normal",
-                    }}>
-                      Ranked by each destination&rsquo;s average activity rating in our catalog.
-                    </div>
-                  )}
-                </span>
-              )}
-            </div>
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 12, marginBottom: 20 }}>
-            {(destinationSearch ? filteredDestinations : recommended).map((d) => {
-              const name = `${d.city}, ${d.country}`;
-              const isSel = selected === name;
-              const isHov = hovCard === name;
-              return (
-                <button key={name}
-                  onClick={() => selectDestination(d)}
-                  onMouseEnter={() => setHovCard(name)}
-                  onMouseLeave={() => setHovCard(null)}
-                  style={{
-                    minHeight: 64, textAlign: "left", padding: "16px 18px", overflow: "hidden",
-                    background: C.white,
-                    border: `2px solid ${isSel ? C.blue : isHov ? "#BDBDBD" : C.border}`,
-                    borderRadius: 12, cursor: "pointer",
-                    boxShadow: isSel ? "0 0 0 3px rgba(0,114,234,0.15)" : isHov ? C.shadowCard : "none",
-                    transition: "border-color 140ms, box-shadow 140ms",
-                    position: "relative",
-                  }}
-                >
-                  {isSel && <div style={{ position: "absolute", top: 12, right: 12, width: 22, height: 22, borderRadius: "50%", background: C.blue, display: "flex", alignItems: "center", justifyContent: "center" }}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg></div>}
-                  <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 15, fontWeight: 700, color: isSel ? C.blue : C.ink, margin: 0, paddingRight: isSel ? 24 : 0 }}>{d.city}</p>
-                  <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 13, color: isSel ? C.blue : C.secondary, margin: "2px 0 0" }}>{d.country}</p>
-                </button>
-              );
-            })}
-            {destinationsLoading && (
-              <div style={{ gridColumn: "1 / -1", padding: "28px", border: `1px dashed ${C.border}`, borderRadius: 12, background: C.white, textAlign: "center" }}>
-                <p style={{ margin: 0, fontFamily: "var(--fc-font-body)", fontSize: 13, color: C.secondary }}>Loading destinations…</p>
-              </div>
-            )}
-            {!destinationsLoading && destinationSearch && filteredDestinations.length === 0 && (
-              <div style={{ gridColumn: "1 / -1", padding: "28px", border: `1px dashed ${C.border}`, borderRadius: 12, background: C.white, textAlign: "center" }}>
-                <p style={{ margin: "0 0 5px", fontFamily: "var(--fc-font-body)", fontSize: 15, fontWeight: 600, color: C.ink }}>No destinations found for “{destinationSearch}”</p>
-                <p style={{ margin: 0, fontFamily: "var(--fc-font-body)", fontSize: 13, color: C.secondary }}>Try a different city or country.</p>
-              </div>
-            )}
-          </div>
-        </div>
+          <DestinationPicker
+            idPrefix="wizard"
+            search={destinationSearch}
+            selected={selected}
+            destinations={destinations}
+            recommended={recommended}
+            loading={destinationsLoading}
+            onSearchChange={(value) => {
+              setDestinationSearch(value);
+              setSelected(null);
+              setDest("");
+            }}
+            onSelect={selectDestination}
+          />
         )}</div>
         {createError && step === 3 && (
           <p role="alert" style={{ margin: "12px 0 0", fontFamily: "var(--fc-font-body)", fontSize: 13, color: "#B42318" }}>

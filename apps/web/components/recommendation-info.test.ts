@@ -42,3 +42,58 @@ test("a selected destination fills the search field and still matches the result
   assert.deepEqual(selection, { name: "Amsterdam, Netherlands", search: "Amsterdam, Netherlands" });
   assert.equal(destinationMatchesSearch!({ city: "Amsterdam", country: "Netherlands" }, selection.search), true);
 });
+
+test("manual package creation requires a destination selected from the catalog", () => {
+  type Draft = {
+    title: string;
+    description: string;
+    destination_country: string;
+    destination_city: string;
+    duration_days: string;
+    base_price_aud: string;
+    max_group_size: string;
+  };
+  const applyDestination = (screens as unknown as {
+    applyCatalogDestination?: (draft: Draft, destination: { city: string; country: string } | null) => Draft;
+  }).applyCatalogDestination;
+  const isValid = (screens as unknown as {
+    isNewPackageDraftValid?: (draft: Draft) => boolean;
+  }).isNewPackageDraftValid;
+  const draft: Draft = {
+    title: "Kyoto Autumn Cultural Tour",
+    description: "A guided cultural itinerary.",
+    destination_country: "",
+    destination_city: "",
+    duration_days: "4",
+    base_price_aud: "2200",
+    max_group_size: "",
+  };
+
+  assert.equal(typeof applyDestination, "function", "manual creation needs catalog-backed destination state");
+  assert.equal(typeof isValid, "function", "manual creation needs explicit destination validation");
+  assert.equal(isValid!(draft), false);
+
+  const selected = applyDestination!(draft, { city: "Kyoto", country: "Japan" });
+  assert.deepEqual(
+    { city: selected.destination_city, country: selected.destination_country },
+    { city: "Kyoto", country: "Japan" },
+  );
+  assert.equal(isValid!(selected), true);
+  assert.equal(isValid!(applyDestination!(selected, null)), false);
+});
+
+test("manual and AI destination steps use the same recommended and searched options", () => {
+  type Destination = { city: string; country: string; avgRating: number };
+  const optionsForSearch = (screens as unknown as {
+    destinationOptionsForSearch?: (destinations: Destination[], recommended: Destination[], query: string) => Destination[];
+  }).destinationOptionsForSearch;
+  const destinations = [
+    { city: "Athens", country: "Greece", avgRating: 4.7 },
+    { city: "Kyoto", country: "Japan", avgRating: 4.9 },
+  ];
+  const recommended = [destinations[1]];
+
+  assert.equal(typeof optionsForSearch, "function", "both flows need one destination display rule");
+  assert.deepEqual(optionsForSearch!(destinations, recommended, ""), recommended);
+  assert.deepEqual(optionsForSearch!(destinations, recommended, "gree"), [destinations[0]]);
+});

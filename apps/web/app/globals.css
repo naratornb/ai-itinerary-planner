@@ -199,6 +199,32 @@ body {
   100% { background-position: 200% 0; }
 }
 
+.generation-spinner { animation: generation-spin 800ms linear infinite; }
+.generation-check { animation: generation-check-in 240ms ease-out both; }
+.generation-step-active { animation: generation-step-in 220ms ease-out both; }
+.generation-progress-fill { transition: transform 180ms ease-out, background-color 220ms ease-out; }
+
+@keyframes generation-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes generation-check-in {
+  from { opacity: 0; transform: scale(0.7); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes generation-step-in {
+  from { opacity: 0.6; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .generation-spinner,
+  .generation-check,
+  .generation-step-active { animation: none; }
+  .generation-progress-fill { transition: none; }
+}
+
 /* ── Scrollbar ─────────────────────────────────── */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
