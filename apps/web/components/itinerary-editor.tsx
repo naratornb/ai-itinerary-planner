@@ -12,6 +12,7 @@ import {
   computePackagePrice,
   copilotSuggestionToTimelineItem,
   extractClockTimeInZone,
+  flightDurationMinutes,
   getEndTime,
   insertItemInDay,
   nextCalendarDate,
@@ -19,14 +20,12 @@ import {
   timezoneForIata,
   type BuilderDay,
   type DayPhoto,
-  type IconName,
   type TimelineItem,
 } from "../lib/itinerary-builder";
 import type { CopilotSuggestionV1 } from "../lib/copilot";
 import {
   deletePackageMedia,
   listPackageMedia,
-  submitPackage,
   updatePackage,
   uploadPackageMedia,
   CreatorApiError,
@@ -35,7 +34,9 @@ import {
   type CreatorHotelDetail,
   type CreatorPackageDetail,
 } from "../lib/creator-api";
+import { itinerarySnapshotStorageKey } from "../lib/review-draft";
 import { supabase } from "../lib/supabase/client";
+import Icon from "./icon";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -67,25 +68,6 @@ function timeToSlot(time: string): string {
   if (isNaN(h) || h < 13) return "Morning";
   if (h < 18) return "Afternoon";
   return "Evening";
-}
-
-function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
-  const paths: Record<IconName, React.ReactNode> = {
-    plane: <><path d="M21 16v-2l-8-5V3.5a1.5 1.5 0 0 0-3 0V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5z" /></>,
-    star: <path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z" />,
-    hotel: <><path d="M2 4v16" /><path d="M2 8h18a2 2 0 0 1 2 2v10" /><path d="M2 17h20" /><path d="M6 8v9" /></>,
-    plus: <><path d="M12 5v14M5 12h14" /></>,
-    alert: <path d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />,
-    check: <><circle cx="12" cy="12" r="9" /><path d="m8 12 2.5 2.5L16 9" /></>,
-    clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
-    chevron: <path d="m9 5 7 7-7 7" />,
-    pin: <><path d="M12 21s7-6.1 7-11.5A7 7 0 0 0 5 9.5C5 14.9 12 21 12 21Z" /><circle cx="12" cy="9.5" r="2.3" /></>,
-    hourglass: <><path d="M5 22h14" /><path d="M5 2h14" /><path d="M17 22v-4.17a2 2 0 0 0-.59-1.42L12 12l-4.41 4.41A2 2 0 0 0 7 17.83V22" /><path d="M7 2v4.17a2 2 0 0 0 .59 1.42L12 12l4.41-4.41A2 2 0 0 0 17 6.17V2" /></>,
-    trash: <><path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><path d="M19 6l-.867 12.142A2 2 0 0 1 16.138 20H7.862a2 2 0 0 1-1.995-1.858L5 6" /><path d="M10 11v6M14 11v6" /></>,
-    pencil: <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />,
-    refresh: <><path d="M3 12a9 9 0 0 1 15.3-6.4L21 8" /><path d="M21 3v5h-5" /><path d="M21 12a9 9 0 0 1-15.3 6.4L3 16" /><path d="M3 21v-5h5" /></>,
-  };
-  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
 }
 
 // Transfer-gap check thresholds used by annotateItems.
@@ -586,10 +568,12 @@ export default function ItineraryEditor({
   pkg,
   onBack,
   onSessionExpired,
+  onContinueToReview,
 }: {
   pkg: CreatorPackageDetail;
   onBack: () => void;
   onSessionExpired: () => void;
+  onContinueToReview: () => void;
 }) {
   const [packageDetail, setPackageDetail] = useState(pkg);
   const { flights, hotels } = packageDetail;
@@ -1289,7 +1273,12 @@ export default function ItineraryEditor({
       arrivalDatetime: flight.arrival_datetime ?? undefined,
       departureTime: departureTime ?? undefined,
       arrivalTime: arrivalTime ?? undefined,
-      duration: flight.duration_minutes ? String(flight.duration_minutes) : undefined,
+      duration: flight.duration_minutes
+        ? String(flight.duration_minutes)
+        : (() => {
+            const minutes = flightDurationMinutes(flight.departure_datetime, flight.arrival_datetime);
+            return minutes === undefined ? undefined : String(minutes);
+          })(),
       cabinClass: flight.cabin_class ?? undefined,
     });
     setFlightSearch("");
@@ -1469,7 +1458,6 @@ export default function ItineraryEditor({
     hardErrors.length === 0 &&
     feasResult.is_feasible
   );
-
   const scorePassing = Boolean(feasResult) && !resultStale && (displayScore ?? 0) >= 70;
 
   // The static checklist below always lists 4 criteria; they're treated as
@@ -1482,15 +1470,15 @@ export default function ItineraryEditor({
     : uploadingCount > 0
       ? `Uploading ${uploadingCount}…`
     : submitting
-      ? "Submitting…"
+      ? "Continuing…"
       : !isReadyToSubmit
         // A stale result can't be trusted to say whether issues remain, so
-        // it falls back to "Check content to submit" like the unchecked case.
-        ? (feasResult && !resultStale && !feasResult.is_feasible ? "Fix issues to submit" : "Check content to submit")
-        : "Submit for review";
+        // it falls back to "Check content to continue" like the unchecked case.
+        ? (feasResult && !resultStale && !feasResult.is_feasible ? "Fix issues to continue" : "Check content to continue")
+        : "Continue to review";
 
-  // Submitting sends the saved draft to an admin; it does not make the
-  // package public. A save failure must never reach submitPackage.
+  // Saves the draft, then hands off to the review page where the actual
+  // submit-for-review call happens — this never submits by itself.
   const handleSubmit = async () => {
     if (feasLoading || saving || uploadingCount > 0 || submittingRef.current || isLocked) return;
     setPreviewOpen(false);
@@ -1503,8 +1491,8 @@ export default function ItineraryEditor({
         return;
       }
       showNotice((displayScore ?? 0) < 70
-        ? `Your trip score is ${displayScore ?? 0}/100. A minimum score of 70 is required to submit. Improve your itinerary and check content again.`
-        : "Fix critical feasibility issues and check content again before submitting.");
+        ? `Your trip score is ${displayScore ?? 0}/100. A minimum score of 70 is required to continue. Improve your itinerary and check content again.`
+        : "Fix critical feasibility issues and check content again before continuing.");
       return;
     }
     submittingRef.current = true;
@@ -1516,23 +1504,29 @@ export default function ItineraryEditor({
         throw new Error("Your session expired. Please sign in again.");
       }
       await persistDraft(token);
-      const result = await submitPackage(fetch, API_URL, token, pkg.package_id);
-      setPackageStatus(result.status);
       setEditingTitle(false);
       setEditingDayField(null);
       setEditingItem(null);
       setAddingAfter(null);
-      showNotice("Submitted for review");
+      // Flights/hotels/activities added this session aren't saved by PUT yet
+      // (see saveDraft above) — snapshot them so the review page shows exactly
+      // what was just approved here, not a stale server-side fetch.
+      try {
+        window.sessionStorage.setItem(itinerarySnapshotStorageKey(pkg.package_id), JSON.stringify({ title: packageTitle, days }));
+      } catch {
+        // best-effort only
+      }
+      onContinueToReview();
     } catch (error) {
       if (error instanceof CreatorApiError) {
         if (error.status === 401) onSessionExpired();
         if (error.status === 404 || error.status === 409) setPackageStatus("not_editable");
       }
-      // A failed submit doesn't undo the save above — the draft is safely
-      // stored and this can just be retried.
+      // A failed save doesn't continue to review — the draft may not
+      // reflect what the review page would show, so this can just be retried.
       showNotice(typeof error === "object" && error !== null && "message" in error
         ? String(error.message)
-        : "Unable to submit this package for review.");
+        : "Unable to continue to review.");
     } finally {
       submittingRef.current = false;
       setSubmitting(false);

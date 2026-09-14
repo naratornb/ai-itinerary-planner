@@ -13,6 +13,7 @@ import {
   signInWithEmail,
   submitPackage,
   updatePackage,
+  SubmitPackageError,
 } from "./creator-api";
 
 test("fetchOwnPackage loads authenticated hotel details", async () => {
@@ -79,32 +80,6 @@ test("updatePackage preserves a 409 status so the editor can become read-only", 
       && error.status === 409
       && /no longer be edited/i.test(error.message),
   );
-});
-
-test("submitPackage sends the saved package for review and surfaces validation details", async () => {
-  let requests = 0;
-  const fetcher: typeof fetch = async (input, init) => {
-    requests += 1;
-    assert.equal(String(input), "http://localhost:8000/packages/package-1/submit");
-    assert.equal(init?.method, "POST");
-    assert.deepEqual(init?.headers, {
-      "Content-Type": "application/json",
-      Authorization: "Bearer token",
-    });
-    assert.equal(init?.body, "{}");
-    return new Response(JSON.stringify({ message: "Add at least one activity." }), {
-      status: 422,
-      headers: { "Content-Type": "application/json" },
-    });
-  };
-
-  await assert.rejects(
-    submitPackage(fetcher, "http://localhost:8000", "token", "package-1"),
-    (error) => error instanceof CreatorApiError
-      && error.status === 422
-      && /one activity/i.test(error.message),
-  );
-  assert.equal(requests, 1);
 });
 
 test("createPackage posts the draft and returns the new package id", async () => {
@@ -332,6 +307,67 @@ test("formatDashboardStats formats a future stats API response", () => {
   assert.equal(cards[1]?.value, "20");
   assert.equal(cards[2]?.value, "20%");
   assert.equal(cards[3]?.value, "$14,800");
+});
+
+test("submitPackage posts to the submit endpoint and returns the new status", async () => {
+  const fetcher: typeof fetch = async (url, init) => {
+    assert.equal(String(url), "http://localhost:8000/packages/package-9/submit");
+    assert.equal(init?.method, "POST");
+    assert.deepEqual(JSON.parse(String(init?.body)), { submission_note: "Ready for review." });
+    return new Response(JSON.stringify({ package_id: "package-9", status: "pending_review" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  const result = await submitPackage(fetcher, "http://localhost:8000", "access-token", "package-9", "Ready for review.");
+  assert.deepEqual(result, { package_id: "package-9", status: "pending_review" });
+});
+
+test("submitPackage sends an empty body when no submission note is given", async () => {
+  const fetcher: typeof fetch = async (_url, init) => {
+    assert.deepEqual(JSON.parse(String(init?.body)), {});
+    return new Response(JSON.stringify({ package_id: "package-9", status: "pending_review" }), { status: 200 });
+  };
+
+  await submitPackage(fetcher, "http://localhost:8000", "access-token", "package-9");
+});
+
+test("submitPackage surfaces the backend's message and error code on failure", async () => {
+  const fetcher: typeof fetch = async () =>
+    new Response(JSON.stringify({ message: "At least one activity is required.", error_code: "SUBMISSION_PRECONDITION_FAILED" }), {
+      status: 422,
+      headers: { "Content-Type": "application/json" },
+    });
+
+  await assert.rejects(
+    submitPackage(fetcher, "http://localhost:8000", "access-token", "package-9"),
+    (error: unknown) => {
+      assert.ok(error instanceof SubmitPackageError);
+      assert.equal(error.status, 422);
+      assert.equal(error.code, "SUBMISSION_PRECONDITION_FAILED");
+      assert.equal(error.message, "At least one activity is required.");
+      return true;
+    },
+  );
+});
+
+test("submitPackage reports a not-yet-deployed endpoint as a friendly 404", async () => {
+  const fetcher: typeof fetch = async () => new Response("Not Found", { status: 404 });
+
+  await assert.rejects(
+    submitPackage(fetcher, "http://localhost:8000", "access-token", "package-9"),
+    /try again later/i,
+  );
+});
+
+test("submitPackage identifies an expired login", async () => {
+  const fetcher: typeof fetch = async () => new Response("{}", { status: 401 });
+
+  await assert.rejects(
+    submitPackage(fetcher, "http://localhost:8000", "expired-token", "package-9"),
+    /sign in again/i,
+  );
 });
 
 test("fetchDashboardStats maps the future dashboard stats endpoint", async () => {

@@ -97,6 +97,52 @@ export function daySubtitle(day: BuilderDay, limit = 48): string {
   return text.length > limit ? `${text.slice(0, limit).trimEnd()}…` : text;
 }
 
+export type DaySummary = {
+  flightMinutes: number;
+  activityCount: number;
+  hotelName: string | null;
+};
+
+const STAY_LABEL_SUFFIX = /\s*\((Check-in|Check-out|Night \d+ of \d+)\)\s*$/i;
+
+/** Collapsed-card rollup for the Finalise & Review page's day timeline. */
+export function summarizeDay(day: BuilderDay): DaySummary {
+  let flightMinutes = 0;
+  let activityCount = 0;
+  let hotelName: string | null = null;
+  for (const item of day.items) {
+    if (item.type === "FLIGHT") {
+      flightMinutes += Number(item.duration ?? 0);
+    } else if (item.type === "HOTEL") {
+      if (hotelName === null) hotelName = item.title.replace(STAY_LABEL_SUFFIX, "");
+    } else {
+      activityCount += 1;
+    }
+  }
+  return { flightMinutes, activityCount, hotelName };
+}
+
+export type PackageComponentCounts = {
+  flightCount: number;
+  hotelCount: number;
+  activityCount: number;
+};
+
+/** Package-wide totals for the Finalise & Review page's info strip. */
+export function summarizePackageComponents(days: BuilderDay[]): PackageComponentCounts {
+  const items = days.flatMap((day) => day.items);
+  const stayGroups = new Set(
+    items
+      .filter((item) => item.type === "HOTEL")
+      .map((item) => item.stayGroupId ?? `single-${item.id}`),
+  );
+  return {
+    flightCount: items.filter((item) => item.type === "FLIGHT").length,
+    hotelCount: stayGroups.size,
+    activityCount: items.filter((item) => item.type !== "FLIGHT" && item.type !== "HOTEL").length,
+  };
+}
+
 function updateDay(
   days: BuilderDay[],
   dayId: string,
@@ -165,6 +211,16 @@ export function removeDay(days: BuilderDay[], dayId: string) {
   return days
     .filter((day) => day.id !== dayId)
     .map((day, index) => ({ ...day, day: index + 1 }));
+}
+
+/** "150" -> "2h 30m", "120" -> "2h", "45" -> "45m", "0" -> "0m". */
+export function formatMinutes(totalMinutes: number): string {
+  const minutes = Math.max(0, Math.round(totalMinutes));
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  if (hours === 0) return `${remainder}m`;
+  if (remainder === 0) return `${hours}h`;
+  return `${hours}h ${remainder}m`;
 }
 
 export function getEndTime(startTime: string, durationMinutes: string) {
@@ -244,6 +300,18 @@ function formatFlightDuration(departure: string | null, arrival: string | null):
 
 export function timezoneForIata(iata: string | null | undefined): string {
   return (iata && IATA_TIMEZONES[iata]) || "Australia/Sydney";
+}
+
+/** Flight duration in minutes from real timestamps, or undefined if either is missing/invalid. */
+export function flightDurationMinutes(
+  departureDatetime: string | null | undefined,
+  arrivalDatetime: string | null | undefined,
+): number | undefined {
+  if (!departureDatetime || !arrivalDatetime) return undefined;
+  const departure = Date.parse(departureDatetime);
+  const arrival = Date.parse(arrivalDatetime);
+  if (!Number.isFinite(departure) || !Number.isFinite(arrival) || arrival <= departure) return undefined;
+  return Math.round((arrival - departure) / 60_000);
 }
 
 export function extractClockTimeInZone(dateStr: string | null, timeZone: string): string | null {
@@ -359,7 +427,12 @@ export function buildDaysFromPackage(pkg: CreatorPackageDetail): BuilderDay[] {
       price: `$${flight.price_aud ?? 0}`,
       icon: "plane",
       status: "pass",
-      duration: flight.duration_minutes ? String(flight.duration_minutes) : undefined,
+      duration: flight.duration_minutes
+        ? String(flight.duration_minutes)
+        : (() => {
+            const minutes = flightDurationMinutes(flight.departure_datetime, flight.arrival_datetime);
+            return minutes === undefined ? undefined : String(minutes);
+          })(),
       notes: flight.notes || undefined,
       photos: photosFor(flight.media_ids, flight.airline || "Flight photo"),
       sequenceOrder: flight.sequence_order ?? undefined,
