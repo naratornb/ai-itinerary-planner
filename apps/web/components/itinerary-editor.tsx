@@ -361,6 +361,55 @@ function Panel({ title, icon, badge, children, className = "" }: { title: string
   return <section className={`editor-panel ${className}`}><div className="editor-panel-header"><h2>{icon}{title}</h2>{badge}</div>{children}</section>;
 }
 
+const TIME_FIELD_HOURS = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, "0"));
+const TIME_FIELD_MINUTES = Array.from({ length: 60 }, (_, i) => String(i).padStart(2, "0"));
+
+// A "HH:MM" input that still accepts direct keyboard typing (the real
+// <input type="time"> underneath), plus a styled dropdown — opened by our
+// own chevron, never the browser's native picker — for click-to-pick.
+function TimeField({ value, onChange, ariaLabel, className = "" }: { value: string; onChange: (value: string) => void; ariaLabel: string; className?: string }) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [hh, mm] = value.split(":");
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocMouseDown = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onDocMouseDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onDocMouseDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  return (
+    <div className={`time-field ${className}`} ref={containerRef}>
+      <input type="time" className="time-field-input" aria-label={ariaLabel} value={value} onChange={(event) => onChange(event.target.value)} />
+      <button type="button" className="time-field-toggle" aria-label={`${open ? "Close" : "Open"} time picker`} aria-expanded={open} onClick={() => setOpen((current) => !current)}>
+        <Icon name="chevron" size={13} />
+      </button>
+      {open && (
+        <div className="time-field-dropdown" role="presentation">
+          <div className="time-field-col" role="listbox" aria-label="Hour">
+            {TIME_FIELD_HOURS.map((h) => (
+              <button type="button" key={h} role="option" aria-selected={h === hh} className={`time-field-option${h === hh ? " selected" : ""}`} onClick={() => onChange(`${h}:${mm}`)}>{h}</button>
+            ))}
+          </div>
+          <div className="time-field-col" role="listbox" aria-label="Minute">
+            {TIME_FIELD_MINUTES.map((m) => (
+              <button type="button" key={m} role="option" aria-selected={m === mm} className={`time-field-option${m === mm ? " selected" : ""}`} onClick={() => { onChange(`${hh}:${m}`); setOpen(false); }}>{m}</button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Hover (desktop) or tab-focus (keyboard/touch) reveals rating and
 // suitable-for — the two catalog fields that don't fit on the card face —
 // without an extra click. The "+" stays a separate button, so a tap that
@@ -508,7 +557,7 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
                     <div className="activity-form">
                       <label className="full"><span>Title</span><input value={p.creatorDraft.title} onChange={(event) => p.setCreatorDraft({ ...p.creatorDraft, title: event.target.value })} placeholder="Your recommendation" /></label>
                       <label><span>Category</span><select value={p.creatorDraft.category} onChange={(event) => p.setCreatorDraft({ ...p.creatorDraft, category: event.target.value })}>{ACTIVITY_CATEGORIES.map((category) => <option key={category}>{category}</option>)}</select></label>
-                      <label><span>Start time</span><input type="time" value={p.creatorDraft.time} onChange={(event) => p.setCreatorDraft({ ...p.creatorDraft, time: event.target.value })} /></label>
+                      <label><span>Start time</span><TimeField value={p.creatorDraft.time} onChange={(time) => p.setCreatorDraft({ ...p.creatorDraft, time })} ariaLabel="Start time" /></label>
                       <label><span>Duration (min)</span><select value={p.creatorDraft.duration} onChange={(event) => p.setCreatorDraft({ ...p.creatorDraft, duration: event.target.value })}>{DURATION_OPTIONS.map((duration) => <option key={duration}>{duration}</option>)}</select></label>
                       <label className="full"><span>Address</span><input value={p.creatorDraft.address} onChange={(event) => p.setCreatorDraft({ ...p.creatorDraft, address: event.target.value })} /></label>
                       <label><span>Price</span><div className="price-input"><b>$</b><input inputMode="decimal" value={p.creatorDraft.price} onChange={(event) => p.setCreatorDraft({ ...p.creatorDraft, price: event.target.value.replace(/[^0-9.]/g, "") })} /></div></label>
@@ -1855,7 +1904,7 @@ export default function ItineraryEditor({
                       <div className="activity-card-stats">
                         <div className="activity-card-stat">
                           <small>Start time</small>
-                          <span className="activity-card-stat-value"><Icon name="clock" size={16} /><div className="activity-card-time-field"><input type="time" className="activity-card-time-input" aria-label="Start time" value={editingItem.time} onChange={(event) => setEditingItem({ ...editingItem, time: event.target.value })} /></div></span>
+                          <span className="activity-card-stat-value"><Icon name="clock" size={16} /><TimeField className="activity-card-time-field" value={editingItem.time} onChange={(time) => setEditingItem({ ...editingItem, time })} ariaLabel="Start time" /></span>
                         </div>
                         <div className="activity-card-stat">
                           <small>Duration</small>
@@ -1874,7 +1923,7 @@ export default function ItineraryEditor({
                       <label className="edit-title"><span>Activity</span><input value={editingItem.title} onChange={(event) => setEditingItem({ ...editingItem, title: event.target.value })} autoFocus /></label>
                       <label><span>Price</span><div className="price-input"><b>$</b><input inputMode="decimal" value={editingItem.price} onChange={(event) => setEditingItem({ ...editingItem, price: event.target.value.replace(/[^0-9.]/g, "") })} /></div></label>
                       <label className="edit-address"><span>Address</span><input value={editingItem.address} onChange={(event) => setEditingItem({ ...editingItem, address: event.target.value })} placeholder="Add an address" /></label>
-                      <label><span>Start time</span><input type="time" value={editingItem.time} onChange={(event) => setEditingItem({ ...editingItem, time: event.target.value })} /></label>
+                      <label><span>Start time</span><TimeField value={editingItem.time} onChange={(time) => setEditingItem({ ...editingItem, time })} ariaLabel="Start time" /></label>
                       <label><span>Duration (min)</span><select value={editingItem.duration} onChange={(event) => setEditingItem({ ...editingItem, duration: event.target.value })}>{DURATION_OPTIONS.map((duration) => <option key={duration}>{duration}</option>)}</select></label>
                       <label><span>Ends at</span><input value={getEndTime(editingItem.time, editingItem.duration)} readOnly /></label>
                       <label className="edit-notes"><span>Notes</span><textarea value={editingItem.notes} onChange={(event) => setEditingItem({ ...editingItem, notes: event.target.value })} placeholder="Share why this is worth a stop" /></label>

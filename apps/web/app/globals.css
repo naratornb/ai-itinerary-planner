@@ -529,11 +529,22 @@ figure .remove-photo-btn:focus-visible { outline: 2px solid var(--fc-focus-ring)
 .activity-card-stat small { color: var(--fc-secondary); font-size: 13px; line-height: 17px; }
 .activity-card-stat-value { display: inline-flex; align-items: center; gap: 8px; color: var(--fc-secondary); }
 .activity-card-stat-value strong { color: var(--fc-ink); font-size: 17px; line-height: 22px; font-weight: 600; }
-.activity-card-time-field { position: relative; display: inline-flex; }
-.activity-card-time-field::after { content: ""; position: absolute; right: 15px; top: 50%; width: 7px; height: 7px; margin-top: -6px; border-right: 2px solid var(--fc-secondary); border-bottom: 2px solid var(--fc-secondary); transform: rotate(45deg); pointer-events: none; }
-.activity-card-time-input { position: relative; width: 118px; min-height: 36px; padding: 4px 30px 4px 10px; border: 1px solid var(--fc-border); border-radius: 8px; background: #fff; color: var(--fc-ink); font: inherit; font-size: 16px; font-weight: 600; line-height: 22px; }
-.activity-card-time-input::-webkit-calendar-picker-indicator { position: absolute; right: 0; top: 0; width: 30px; height: 100%; margin: 0; padding: 0; opacity: 0; cursor: pointer; }
-.activity-card-time-input:focus-visible { outline: 3px solid var(--fc-focus-ring); outline-offset: 1px; border-color: var(--fc-blue); }
+.time-field { position: relative; display: inline-flex; width: 100%; }
+.time-field.activity-card-time-field { width: 118px; }
+.time-field .time-field-input { position: relative; width: 100%; min-height: 44px; padding: 0 30px 0 12px; border: 1px solid var(--fc-border); border-radius: 8px; background: #fff; color: var(--fc-ink); font: inherit; font-size: 14px; line-height: 22px; }
+.time-field.activity-card-time-field .time-field-input { min-height: 36px; padding: 4px 30px 4px 10px; font-size: 16px; font-weight: 600; }
+.time-field .time-field-input::-webkit-calendar-picker-indicator { display: none; }
+.time-field .time-field-input:focus-visible { outline: 3px solid var(--fc-focus-ring); outline-offset: 1px; border-color: var(--fc-blue); }
+.time-field-toggle { position: absolute; right: 0; top: 0; width: 30px; height: 100%; display: grid; place-items: center; border: 0; background: transparent; color: var(--fc-secondary); cursor: pointer; }
+.time-field-toggle:hover { color: var(--fc-blue); }
+.time-field-toggle svg { transform: rotate(90deg); }
+.time-field-toggle[aria-expanded="true"] svg { transform: rotate(-90deg); }
+.time-field-dropdown { position: absolute; top: calc(100% + 6px); left: 0; z-index: 40; display: flex; width: 132px; max-height: 220px; border: 1px solid var(--fc-border); border-radius: 10px; background: #fff; box-shadow: var(--fc-shadow-raised); overflow: hidden; }
+.time-field-col { flex: 1 1 50%; min-width: 0; overflow-y: auto; padding: 4px; display: grid; gap: 2px; align-content: start; }
+.time-field-col + .time-field-col { border-left: 1px solid var(--fc-border); }
+.time-field-option { min-height: 30px; padding: 0 8px; border: 0; border-radius: 6px; background: transparent; color: var(--fc-ink); font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; text-align: center; cursor: pointer; }
+.time-field-option:hover { background: var(--fc-surface-subtle); }
+.time-field-option.selected { background: var(--fc-blue); color: #fff; }
 .activity-card-notes { margin-top: 24px; display: grid; gap: 8px; }
 .activity-card-notes > span { color: var(--fc-ink); font-size: 15px; line-height: 20px; font-weight: 600; }
 .activity-card-notes-field { position: relative; }
