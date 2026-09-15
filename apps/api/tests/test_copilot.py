@@ -314,12 +314,18 @@ def test_auth_rejects_missing_and_expired_tokens(monkeypatch):
     assert get.call_args.kwargs["timeout"] == 5
 
 
-def test_database_timeout_respects_remaining_budget(monkeypatch):
-    request = Mock(side_effect=requests.Timeout())
+def test_database_timeout_respects_remaining_budget(monkeypatch, caplog):
+    request = Mock(side_effect=requests.Timeout("secret-token-and-prompt"))
     monkeypatch.setattr(service.requests, "request", request)
     with pytest.raises(UpstreamError, match="Database unreachable"):
         service._call("GET", "activities", {}, time.monotonic() + 1)
     assert 0 < request.call_args.kwargs["timeout"] <= 0.5
+    assert "[copilot-db]" in caplog.text
+    assert "operation=GET activities" in caplog.text
+    assert "exception=Timeout" in caplog.text
+    assert "elapsed_ms=" in caplog.text
+    assert "remaining_ms=" in caplog.text
+    assert "secret-token-and-prompt" not in caplog.text
 
 
 def test_retrieval_hard_filters_and_missing_fields():

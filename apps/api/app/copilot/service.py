@@ -33,7 +33,8 @@ Select 1 to 5 candidates. Do not repeat inventory fields in the output.
 def _call(
     method: str, table: str, headers: dict, deadline: float, **kwargs
 ) -> requests.Response:
-    remaining = deadline - time.monotonic()
+    started = time.monotonic()
+    remaining = deadline - started
     if remaining <= 0.05:
         raise UpstreamError(503, "Co-pilot request budget exhausted.")
     try:
@@ -45,6 +46,15 @@ def _call(
             **kwargs,
         )
     except requests.RequestException as exc:
+        finished = time.monotonic()
+        logger.warning(
+            "[copilot-db] operation=%s %s exception=%s elapsed_ms=%d remaining_ms=%d",
+            method,
+            table,
+            type(exc).__name__,
+            int((finished - started) * 1000),
+            int((deadline - finished) * 1000),
+        )
         raise UpstreamError(503, "Database unreachable.") from exc
     if not response.ok:
         logger.warning("copilot database failure status=%s", response.status_code)
