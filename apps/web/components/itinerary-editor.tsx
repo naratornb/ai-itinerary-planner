@@ -501,6 +501,9 @@ type AddStopFlowProps = {
   setFlightSearch: Dispatch<SetStateAction<string>>;
   flightSort: "departure" | "price_asc" | "price_desc";
   setFlightSort: Dispatch<SetStateAction<"departure" | "price_asc" | "price_desc">>;
+  flightAirlineFilter: string;
+  setFlightAirlineFilter: Dispatch<SetStateAction<string>>;
+  flightAirlineOptions: string[];
   matchingFlights: CreatorFlightDetail[];
   selectedFlightIndex: number | null;
   setSelectedFlightIndex: Dispatch<SetStateAction<number | null>>;
@@ -560,6 +563,15 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
                     <div className="inline-add-head"><button className="inline-back" onClick={() => p.setAddFlow("type")} aria-label="Back to item types">‹</button><h4>Choose a reference flight</h4><button onClick={() => p.setAddingAfter(null)}>Cancel</button></div>
                     <div className="hotel-filter-row">
                       <label className="activity-search"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input value={p.flightSearch} onChange={(event) => p.setFlightSearch(event.target.value)} placeholder="Search by airport, airline, or flight number" /></label>
+                      {p.flightAirlineOptions.length > 1 && (
+                        <SelectField
+                          value={p.flightAirlineFilter}
+                          onChange={p.setFlightAirlineFilter}
+                          options={[{ value: "", label: "All airlines" }, ...p.flightAirlineOptions.map((airline) => ({ value: airline, label: airline }))]}
+                          ariaLabel="Filter by airline"
+                          className="hotel-sort-field"
+                        />
+                      )}
                       <SelectField
                         value={p.flightSort}
                         onChange={(value) => p.setFlightSort(value as "departure" | "price_asc" | "price_desc")}
@@ -816,6 +828,7 @@ export default function ItineraryEditor({
   const [catalogFlights, setCatalogFlights] = useState<CreatorFlightDetail[] | null>(null);
   const [flightSearch, setFlightSearch] = useState("");
   const [flightSort, setFlightSort] = useState<"departure" | "price_asc" | "price_desc">("departure");
+  const [flightAirlineFilter, setFlightAirlineFilter] = useState("");
   const [selectedFlightIndex, setSelectedFlightIndex] = useState<number | null>(null);
   const [selectedHotelIndex, setSelectedHotelIndex] = useState<number | null>(null);
   const [moreHotelsOpen, setMoreHotelsOpen] = useState(false);
@@ -1120,6 +1133,7 @@ export default function ItineraryEditor({
   useEffect(() => {
     if (addFlow !== "flight") return;
     setFlightSort("departure");
+    setFlightAirlineFilter("");
   }, [addFlow]);
 
   // Reference flights, same gap as hotels had: the package only carries
@@ -1585,8 +1599,10 @@ export default function ItineraryEditor({
     setSelectedFlightIndex(null);
   };
 
+  const flightAirlineOptions = [...new Set((catalogFlights ?? flights).flatMap((flight) => flight.airline ? [flight.airline] : []))].sort();
   const matchingFlights = (catalogFlights ?? flights).filter((flight) =>
-    [flight.airline, flight.flight_number, flight.origin_iata, flight.destination_iata].join(" ").toLowerCase().includes(flightSearch.trim().toLowerCase()),
+    [flight.airline, flight.flight_number, flight.origin_iata, flight.destination_iata].join(" ").toLowerCase().includes(flightSearch.trim().toLowerCase())
+    && (!flightAirlineFilter || flight.airline === flightAirlineFilter),
   );
   const selectedHotelOption = selectedHotelIndex !== null ? (catalogHotels ?? hotels)[selectedHotelIndex] : undefined;
 
@@ -1866,6 +1882,8 @@ export default function ItineraryEditor({
     addFlow, setAddFlow,
     flightSearch, setFlightSearch,
     flightSort, setFlightSort,
+    flightAirlineFilter, setFlightAirlineFilter,
+    flightAirlineOptions,
     matchingFlights,
     selectedFlightIndex, setSelectedFlightIndex,
     addSelectedFlight,
@@ -2080,8 +2098,8 @@ export default function ItineraryEditor({
                 <article className={`timeline-item ${scheduleConflict ? "critical" : item.status} ${draggedItemId === item.id ? "dragging" : ""} ${canExpand ? "editable" : ""} ${isExpanded ? "expanded" : ""}`} onClick={(event) => { if (!canExpand || (event.target as HTMLElement).closest("button")) return; toggleExpand(); }} onKeyDown={(event) => { if (!canExpand || (event.target as HTMLElement).closest("button")) return; if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggleExpand(); } }} tabIndex={canExpand ? 0 : undefined} role={canExpand ? "button" : undefined} aria-expanded={canExpand ? isExpanded : undefined}>
                   <button className="drag-handle" draggable aria-label={`Move ${hotelTitle}. Use drag and drop, or the up and down arrow keys.`} onDragStart={(event) => { setEditingItem(null); setDraggedItemId(item.id); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", String(item.id)); }} onDragEnd={endDrag} onKeyDown={(event) => { if (event.key === "ArrowUp") { event.preventDefault(); moveItem(index, index - 1); } if (event.key === "ArrowDown") { event.preventDefault(); moveItem(index, index + 1); } }}><span /><span /><span /><span /><span /><span /></button>
                   <div className="item-time">
-                    <div className="item-time-row"><Icon name={item.icon} /><strong className={isTimeValue ? undefined : "item-time-word"}>{item.time}</strong></div>
-                    {isTimeValue && item.type === "FLIGHT" && item.arrivalTime && <span className="item-time-end">to {item.arrivalTime}</span>}
+                    <div className="item-time-row"><Icon name={item.icon} /><strong className={isTimeValue ? undefined : "item-time-word"}>{item.type === "FLIGHT" && item.arrivalTime ? item.arrivalTime : item.time}</strong></div>
+                    {isTimeValue && item.type === "FLIGHT" && item.arrivalTime && <span className="item-time-end">from {item.time}</span>}
                     {isTimeValue && item.type !== "FLIGHT" && item.duration && <span className="item-time-end">to {getEndTime(item.time, item.duration)}</span>}
                   </div>
                   <div className="item-copy">

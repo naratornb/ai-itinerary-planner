@@ -424,7 +424,7 @@ button:focus-visible, textarea:focus-visible { outline: 3px solid var(--fc-focus
 .item-time strong { font-size: 14px; line-height: 20px; font-variant-numeric: tabular-nums; }
 .item-time strong.item-time-word { font-size: 12px; line-height: 15px; font-weight: 600; text-align: center; }
 .item-time-end { color: var(--fc-secondary); font-size: 11px; line-height: 15px; font-variant-numeric: tabular-nums; }
-.item-type-pill { padding: 3px 9px; border-radius: 999px; border: 1px solid var(--fc-success-border); background: var(--fc-success-subtle); color: var(--fc-success); font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.item-type-pill { flex: 0 0 auto; display: inline-flex; align-items: center; line-height: 1; padding: 4px 9px; border-radius: 999px; border: 1px solid var(--fc-success-border); background: var(--fc-success-subtle); color: var(--fc-success); font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
 .item-type-pill-flight { border-color: var(--fc-info-border); background: var(--fc-info-subtle); color: var(--fc-blue); }
 .item-type-pill-hotel { border-color: var(--fc-warning-border); background: var(--fc-warning-subtle); color: var(--fc-warning); }
 .item-type-pill-danger { border-color: var(--fc-danger-border); background: var(--fc-danger-subtle); color: var(--fc-red); }
@@ -436,7 +436,7 @@ button:focus-visible, textarea:focus-visible { outline: 3px solid var(--fc-focus
 .item-action-icon:hover { background: var(--fc-surface-subtle); color: var(--fc-ink); }
 .item-action-icon-delete:hover { background: var(--fc-danger-subtle); color: var(--fc-red); }
 .item-copy { align-self: center; padding: 16px 20px; }
-.item-copy-head { min-height: 24px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.item-copy-head { min-height: 24px; margin-left: -10px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .item-copy-head .stay-marker { margin-left: auto; font-size: 12px; line-height: 16px; font-weight: 500; letter-spacing: .02em; }
 .timeline-detail-panel { margin-top: 10px; border: 1px solid var(--fc-border); border-radius: 12px; background: #fff; overflow: hidden; }
 .timeline-detail-panel .detail-card { padding: 20px; }
@@ -644,8 +644,8 @@ figure .remove-photo-btn:focus-visible { outline: 2px solid var(--fc-focus-ring)
 .activity-form input:focus,.activity-form select:focus,.activity-form textarea:focus { border-color: var(--fc-blue); box-shadow: 0 0 0 3px var(--fc-focus-ring); }
 .activity-form input[readonly] { background: var(--fc-surface-subtle); color: var(--fc-secondary); }
 .activity-form.hotel-fixed-details { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.hotel-filter-row { display: flex; gap: 10px; margin-bottom: 14px; }
-.hotel-filter-row .activity-search { flex: 1 1 auto; min-width: 0; }
+.hotel-filter-row { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
+.hotel-filter-row .activity-search { flex: 1 1 160px; min-width: 0; }
 .hotel-sort-field { flex: 0 0 auto; width: 180px; }
 .hotel-choice-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; }
 .hotel-choice-card { position: relative; min-width: 0; min-height: 132px; padding: 14px; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; text-align: left; border: 1px solid var(--fc-border); border-radius: 10px; background: #fff; color: var(--fc-ink); cursor: pointer; transition: border-color 140ms ease-out; }
