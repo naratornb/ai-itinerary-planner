@@ -499,8 +499,8 @@ type AddStopFlowProps = {
   setAddFlow: Dispatch<SetStateAction<AddFlowStep>>;
   flightSearch: string;
   setFlightSearch: Dispatch<SetStateAction<string>>;
-  flightSort: "departure" | "price_asc" | "price_desc";
-  setFlightSort: Dispatch<SetStateAction<"departure" | "price_asc" | "price_desc">>;
+  flightSort: "arrival" | "price_asc" | "price_desc";
+  setFlightSort: Dispatch<SetStateAction<"arrival" | "price_asc" | "price_desc">>;
   flightAirlineFilter: string;
   setFlightAirlineFilter: Dispatch<SetStateAction<string>>;
   flightAirlineOptions: string[];
@@ -574,9 +574,9 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
                       )}
                       <SelectField
                         value={p.flightSort}
-                        onChange={(value) => p.setFlightSort(value as "departure" | "price_asc" | "price_desc")}
+                        onChange={(value) => p.setFlightSort(value as "arrival" | "price_asc" | "price_desc")}
                         options={[
-                          { value: "departure", label: "Earliest departure" },
+                          { value: "arrival", label: "Earliest arrival" },
                           { value: "price_asc", label: "Price: low to high" },
                           { value: "price_desc", label: "Price: high to low" },
                         ]}
@@ -827,7 +827,7 @@ export default function ItineraryEditor({
   const [catalogHotels, setCatalogHotels] = useState<CreatorHotelDetail[] | null>(null);
   const [catalogFlights, setCatalogFlights] = useState<CreatorFlightDetail[] | null>(null);
   const [flightSearch, setFlightSearch] = useState("");
-  const [flightSort, setFlightSort] = useState<"departure" | "price_asc" | "price_desc">("departure");
+  const [flightSort, setFlightSort] = useState<"arrival" | "price_asc" | "price_desc">("arrival");
   const [flightAirlineFilter, setFlightAirlineFilter] = useState("");
   const [selectedFlightIndex, setSelectedFlightIndex] = useState<number | null>(null);
   const [selectedHotelIndex, setSelectedHotelIndex] = useState<number | null>(null);
@@ -1125,14 +1125,25 @@ export default function ItineraryEditor({
       const search = hotelSearch.trim();
       if (search) query = query.ilike("hotel_name", `%${search}%`);
       const { data, error } = await query;
-      setCatalogHotels(error || !data ? [] : data.map((row) => ({ ...row, address: null })));
+      if (error || !data) { setCatalogHotels([]); return; }
+      // Same seed-data quirk as activities/flights — the same listing
+      // (name + room type + price) can appear more than once in the
+      // catalog, which reads as confusing near-duplicates.
+      const seen = new Set<string>();
+      const deduped = data.filter((hotel) => {
+        const key = `${hotel.hotel_name}|${hotel.room_type}|${hotel.price_per_night_aud}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      setCatalogHotels(deduped.map((row) => ({ ...row, address: null })));
     }, 250);
     return () => window.clearTimeout(timer);
   }, [addFlow, activeDayCity, hotelSearch, hotelSort]);
 
   useEffect(() => {
     if (addFlow !== "flight") return;
-    setFlightSort("departure");
+    setFlightSort("arrival");
     setFlightAirlineFilter("");
   }, [addFlow]);
 
@@ -1161,7 +1172,7 @@ export default function ItineraryEditor({
       let query = supabase
         .from("flights")
         .select("flight_id,airline,flight_number,origin,destination,departure_datetime,arrival_datetime,cabin_class,price_aud")
-        .order(flightSort === "departure" ? "departure_datetime" : "price_aud", { ascending: flightSort !== "price_desc" })
+        .order(flightSort === "arrival" ? "arrival_datetime" : "price_aud", { ascending: flightSort !== "price_desc" })
         .limit(24);
       // Unlike activities/hotels' plain city columns, flights.destination is
       // stored as "City (CODE)" (e.g. "Kyoto (UKY)") — an exact match against
@@ -1183,6 +1194,7 @@ export default function ItineraryEditor({
           cabin_class: row.cabin_class,
           price_aud: row.price_aud,
           departureClock: extractClockTimeInZone(row.departure_datetime, timezoneForIata(originIata)),
+          arrivalClock: extractClockTimeInZone(row.arrival_datetime, timezoneForIata(destinationIata)),
         };
       });
       // These are illustrative examples, not real bookings — the catalog
@@ -1197,8 +1209,8 @@ export default function ItineraryEditor({
         seen.add(key);
         return true;
       });
-      if (flightSort === "departure") deduped.sort((a, b) => (a.departureClock ?? "").localeCompare(b.departureClock ?? ""));
-      setCatalogFlights(deduped.map(({ departureClock: _departureClock, ...flight }) => flight));
+      if (flightSort === "arrival") deduped.sort((a, b) => (a.arrivalClock ?? "").localeCompare(b.arrivalClock ?? ""));
+      setCatalogFlights(deduped.map(({ departureClock: _departureClock, arrivalClock: _arrivalClock, ...flight }) => flight));
     }, 250);
     return () => window.clearTimeout(timer);
   }, [addFlow, activeDayCity, flightSort]);
