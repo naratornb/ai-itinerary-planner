@@ -410,12 +410,19 @@ function TimeField({ value, onChange, ariaLabel, className = "" }: { value: stri
   );
 }
 
+type SelectFieldOption = { value: string; label: string };
+
 // A styled stand-in for a native <select> of a short fixed option list
-// (durations, categories, …) — no native dropdown to restyle, so this is a
-// plain button + custom list instead of an <input> like TimeField.
-function SelectField({ value, onChange, options, ariaLabel, className = "" }: { value: string; onChange: (value: string) => void; options: string[]; ariaLabel: string; className?: string }) {
+// (durations, categories, day pickers, …) — no native dropdown to restyle,
+// so this is a plain button + custom list instead of an <input> like
+// TimeField. String options are shorthand for { value, label } pairs where
+// the two are the same (durations, categories); day pickers need distinct
+// value (the day id) and label (the display text) so pass objects there.
+function SelectField({ value, onChange, options, ariaLabel, className = "", placeholder }: { value: string; onChange: (value: string) => void; options: (string | SelectFieldOption)[]; ariaLabel: string; className?: string; placeholder?: string }) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const normalized = options.map((option) => (typeof option === "string" ? { value: option, label: option } : option));
+  const selectedLabel = normalized.find((option) => option.value === value)?.label ?? placeholder ?? value;
 
   useEffect(() => {
     if (!open) return;
@@ -434,15 +441,15 @@ function SelectField({ value, onChange, options, ariaLabel, className = "" }: { 
   return (
     <div className={`select-field ${className}`} ref={containerRef}>
       <button type="button" className="select-field-trigger" aria-label={ariaLabel} aria-haspopup="listbox" aria-expanded={open} onClick={() => setOpen((current) => !current)}>
-        <span>{value}</span>
+        <span>{selectedLabel}</span>
         <Icon name="chevron" size={13} />
       </button>
       {open && (
         <div className="select-field-dropdown" role="listbox" aria-label={ariaLabel}>
-          {options.map((option) => (
-            <button type="button" key={option} role="option" aria-selected={option === value} className={`select-field-option${option === value ? " selected" : ""}`} onClick={() => { onChange(option); setOpen(false); }}>
-              <span className="select-field-check">{option === value && <Icon name="check" size={13} />}</span>
-              {option}
+          {normalized.map((option) => (
+            <button type="button" key={option.value} role="option" aria-selected={option.value === value} className={`select-field-option${option.value === value ? " selected" : ""}`} onClick={() => { onChange(option.value); setOpen(false); }}>
+              <span className="select-field-check">{option.value === value && <Icon name="check" size={13} />}</span>
+              {option.label}
             </button>
           ))}
         </div>
@@ -577,15 +584,26 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
                       </div>
                       <div className="activity-form hotel-fixed-details">
                         <label><span>Check-in day</span>
-                          <select value={p.hotelCheckInDayId ?? ""} onChange={(event) => p.setHotelCheckInDayId(event.target.value)}>
-                            {p.days.map((day) => <option key={day.id} value={day.id}>{`Day ${day.day}: ${day.title}`}</option>)}
-                            <option value={NEW_DAY_OPTION_ID}>{`Day ${p.days.length + 1} (new day)`}</option>
-                          </select>
+                          <SelectField
+                            value={p.hotelCheckInDayId ?? ""}
+                            onChange={p.setHotelCheckInDayId}
+                            ariaLabel="Check-in day"
+                            options={[
+                              ...p.days.map((day) => ({ value: day.id, label: `Day ${day.day}: ${day.title}` })),
+                              { value: NEW_DAY_OPTION_ID, label: `Day ${p.days.length + 1} (new day)` },
+                            ]}
+                          />
                         </label>
                         <label><span>Checkout day</span>
-                          <select value={p.selectedHotelCheckOutDayOption.id} onChange={(event) => p.setHotelCheckOutDayId(event.target.value)}>
-                            {p.hotelCheckOutDayOptions.map((option) => <option key={option.id} value={option.id}>{option.id === NEW_DAY_OPTION_ID ? `Day ${option.index + 1} (new day)` : `Day ${option.index + 1}: ${option.title}`}</option>)}
-                          </select>
+                          <SelectField
+                            value={p.selectedHotelCheckOutDayOption.id}
+                            onChange={p.setHotelCheckOutDayId}
+                            ariaLabel="Checkout day"
+                            options={p.hotelCheckOutDayOptions.map((option) => ({
+                              value: option.id,
+                              label: option.id === NEW_DAY_OPTION_ID ? `Day ${option.index + 1} (new day)` : `Day ${option.index + 1}: ${option.title}`,
+                            }))}
+                          />
                         </label>
                         <label className="full"><span>Notes</span><textarea value={p.hotelNotes} onChange={(event) => p.setHotelNotes(event.target.value)} placeholder="Add check-in or booking details" /></label>
                       </div>
@@ -597,7 +615,7 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
                     <div className="inline-add-head"><button className="inline-back" onClick={() => p.setAddFlow("type")} aria-label="Back to item types">‹</button><h4>Add creator pick</h4><button onClick={() => p.setAddingAfter(null)}>Cancel</button></div>
                     <div className="activity-form">
                       <label className="full"><span>Title</span><input value={p.creatorDraft.title} onChange={(event) => p.setCreatorDraft({ ...p.creatorDraft, title: event.target.value })} placeholder="Your recommendation" /></label>
-                      <label><span>Category</span><select value={p.creatorDraft.category} onChange={(event) => p.setCreatorDraft({ ...p.creatorDraft, category: event.target.value })}>{ACTIVITY_CATEGORIES.map((category) => <option key={category}>{category}</option>)}</select></label>
+                      <label><span>Category</span><SelectField value={p.creatorDraft.category} onChange={(category) => p.setCreatorDraft({ ...p.creatorDraft, category })} options={ACTIVITY_CATEGORIES} ariaLabel="Category" /></label>
                       <label><span>Start time</span><TimeField value={p.creatorDraft.time} onChange={(time) => p.setCreatorDraft({ ...p.creatorDraft, time })} ariaLabel="Start time" /></label>
                       <label><span>Duration (min)</span><SelectField value={p.creatorDraft.duration} onChange={(duration) => p.setCreatorDraft({ ...p.creatorDraft, duration })} options={DURATION_OPTIONS} ariaLabel="Duration (min)" /></label>
                       <label className="full"><span>Address</span><input value={p.creatorDraft.address} onChange={(event) => p.setCreatorDraft({ ...p.creatorDraft, address: event.target.value })} /></label>
@@ -1408,6 +1426,7 @@ export default function ItineraryEditor({
       .filter((option) => option.index > editStayCheckInIndex),
     { id: NEW_DAY_OPTION_ID, index: Math.max(days.length, editStayCheckInIndex + 1), title: "New day" },
   ];
+  const selectedEditStayCheckOutDayOption = editStayCheckOutDayOptions.find((option) => option.id === editStayCheckOutDayId) ?? editStayCheckOutDayOptions[0];
 
   const createHotel = () => {
     if (!selectedHotelOption) return;
@@ -1803,20 +1822,31 @@ export default function ItineraryEditor({
                     <div className="stay-edit-form">
                       <div className="stay-edit-fields">
                         <label><span>Check-in day</span>
-                          <select value={editStayCheckInDayId ?? ""} onChange={(event) => setEditStayCheckInDayId(event.target.value)}>
-                            {days.map((day, i) => <option key={day.id} value={day.id}>{`Day ${i + 1}: ${day.title}`}</option>)}
-                            <option value={NEW_DAY_OPTION_ID}>{`Day ${days.length + 1} (new day)`}</option>
-                          </select>
+                          <SelectField
+                            value={editStayCheckInDayId ?? ""}
+                            onChange={setEditStayCheckInDayId}
+                            ariaLabel="Check-in day"
+                            options={[
+                              ...days.map((day, i) => ({ value: day.id, label: `Day ${i + 1}: ${day.title}` })),
+                              { value: NEW_DAY_OPTION_ID, label: `Day ${days.length + 1} (new day)` },
+                            ]}
+                          />
                         </label>
                         <label><span>Checkout day</span>
-                          <select value={editStayCheckOutDayId ?? ""} onChange={(event) => setEditStayCheckOutDayId(event.target.value)}>
-                            {editStayCheckOutDayOptions.map((option) => <option key={option.id} value={option.id}>{option.id === NEW_DAY_OPTION_ID ? `Day ${option.index + 1} (new day)` : `Day ${option.index + 1}: ${option.title}`}</option>)}
-                          </select>
+                          <SelectField
+                            value={selectedEditStayCheckOutDayOption?.id ?? ""}
+                            onChange={setEditStayCheckOutDayId}
+                            ariaLabel="Checkout day"
+                            options={editStayCheckOutDayOptions.map((option) => ({
+                              value: option.id,
+                              label: option.id === NEW_DAY_OPTION_ID ? `Day ${option.index + 1} (new day)` : `Day ${option.index + 1}: ${option.title}`,
+                            }))}
+                          />
                         </label>
                       </div>
                       <div className="stay-edit-actions">
                         <button type="button" className="stay-edit-cancel" onClick={() => setEditingStayGroupId(null)}>Cancel</button>
-                        <button type="button" className="stay-edit-save" disabled={!editStayCheckInDayId || !editStayCheckOutDayId} onClick={() => updateHotelStayDays(item.stayGroupId!, editStayCheckInDayId!, editStayCheckOutDayId!)}>Save</button>
+                        <button type="button" className="stay-edit-save" disabled={!editStayCheckInDayId || !selectedEditStayCheckOutDayOption} onClick={() => updateHotelStayDays(item.stayGroupId!, editStayCheckInDayId!, selectedEditStayCheckOutDayOption.id)}>Save</button>
                       </div>
                     </div>
                   </dd> : <dd className="stat-with-action">
