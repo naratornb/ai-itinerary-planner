@@ -9,6 +9,7 @@ import {
   copilotSuggestionToTimelineItem,
   daySubtitle,
   extractClockTimeInZone,
+  flightArrivalDayOffset,
   flightDurationMinutes,
   formatMinutes,
   getEndTime,
@@ -217,6 +218,20 @@ test("extractClockTimeInZone renders a flight's real instant in the given zone, 
 
   assert.equal(extractClockTimeInZone(instant, "Australia/Sydney"), "05:00");
   assert.equal(extractClockTimeInZone(instant, "Asia/Tokyo"), "03:00");
+});
+
+test("flightArrivalDayOffset flags an overnight flight that lands the next local day", () => {
+  // Departs London 21:15 local (UTC), lands Reykjavik 00:30 local the same
+  // UTC clock hour range next day — one calendar day later in both zones.
+  const departure = "2026-04-01T21:15:00Z";
+  const arrival = "2026-04-02T00:30:00Z";
+  assert.equal(flightArrivalDayOffset(departure, "Europe/London", arrival, "Atlantic/Reykjavik"), 1);
+});
+
+test("flightArrivalDayOffset is 0 for a same-day flight and null when a time is missing", () => {
+  // Well clear of Sydney's UTC+10/+11 midnight crossing either way.
+  assert.equal(flightArrivalDayOffset("2026-04-01T01:00:00Z", "Australia/Sydney", "2026-04-01T05:00:00Z", "Australia/Sydney"), 0);
+  assert.equal(flightArrivalDayOffset(null, "Australia/Sydney", "2026-04-01T13:00:00Z", "Australia/Sydney"), null);
 });
 
 test("the AI day summary loads into the story textarea, not the day meta", () => {

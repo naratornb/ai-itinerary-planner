@@ -13,6 +13,7 @@ import {
   computePackagePrice,
   copilotSuggestionToTimelineItem,
   extractClockTimeInZone,
+  flightArrivalDayOffset,
   flightDurationMinutes,
   getEndTime,
   insertItemInDay,
@@ -498,6 +499,8 @@ type AddStopFlowProps = {
   setAddFlow: Dispatch<SetStateAction<AddFlowStep>>;
   flightSearch: string;
   setFlightSearch: Dispatch<SetStateAction<string>>;
+  flightSort: "departure" | "price_asc" | "price_desc";
+  setFlightSort: Dispatch<SetStateAction<"departure" | "price_asc" | "price_desc">>;
   matchingFlights: CreatorFlightDetail[];
   selectedFlightIndex: number | null;
   setSelectedFlightIndex: Dispatch<SetStateAction<number | null>>;
@@ -555,17 +558,33 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
 
                   {p.addFlow === "flight" && <>
                     <div className="inline-add-head"><button className="inline-back" onClick={() => p.setAddFlow("type")} aria-label="Back to item types">‹</button><h4>Choose a reference flight</h4><button onClick={() => p.setAddingAfter(null)}>Cancel</button></div>
-                    <label className="activity-search"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input value={p.flightSearch} onChange={(event) => p.setFlightSearch(event.target.value)} placeholder="Search by airport, airline, or flight number" /></label>
+                    <div className="hotel-filter-row">
+                      <label className="activity-search"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input value={p.flightSearch} onChange={(event) => p.setFlightSearch(event.target.value)} placeholder="Search by airport, airline, or flight number" /></label>
+                      <SelectField
+                        value={p.flightSort}
+                        onChange={(value) => p.setFlightSort(value as "departure" | "price_asc" | "price_desc")}
+                        options={[
+                          { value: "departure", label: "Earliest departure" },
+                          { value: "price_asc", label: "Price: low to high" },
+                          { value: "price_desc", label: "Price: high to low" },
+                        ]}
+                        ariaLabel="Sort flights"
+                        className="hotel-sort-field"
+                      />
+                    </div>
                     <p className="database-note">Choose an example for the itinerary. Travellers will see similar flights after selecting their dates and departure airport.</p>
                     <div className="flight-results" role="radiogroup" aria-label="Available flights">
                       {p.matchingFlights.map((flight, index) => {
-                        const departureTime = extractClockTimeInZone(flight.departure_datetime, timezoneForIata(flight.origin_iata)) ?? "--:--";
-                        const arrivalTime = extractClockTimeInZone(flight.arrival_datetime, timezoneForIata(flight.destination_iata)) ?? "--:--";
+                        const originTimeZone = timezoneForIata(flight.origin_iata);
+                        const destinationTimeZone = timezoneForIata(flight.destination_iata);
+                        const departureTime = extractClockTimeInZone(flight.departure_datetime, originTimeZone) ?? "--:--";
+                        const arrivalTime = extractClockTimeInZone(flight.arrival_datetime, destinationTimeZone) ?? "--:--";
+                        const dayOffset = flightArrivalDayOffset(flight.departure_datetime, originTimeZone, flight.arrival_datetime, destinationTimeZone);
                         return <button key={flight.flight_id ?? index} type="button" role="radio" aria-checked={p.selectedFlightIndex === index} className={p.selectedFlightIndex === index ? "selected" : ""} onClick={() => p.setSelectedFlightIndex(index)}>
                           <span className="flight-brand"><strong>{flight.airline ?? "Airline not provided"}</strong><small>{flight.flight_number ?? ""}</small></span>
                           <span className="flight-route"><strong>{departureTime}</strong><small>{flight.origin_iata ?? "Not provided"}</small></span>
                           <span className="flight-duration"><i aria-hidden="true"><Icon name="plane" size={20} /></i></span>
-                          <span className="flight-route"><strong>{arrivalTime}</strong><small>{flight.destination_iata ?? "Not provided"}</small></span>
+                          <span className="flight-route"><strong>{arrivalTime}{dayOffset ? <sup className="flight-day-offset" title={`Arrives ${dayOffset} day${dayOffset === 1 ? "" : "s"} later`}>+{dayOffset}</sup> : null}</strong><small>{flight.destination_iata ?? "Not provided"}</small></span>
                           <span className="flight-fare"><small>Estimated</small><strong>{flight.price_aud != null ? `$${flight.price_aud.toLocaleString("en-US")}` : "Not provided"}</strong></span>
                           <span className="flight-select" aria-hidden="true">{p.selectedFlightIndex === index ? <Icon name="check" size={18} /> : ""}</span>
                         </button>;
@@ -796,6 +815,7 @@ export default function ItineraryEditor({
   const [catalogHotels, setCatalogHotels] = useState<CreatorHotelDetail[] | null>(null);
   const [catalogFlights, setCatalogFlights] = useState<CreatorFlightDetail[] | null>(null);
   const [flightSearch, setFlightSearch] = useState("");
+  const [flightSort, setFlightSort] = useState<"departure" | "price_asc" | "price_desc">("departure");
   const [selectedFlightIndex, setSelectedFlightIndex] = useState<number | null>(null);
   const [selectedHotelIndex, setSelectedHotelIndex] = useState<number | null>(null);
   const [moreHotelsOpen, setMoreHotelsOpen] = useState(false);
@@ -1097,6 +1117,11 @@ export default function ItineraryEditor({
     return () => window.clearTimeout(timer);
   }, [addFlow, activeDayCity, hotelSearch, hotelSort]);
 
+  useEffect(() => {
+    if (addFlow !== "flight") return;
+    setFlightSort("departure");
+  }, [addFlow]);
+
   // Reference flights, same gap as hotels had: the package only carries
   // whichever flights the AI happened to attach at creation, not the full
   // catalog. These are examples arriving at the destination — origin is up
@@ -1122,7 +1147,7 @@ export default function ItineraryEditor({
       let query = supabase
         .from("flights")
         .select("flight_id,airline,flight_number,origin,destination,departure_datetime,arrival_datetime,cabin_class,price_aud")
-        .order("departure_datetime", { ascending: true })
+        .order(flightSort === "departure" ? "departure_datetime" : "price_aud", { ascending: flightSort !== "price_desc" })
         .limit(24);
       // Unlike activities/hotels' plain city columns, flights.destination is
       // stored as "City (CODE)" (e.g. "Kyoto (UKY)") — an exact match against
@@ -1142,7 +1167,7 @@ export default function ItineraryEditor({
       })));
     }, 250);
     return () => window.clearTimeout(timer);
-  }, [addFlow, activeDayCity]);
+  }, [addFlow, activeDayCity, flightSort]);
 
   const showNotice = (message: string) => {
     setNotice(message);
@@ -1840,6 +1865,7 @@ export default function ItineraryEditor({
     addingAfter, setAddingAfter,
     addFlow, setAddFlow,
     flightSearch, setFlightSearch,
+    flightSort, setFlightSort,
     matchingFlights,
     selectedFlightIndex, setSelectedFlightIndex,
     addSelectedFlight,
@@ -2096,7 +2122,7 @@ export default function ItineraryEditor({
                       <div><dt>From</dt><dd>{flight.origin_iata || "Not provided"}</dd></div>
                       <div><dt>To</dt><dd>{flight.destination_iata || "Not provided"}</dd></div>
                       <div><dt>Departure</dt><dd>{extractClockTimeInZone(flight.departure_datetime, timezoneForIata(flight.origin_iata)) ?? "Not provided"}</dd></div>
-                      <div><dt>Arrival</dt><dd>{extractClockTimeInZone(flight.arrival_datetime, timezoneForIata(flight.destination_iata)) ?? "Not provided"}</dd></div>
+                      <div><dt>Arrival</dt><dd>{extractClockTimeInZone(flight.arrival_datetime, timezoneForIata(flight.destination_iata)) ?? "Not provided"}{(() => { const offset = flightArrivalDayOffset(flight.departure_datetime, timezoneForIata(flight.origin_iata), flight.arrival_datetime, timezoneForIata(flight.destination_iata)); return offset ? <sup className="flight-day-offset" title={`Arrives ${offset} day${offset === 1 ? "" : "s"} later`}>+{offset}</sup> : null; })()}</dd></div>
                     </dl>
                   </div>
                 </section>}

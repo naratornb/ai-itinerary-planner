@@ -331,6 +331,33 @@ export function extractClockTimeInZone(dateStr: string | null, timeZone: string)
   return `${hour}:${minute}`;
 }
 
+/** Calendar date (in the given zone) as "YYYY-MM-DD", or null if unparseable. */
+function dateKeyInZone(dateStr: string | null | undefined, timeZone: string): string | null {
+  if (!dateStr) return null;
+  const date = new Date(dateStr);
+  if (Number.isNaN(date.getTime())) return null;
+  return new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
+}
+
+/**
+ * How many local calendar days later the flight lands than it departs —
+ * comparing each end's own clock, the way airlines show a "+1" on an
+ * overnight flight, not elapsed duration. Null when either time is missing.
+ */
+export function flightArrivalDayOffset(
+  departureDatetime: string | null | undefined,
+  originTimeZone: string,
+  arrivalDatetime: string | null | undefined,
+  destinationTimeZone: string,
+): number | null {
+  const departureKey = dateKeyInZone(departureDatetime, originTimeZone);
+  const arrivalKey = dateKeyInZone(arrivalDatetime, destinationTimeZone);
+  if (!departureKey || !arrivalKey) return null;
+  const departureDate = Date.parse(`${departureKey}T00:00:00Z`);
+  const arrivalDate = Date.parse(`${arrivalKey}T00:00:00Z`);
+  return Math.round((arrivalDate - departureDate) / 86_400_000);
+}
+
 /** Builds the editor from relative package days, with dated rows as a legacy fallback. */
 export function buildDaysFromPackage(pkg: CreatorPackageDetail): BuilderDay[] {
   const stayDates = [
