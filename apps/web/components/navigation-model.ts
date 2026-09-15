@@ -1,9 +1,9 @@
 import { APP_ROUTES } from "../lib/routes";
 
-export const creatorNavigationItems = [
-  { label: "Dashboard", icon: "dashboard", href: APP_ROUTES.dashboard },
-  { label: "My packages", icon: "luggage", href: APP_ROUTES.builder },
-] as const;
+export const creatorDashboardBackLink = {
+  label: "Back to dashboard",
+  href: APP_ROUTES.dashboard,
+} as const;
 
 export const marketplaceNavigationItems = [
   "Flights",
@@ -11,3 +11,8 @@ export const marketplaceNavigationItems = [
   "Tours",
   "Deals",
 ] as const;
+
+export const dashboardActionAlignment = {
+  header: "center",
+  buttons: "center",
+} as const;

@@ -1,75 +1,115 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
-import L from "leaflet";
-import { MapContainer, Marker, Polyline, Popup, TileLayer, useMap } from "react-leaflet";
-import "leaflet/dist/leaflet.css";
+import { useEffect, useRef } from "react";
+import { importLibrary, setOptions } from "@googlemaps/js-api-loader";
 
 export type RouteStop = { label: string; time?: string; coordinate: [number, number] };
 
 const DEFAULT_CENTER: [number, number] = [35.6812, 139.7671];
 const ROUTE_PIN_COLORS = 5;
 
-function numberIcon(n: number, colorIndex: number) {
-  return L.divIcon({
-    className: "route-pin-icon",
-    html: `<span class="route-pin route-pin-${colorIndex % ROUTE_PIN_COLORS}">${n}</span>`,
-    iconSize: [26, 26],
-    iconAnchor: [13, 13],
-  });
+// A DEMO_MAP_ID works out of the box for AdvancedMarkerElement without any
+// Cloud Console map-style setup — fine for our fixed, code-driven styling.
+const GOOGLE_MAPS_MAP_ID = "DEMO_MAP_ID";
+
+if (process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY) {
+  setOptions({ key: process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY, v: "weekly" });
 }
 
-function FitRoute({ coordinates }: { coordinates: [number, number][] }) {
-  const map = useMap();
-  useEffect(() => {
-    // A rAF queued by the observer can fire after MapContainer destroys the
-    // map (StrictMode's throwaway mount does this on every dev page-load),
-    // and invalidateSize on a destroyed map throws on _leaflet_pos.
-    let disposed = false;
-    let frame = 0;
-    const fit = () => {
-      if (disposed) return;
-      map.invalidateSize({ animate: false });
-      if (coordinates.length === 0) return;
-      if (coordinates.length === 1) { map.setView(coordinates[0], 13, { animate: false }); return; }
-      map.fitBounds(coordinates, { padding: [28, 28], animate: false });
-    };
-    const container = map.getContainer();
-    const observer = new ResizeObserver(() => {
-      window.cancelAnimationFrame(frame);
-      frame = window.requestAnimationFrame(fit);
-    });
-    observer.observe(container);
-    const timeout = window.setTimeout(fit, 100);
-    fit();
-    return () => {
-      disposed = true;
-      observer.disconnect();
-      window.cancelAnimationFrame(frame);
-      window.clearTimeout(timeout);
-    };
-  }, [map, coordinates]);
-  return null;
+function toLatLng(coordinate: [number, number]): google.maps.LatLngLiteral {
+  return { lat: coordinate[0], lng: coordinate[1] };
 }
 
 export default function RouteMap({ stops }: { stops: RouteStop[] }) {
-  const coordinates = useMemo(() => stops.map((stop) => stop.coordinate), [stops]);
-  const center = coordinates[0] ?? DEFAULT_CENTER;
+  const containerRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<google.maps.Map | null>(null);
+
+  useEffect(() => {
+    if (!process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY) return;
+    let disposed = false;
+    let markers: google.maps.marker.AdvancedMarkerElement[] = [];
+    let polyline: google.maps.Polyline | null = null;
+    let resizeObserver: ResizeObserver | null = null;
+
+    (async () => {
+      const [{ Map }, { AdvancedMarkerElement }] = await Promise.all([
+        importLibrary("maps"),
+        importLibrary("marker"),
+      ]);
+      if (disposed || !containerRef.current) return;
+
+      const center = stops[0]?.coordinate ?? DEFAULT_CENTER;
+      const map = mapRef.current ?? new Map(containerRef.current, {
+        center: toLatLng(center),
+        zoom: 12,
+        mapId: GOOGLE_MAPS_MAP_ID,
+        scrollwheel: false,
+        disableDefaultUI: false,
+        mapTypeControl: false,
+        streetViewControl: false,
+        fullscreenControl: false,
+        clickableIcons: false,
+      });
+      mapRef.current = map;
+
+      const infoWindow = new google.maps.InfoWindow();
+
+      markers = stops.map((stop, index) => {
+        const pin = document.createElement("span");
+        pin.className = `route-pin route-pin-${index % ROUTE_PIN_COLORS}`;
+        pin.textContent = String(index + 1);
+        const marker = new AdvancedMarkerElement({ map, position: toLatLng(stop.coordinate), content: pin });
+        marker.addListener("click", () => {
+          infoWindow.setContent(`${stop.label}${stop.time ? ` · ${stop.time}` : ""}`);
+          infoWindow.open({ map, anchor: marker });
+        });
+        return marker;
+      });
+
+      if (stops.length > 1) {
+        polyline = new google.maps.Polyline({
+          path: stops.map((stop) => toLatLng(stop.coordinate)),
+          strokeOpacity: 0,
+          icons: [{
+            icon: { path: "M 0,-1 0,1", strokeOpacity: 0.8, strokeColor: "#212121", scale: 3 },
+            offset: "0",
+            repeat: "12px",
+          }],
+          map,
+        });
+      }
+
+      const fit = () => {
+        if (stops.length === 0) return;
+        if (stops.length === 1) { map.setCenter(toLatLng(stops[0].coordinate)); map.setZoom(13); return; }
+        const bounds = new google.maps.LatLngBounds();
+        stops.forEach((stop) => bounds.extend(toLatLng(stop.coordinate)));
+        map.fitBounds(bounds, 28);
+      };
+      fit();
+
+      resizeObserver = new ResizeObserver(() => {
+        google.maps.event.trigger(map, "resize");
+        fit();
+      });
+      resizeObserver.observe(containerRef.current);
+    })();
+
+    return () => {
+      disposed = true;
+      resizeObserver?.disconnect();
+      markers.forEach((marker) => { marker.map = null; });
+      polyline?.setMap(null);
+    };
+  }, [stops]);
+
+  if (!process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY) {
+    return <div className="route-map-live route-map-fallback">Set NEXT_PUBLIC_GOOGLE_MAPS_API_KEY to show the route map.</div>;
+  }
 
   return (
     <div className="route-map-live">
-      <MapContainer center={center} zoom={12} scrollWheelZoom={false}>
-        {/* CARTO's basemap tiles now 403 without an API key we don't have —
-            plain OSM tiles need none. */}
-        <TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-        {coordinates.length > 1 && <Polyline positions={coordinates} pathOptions={{ color: "#212121", weight: 3, opacity: 0.8, dashArray: "7 7" }} />}
-        {stops.map((stop, index) => (
-          <Marker key={index} position={stop.coordinate} icon={numberIcon(index + 1, index)}>
-            <Popup>{stop.label}{stop.time ? ` · ${stop.time}` : ""}</Popup>
-          </Marker>
-        ))}
-        <FitRoute coordinates={coordinates} />
-      </MapContainer>
+      <div ref={containerRef} className="route-map-canvas" />
       {stops.length > 0 && (
         <div className="route-map-key" aria-label="Stops in order">
           {stops.map((stop, index) => <span key={index}><i className={`route-pin-${index % ROUTE_PIN_COLORS}`}>{index + 1}</i><b>{stop.label}</b></span>)}

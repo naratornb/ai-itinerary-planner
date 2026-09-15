@@ -44,7 +44,7 @@ export default function CopilotPanel({ client, city, dayLabel, onAddSuggestion, 
     const prompt = input.trim();
     if (!prompt || loading) return;
     setInput("");
-    void send(prompt);
+    void send(prompt, city);
   };
 
   const addSuggestion = (suggestion: CopilotSuggestionV1, turnId?: string) => {
@@ -69,11 +69,15 @@ export default function CopilotPanel({ client, city, dayLabel, onAddSuggestion, 
   };
 
   return (
+    <>
+    {mobileOpen && <div className="copilot-backdrop" onClick={onClose} aria-hidden="true" />}
     <section className={`editor-panel copilot-panel${mobileOpen ? " mobile-open" : ""}`} aria-labelledby="copilot-title">
       <header className="copilot-header">
-        <button className="copilot-back" type="button" onClick={onClose}>Back</button>
         <CopilotMark />
         <h2 id="copilot-title">Itinerary Co-Pilot</h2>
+        <button className="copilot-back" type="button" onClick={onClose} aria-label="Close Co-Pilot">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg>
+        </button>
       </header>
 
       <div className="copilot-conversation" aria-live="polite" aria-busy={loading}>
@@ -193,5 +197,6 @@ export default function CopilotPanel({ client, city, dayLabel, onAddSuggestion, 
         </div>
       </form>
     </section>
+    </>
   );
 }

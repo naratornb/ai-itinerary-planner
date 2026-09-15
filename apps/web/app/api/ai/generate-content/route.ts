@@ -14,17 +14,20 @@ export async function POST(req: NextRequest) {
 
     const body = await req.json();
     const {
+      scope = "day",
       packageTitle = "",
       destination = "",
       selectedHotel = "",
       dayTitle = "",
       dayNumber = 1,
+      totalDays,
       items = [],
       vibe = "",
     } = body;
 
     // 1. System Prompt: Australian English, evocative perception-rich guide style, strictly no first person, no prices, no competitors.
-    const systemPrompt = `You are an expert Australian travel copywriter creating evocative, perception-rich day descriptions for travel itineraries.
+    const scopeNoun = scope === "package" ? "trip" : "day";
+    const systemPrompt = `You are an expert Australian travel copywriter creating evocative, perception-rich ${scopeNoun} descriptions for travel itineraries.
 
 STRICT WRITING RULES:
 1. Perspective & Voice: DO NOT use first-person pronouns (NEVER use "I", "me", "my", "we", "our", "us"). Write in an engaging, immersive guidebook style (e.g., "Start in the electric heart of Tokyo, then slow down over a steaming bowl of ramen before watching the city glow from Tokyo Tower."). Focus on atmosphere, sensory details, sights, flavours, and perceptions so the reader can envision the journey.
@@ -33,7 +36,7 @@ STRICT WRITING RULES:
 4. Completeness: You MUST bring the narrative to a natural, fully formed conclusion. NEVER leave the final sentence incomplete or cut off mid-thought.
 5. No Prices: Do NOT include any monetary amounts, currency symbols, or prices.
 6. No Competitor Mentions: Do NOT mention any third-party travel agencies, booking platforms, or competitors.
-7. Seamless Narrative: Weave the planned stops and experiences into a flowing, captivating story for this specific day.`;
+7. Seamless Narrative: Weave the planned stops and experiences into a flowing, captivating story for this specific ${scopeNoun}.`;
 
     // 2. Format user prompt from frontend state
     const activitiesFormatted =
@@ -41,7 +44,18 @@ STRICT WRITING RULES:
         ? items.map((act: string) => `- ${act}`).join("\n")
         : "- Local exploration and cultural highlights";
 
-    const userPrompt = `Craft an evocative, complete day story based on these itinerary details:
+    const userPrompt = scope === "package"
+      ? `Craft an evocative, complete overview story for this whole trip package based on these itinerary details:
+- Trip Title: ${packageTitle || destination || "Travel Experience"}
+- Duration: ${totalDays ? `${totalDays} day${totalDays === 1 ? "" : "s"}` : "Multiple days"}
+- Destination: ${destination || "City Centre"}
+- Base / Hotel: ${selectedHotel || "Central accommodation"}
+- Atmosphere / Vibe: ${vibe || "Culture, culinary discoveries, and iconic landmarks"}
+- Highlights Across the Trip:
+${activitiesFormatted}
+
+Write the engaging, complete 150-250 word Australian English narrative introducing the whole package, with a full concluding sentence, now:`
+      : `Craft an evocative, complete day story based on these itinerary details:
 - Trip Title: ${packageTitle || destination || "Travel Experience"}
 - Day: Day ${dayNumber} — ${dayTitle || "Daily Highlights"}
 - Destination: ${destination || "City Centre"}

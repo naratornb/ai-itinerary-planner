@@ -139,39 +139,39 @@ test("skips a flight whose destination has no IATA code", () => {
   assert.deepEqual(out.flights, []);
 });
 
-test("rounds flight price to an integer and carries airline and times", () => {
+test("maps flights to relative days and clock times without calendar dates", () => {
   const out = itineraryToPackageInput(base(), response());
   assert.equal(out.flights?.[0].price_aud, 851);
   assert.equal(out.flights?.[0].airline, "Test Air");
-  assert.equal(out.flights?.[0].departure_datetime, "2026-04-01T09:00:00");
-  assert.equal(out.flights?.[0].arrival_datetime, "2026-04-01T18:00:00");
+  assert.equal(out.flights?.[0].departure_time, "09:00");
+  assert.equal(out.flights?.[0].arrival_time, "18:00");
+  assert.equal(out.flights?.[0].day_number, 1);
+  assert.equal("departure_datetime" in out.flights![0], false);
+  assert.equal("arrival_datetime" in out.flights![0], false);
 });
 
 // ─── hotels ───────────────────────────────────────────────────────────────────
 
-test("slices hotel ISO datetimes down to YYYY-MM-DD", () => {
+test("maps hotel stays to relative check-in and check-out days", () => {
   const out = itineraryToPackageInput(base(), response());
   assert.equal(out.hotels?.length, 1);
-  assert.equal(out.hotels?.[0].check_in_date, "2026-04-01");
-  assert.equal(out.hotels?.[0].check_out_date, "2026-04-04");
-  assert.equal(out.hotels?.[0].hotel_name, "Hotel One");
+  assert.equal(out.hotels?.[0].check_in_day, 1);
+  assert.equal(out.hotels?.[0].check_out_day, 4);
+  assert.equal(out.hotels?.[0].nights, 3);
+  assert.equal("check_in_date" in out.hotels![0], false);
+  assert.equal("check_out_date" in out.hotels![0], false);
+    assert.equal(out.hotels?.[0].hotel_name, "Hotel One");
   assert.equal(out.hotels?.[0].city, "Tokyo");
 });
 
-test("skips a hotel with a missing check_out date", () => {
+test("keeps a hotel when the engine has no calendar dates", () => {
   const out = itineraryToPackageInput(
     base(),
-    response({ accommodation: [hotel({ check_out: "" })] }),
+    response({ accommodation: [hotel({ check_in: "", check_out: "" })] }),
   );
-  assert.deepEqual(out.hotels, []);
-});
-
-test("skips a hotel whose date is shorter than YYYY-MM-DD", () => {
-  const out = itineraryToPackageInput(
-    base(),
-    response({ accommodation: [hotel({ check_in: "2026-04" })] }),
-  );
-  assert.deepEqual(out.hotels, []);
+  assert.equal(out.hotels?.length, 1);
+  assert.equal(out.hotels?.[0].check_in_day, 1);
+  assert.equal(out.hotels?.[0].check_out_day, 4);
 });
 
 test("clamps star rating into 1..5 after rounding", () => {
@@ -190,33 +190,33 @@ test("rounds nightly price to an integer", () => {
 
 // ─── activities ───────────────────────────────────────────────────────────────
 
-test("lifts activity_date from the parent day date", () => {
+test("maps activities to their relative day and authored start time", () => {
   const out = itineraryToPackageInput(base(), response());
   assert.equal(out.activities?.length, 1);
-  assert.equal(out.activities?.[0].activity_date, "2026-04-01");
+  assert.equal(out.activities?.[0].day_number, 1);
+  assert.equal(out.activities?.[0].sequence_order, 1);
+  assert.equal(out.activities?.[0].start_time, "10:00");
+  assert.equal(out.activities?.[0].category, "food");
+  assert.equal("activity_date" in out.activities![0], false);
   assert.equal(out.activities?.[0].activity_name, "Sushi class");
   assert.equal(out.activities?.[0].city, "Tokyo");
 });
 
-test("skips activities under a day with an empty date", () => {
+test("keeps activities when an itinerary day has no calendar date", () => {
   const out = itineraryToPackageInput(
     base(),
     response({
-      days: [day({ date: "" }), day({ day_number: 2, date: "2026-04-02", activities: [activity({ activity_id: "AC-2" })] })],
+      days: [day({ date: "" }), day({ day_number: 2, date: "", activities: [activity({ activity_id: "AC-2" })] })],
     }),
   );
-  assert.equal(out.activities?.length, 1);
-  assert.equal(out.activities?.[0].activity_date, "2026-04-02");
-});
-
-test("skips activities under a day whose date is too short", () => {
-  const out = itineraryToPackageInput(base(), response({ days: [day({ date: "2026-04" })] }));
-  assert.deepEqual(out.activities, []);
+  assert.equal(out.activities?.length, 2);
+  assert.deepEqual(out.activities?.map((entry) => entry.day_number), [1, 2]);
 });
 
 test("maps activity notes to description and rounds price", () => {
   const out = itineraryToPackageInput(base(), response());
   assert.equal(out.activities?.[0].description, "Bring an appetite");
+  assert.equal(out.activities?.[0].notes, "Bring an appetite");
   assert.equal(out.activities?.[0].price_aud, 100);
   assert.equal(out.activities?.[0].duration_hours, 2);
 });
@@ -321,8 +321,10 @@ test("a fully empty engine response yields the base with empty components", () =
   assert.equal(out.base_price_aud, 100);
 });
 
-test("duration grows to cover more dated days than the trip claims", () => {
+test("duration grows to cover every relative itinerary day", () => {
   const res = response({
+    accommodation: [],
+    flights: [flight({ leg: "return" })],
     days: [
       day({ date: "2026-04-01" }),
       day({ day_number: 2, date: "2026-04-02", activities: [activity({ activity_id: "AC-2" })] }),
@@ -330,7 +332,10 @@ test("duration grows to cover more dated days than the trip claims", () => {
     ],
   });
   res.trip.duration_days = 2;
-  assert.equal(itineraryToPackageInput(base({ duration_days: 1 }), res).duration_days, 3);
+  const out = itineraryToPackageInput(base({ duration_days: 1 }), res);
+  assert.equal(out.duration_days, 3);
+  assert.equal(out.flights?.[0].day_number, 3);
+  assert.deepEqual(out.activities?.map((entry) => entry.day_number), [1, 2, 3]);
 });
 
 // ─── buildItineraryQuery ──────────────────────────────────────────────────────

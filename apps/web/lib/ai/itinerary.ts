@@ -148,10 +148,23 @@ function iataOf(place: string | undefined): string | null {
   return /^[A-Z]{3}$/.test(value) ? value : null;
 }
 
-/** "2026-03-01T09:00:00" → "2026-03-01"; anything shorter than a date → null. */
-function dateOf(value: string | undefined): string | null {
-  const day = (value ?? "").slice(0, 10);
-  return day.length === 10 ? day : null;
+const clockOf = (value: string | undefined): string | null => {
+  const match = /T(\d{2}:\d{2})/.exec(value ?? "");
+  return match?.[1] ?? null;
+};
+
+function relativeDayOf(value: string | undefined, tripStart: string | undefined, fallback: number): number {
+  const day = Date.parse((value ?? "").slice(0, 10));
+  const start = Date.parse((tripStart ?? "").slice(0, 10));
+  if (!Number.isFinite(day) || !Number.isFinite(start)) return fallback;
+  return Math.max(1, Math.round((day - start) / 86_400_000) + 1);
+}
+
+function durationMinutesBetween(start: string | undefined, end: string | undefined): number | null {
+  const startTime = Date.parse(start ?? "");
+  const endTime = Date.parse(end ?? "");
+  if (!Number.isFinite(startTime) || !Number.isFinite(endTime) || endTime <= startTime) return null;
+  return Math.round((endTime - startTime) / 60_000);
 }
 
 const roundOrNull = (n: number | undefined) =>
@@ -166,39 +179,67 @@ export function itineraryToPackageInput(
   base: CreatePackageInput,
   res: ItineraryResponse,
 ): CreatePackageInput {
+  const engineDuration = res.trip?.duration_days;
+  const duration = Math.max(
+    Number.isInteger(engineDuration) && (engineDuration as number) >= 1
+      ? (engineDuration as number)
+      : base.duration_days,
+    res.days?.length ?? 0,
+    ...(res.accommodation ?? []).map((hotel) => relativeDayOf(
+      hotel.check_out,
+      res.trip?.travel_dates?.depart_date,
+      Math.max(1, roundOrNull(hotel.nights) ?? 1) + 1,
+    )),
+  );
   const flights: FlightInput[] = [];
-  for (const flight of res.flights ?? []) {
+  for (const [index, flight] of (res.flights ?? []).entries()) {
     const origin = iataOf(flight.origin);
     const destination = iataOf(flight.destination);
     // ponytail: the engine sends free text ("Sydney (SYD)" or a city name); no
     // city→IATA table here — a flight we can't resolve is dropped, not guessed.
     if (!origin || !destination) continue;
-    if (!flight.airline || !flight.departure_datetime || !flight.arrival_datetime) continue;
+    if (!flight.airline) continue;
+    const isReturn = /return|inbound/i.test(flight.leg ?? "");
     flights.push({
       origin_iata: origin,
       destination_iata: destination,
       airline: flight.airline,
-      departure_datetime: flight.departure_datetime,
-      arrival_datetime: flight.arrival_datetime,
+      departure_time: clockOf(flight.departure_datetime),
+      arrival_time: clockOf(flight.arrival_datetime),
+      duration_minutes: durationMinutesBetween(flight.departure_datetime, flight.arrival_datetime),
       cabin_class: flight.cabin_class ?? null,
       price_aud: roundOrNull(flight.price_aud),
+      day_number: isReturn ? duration : 1,
+      sequence_order: index + 1,
+      notes: null,
+      media_ids: [],
+      source_id: flight.flight_id || null,
     });
   }
 
   const hotels: HotelInput[] = [];
-  for (const hotel of res.accommodation ?? []) {
-    const checkIn = dateOf(hotel.check_in);
-    const checkOut = dateOf(hotel.check_out);
-    if (!hotel.hotel_name || !hotel.city || !checkIn || !checkOut) continue;
+  for (const [index, hotel] of (res.accommodation ?? []).entries()) {
+    if (!hotel.hotel_name || !hotel.city) continue;
     const stars = roundOrNull(hotel.star_rating);
+    const suppliedNights = Math.max(1, roundOrNull(hotel.nights) ?? 1);
+    const checkInDay = relativeDayOf(hotel.check_in, res.trip?.travel_dates?.depart_date, 1);
+    const checkOutDay = Math.max(
+      checkInDay + 1,
+      relativeDayOf(hotel.check_out, res.trip?.travel_dates?.depart_date, checkInDay + suppliedNights),
+    );
     hotels.push({
       hotel_name: hotel.hotel_name,
       star_rating: stars === null ? null : Math.min(5, Math.max(1, stars)),
       city: hotel.city,
-      check_in_date: checkIn,
-      check_out_date: checkOut,
       price_per_night_aud: roundOrNull(hotel.price_per_night_aud),
       room_type: hotel.room_type ?? null,
+      check_in_day: checkInDay,
+      check_out_day: checkOutDay,
+      nights: checkOutDay - checkInDay,
+      sequence_order: index + 1,
+      notes: null,
+      media_ids: [],
+      source_id: hotel.hotel_id || null,
     });
   }
 
@@ -216,32 +257,28 @@ export function itineraryToPackageInput(
         summary: day.description || null,
       });
     }
-    const activityDate = dateOf(day.date);
-    if (!activityDate) continue;             // activities carry no date of their own
-    for (const activity of day.activities ?? []) {
+    for (const [activityIndex, activity] of (day.activities ?? []).entries()) {
       if (!activity.activity_name) continue;
       activities.push({
         activity_name: activity.activity_name,
-        activity_date: activityDate,
         city: day.city || base.destination_city,
         duration_hours: Number.isFinite(activity.duration_hours) ? activity.duration_hours : null,
         price_aud: roundOrNull(activity.price_aud),
         description: activity.notes ?? null,
+        notes: activity.notes ?? null,
+        booking_required: null,
+        day_number: index + 1,
+        sequence_order: activityIndex + 1,
+        start_time: activity.start_time || null,
+        category: activity.category || null,
+        address: activity.address || null,
+        media_ids: [],
+        source_id: activity.activity_id || null,
       });
     }
   }
 
   const totalCost = res.trip?.total_cost_aud;
-  const engineDuration = res.trip?.duration_days;
-  // The engine can return more dated days than trip.duration_days claims (it
-  // records the mismatch in validation.errors and returns anyway); a too-small
-  // duration makes the editor squash the overflow onto its last day.
-  const duration = Math.max(
-    Number.isInteger(engineDuration) && (engineDuration as number) >= 1
-      ? (engineDuration as number)
-      : base.duration_days,
-    new Set(activities.map((a) => a.activity_date)).size,
-  );
   return {
     ...base,
     title: (res.trip?.title || base.title).slice(0, 200),

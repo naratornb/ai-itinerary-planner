@@ -20,6 +20,7 @@ const SCREEN_ROUTES: Record<Screen, string> = {
   marketplace: APP_ROUTES.marketplace,
   dashboard: APP_ROUTES.dashboard,
   builder: APP_ROUTES.builder,
+  "manual-builder": APP_ROUTES.manualBuilder,
   "ai-wizard": APP_ROUTES.wizard,
 };
 
@@ -43,19 +44,24 @@ export function MarketplaceRouteNav() {
 
 export function DashboardRouteScreen() {
   const onNav = useScreenNavigation();
-  return <><CreatorNav activeItem="Dashboard" onItem={() => undefined} onNav={onNav} /><DashboardScreen onNav={onNav} /></>;
+  return <><CreatorNav onNav={onNav} /><DashboardScreen onNav={onNav} /></>;
 }
 
 export function BuilderRouteScreen() {
   const onNav = useScreenNavigation();
-  return <><CreatorNav activeItem="My Packages" onItem={() => undefined} onNav={onNav} /><BuilderScreen onNav={onNav} /></>;
+  return <><CreatorNav onNav={onNav} /><BuilderScreen onNav={onNav} /></>;
+}
+
+export function ManualBuilderRouteScreen() {
+  const onNav = useScreenNavigation();
+  return <><CreatorNav onNav={onNav} /><AIWizardScreen onNav={onNav} variant="manual" /></>;
 }
 
 export function WizardRouteScreen() {
   const onNav = useScreenNavigation();
   const { wizardStep } = useDemoState();
 
-  return <><CreatorNav activeItem="My Packages" onItem={() => undefined} onNav={onNav} /><AIWizardScreen
+  return <><CreatorNav onNav={onNav} /><AIWizardScreen
     initialStep={wizardStep}
     onNav={onNav}
     requestedStep={wizardStep}
