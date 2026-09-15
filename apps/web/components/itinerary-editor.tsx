@@ -306,8 +306,8 @@ function annotateItems(raw: TimelineItem[]): TimelineItem[] {
     const durationMin = Number(item.duration ?? 60);
     const endMin = toMinutes(item.time) + durationMin;
 
-    // 1. Long single activity
-    if (durationMin > LONG_ACTIVITY_MIN) {
+    // 1. Long single activity — flights routinely run past this on their own, so skip them
+    if (item.type !== "FLIGHT" && durationMin > LONG_ACTIVITY_MIN) {
       const hrs = (durationMin / 60).toFixed(1);
       return {
         ...item,
