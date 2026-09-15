@@ -1776,7 +1776,6 @@ export default function ItineraryEditor({
           <button className="add-day" disabled={isLocked} onClick={() => { const nextDay = days.length + 1; setDays([...days, { id: `day-${Date.now()}`, day: nextDay, title: "Untitled day", meta: "Add your first stop", items: [], story: "", photos: [], date: nextCalendarDate(days[days.length - 1]?.date) }]); setActiveDay(days.length); showNotice("A new day was added"); }}><Icon name="plus" size={24} /><span>Add Day</span></button>
         </div>
         <button type="button" className="day-scroll-btn" disabled={!dayScroll.canRight} onClick={() => scrollDayTabs(1)} aria-label="Scroll days right"><Icon name="chevron" size={18} /></button>
-        <div className="trip-length"><strong>{days.length} days</strong><span>{Math.max(0, days.length - 1)} nights</span></div>
       </nav>
 
       <fieldset className="editor-shell" disabled={isLocked} aria-label={isLocked ? "Read-only itinerary" : "Itinerary editor"}>
@@ -2073,60 +2072,6 @@ export default function ItineraryEditor({
             <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="m12 3 1.2 3.8L17 8l-3.8 1.2L12 13l-1.2-3.8L7 8l3.8-1.2zM18 14l.8 2.2L21 17l-2.2.8L18 20l-.8-2.2L15 17l2.2-.8z" /></svg>
             <span>Ask Co-Pilot</span>
           </button>
-          <Panel title="Trip parameters" className="trip-params-panel" icon={<Icon name="pin" size={16} />}>
-            <div className="trip-params-rows">
-              <div className="trip-params-row">
-                <span className="trip-params-row-label"><Icon name="pin" size={16} />Destination</span>
-                <strong>{tripDestination || "Not set"}</strong>
-              </div>
-              <div className="trip-params-row">
-                <span className="trip-params-row-label"><Icon name="clock" size={16} />Target season</span>
-                {editingTripParams
-                  ? <SelectField
-                      value={tripParamsDraft.season ?? ""}
-                      onChange={(season) => setTripParamsDraft((current) => ({ ...current, season }))}
-                      options={TRIP_SEASON_OPTIONS.map((season) => ({ value: season, label: season.charAt(0).toUpperCase() + season.slice(1) }))}
-                      ariaLabel="Target season"
-                      placeholder="Not set"
-                    />
-                  : <strong>{tripVibesDraft?.season ? tripVibesDraft.season.charAt(0).toUpperCase() + tripVibesDraft.season.slice(1) : "Not set"}</strong>}
-              </div>
-              {!editingTripParams && (
-                <div className="trip-params-row">
-                  <span className="trip-params-row-label"><Icon name="star" size={16} />Itinerary vibe</span>
-                  <strong>{tripVibesDraft?.vibes.length ? tripVibesDraft.vibes.join(" · ") : "Not set"}</strong>
-                </div>
-              )}
-            </div>
-            {editingTripParams && (
-              <div className="edit-categories trip-params-vibe-edit">
-                <span>Itinerary vibe (up to {MAX_TRIP_VIBES})</span>
-                <div>
-                  {TRIP_VIBE_OPTIONS.map((vibe) => {
-                    const selected = tripParamsDraft.vibes.includes(vibe);
-                    return (
-                      <button
-                        key={vibe}
-                        type="button"
-                        className={selected ? "selected" : ""}
-                        disabled={!selected && tripParamsDraft.vibes.length >= MAX_TRIP_VIBES}
-                        onClick={() => setTripParamsDraft((current) => ({
-                          ...current,
-                          vibes: selected ? current.vibes.filter((v) => v !== vibe) : [...current.vibes, vibe],
-                        }))}
-                      >{vibe}</button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-            {editingTripParams
-              ? <div className="trip-params-actions">
-                  <button type="button" className="quiet-button" onClick={() => setEditingTripParams(false)}>Cancel</button>
-                  <button type="button" className="publish-button" onClick={saveTripParams}>Save</button>
-                </div>
-              : <button type="button" className="trip-params-edit-button" disabled={isLocked} onClick={startEditingTripParams}><Icon name="pencil" size={14} />Edit trip details</button>}
-          </Panel>
           <section className="editor-panel status-panel" aria-label="Feasibility check">
             <div className="feas-head">
               <div className="feas-head-top">
@@ -2203,6 +2148,64 @@ export default function ItineraryEditor({
             {expandedFeasibility === "passed" && <ul className="passed-details"><li><Icon name="check" size={15} />Daily schedule has a clear start and end</li><li><Icon name="check" size={15} />All stops have pricing</li><li><Icon name="check" size={15} />Accommodation is included</li><li><Icon name="check" size={15} />Required package photos are uploaded</li></ul>}
             <p className="quality-footer">Last update: {feasResult && lastCheckedAt ? formatRelativeTime(lastCheckedAt) : "Not yet checked"}</p>
           </section>
+          <Panel title="Trip parameters" className="trip-params-panel" icon={<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><line x1="4" y1="6" x2="20" y2="6" /><circle cx="9" cy="6" r="2" /><line x1="4" y1="12" x2="20" y2="12" /><circle cx="15" cy="12" r="2" /><line x1="4" y1="18" x2="20" y2="18" /><circle cx="9" cy="18" r="2" /></svg>}>
+            <div className="trip-params-rows">
+              <div className="trip-params-row">
+                <span className="trip-params-row-label"><Icon name="pin" size={16} />Destination</span>
+                <strong>{tripDestination || "Not set"}</strong>
+              </div>
+              <div className="trip-params-row">
+                <span className="trip-params-row-label"><Icon name="hourglass" size={16} />Duration</span>
+                <strong>{days.length} day{days.length === 1 ? "" : "s"} ({Math.max(0, days.length - 1)} night{Math.max(0, days.length - 1) === 1 ? "" : "s"})</strong>
+              </div>
+              <div className="trip-params-row">
+                <span className="trip-params-row-label"><Icon name="clock" size={16} />Target season</span>
+                {editingTripParams
+                  ? <SelectField
+                      value={tripParamsDraft.season ?? ""}
+                      onChange={(season) => setTripParamsDraft((current) => ({ ...current, season }))}
+                      options={TRIP_SEASON_OPTIONS.map((season) => ({ value: season, label: season.charAt(0).toUpperCase() + season.slice(1) }))}
+                      ariaLabel="Target season"
+                      placeholder="Not set"
+                    />
+                  : <strong>{tripVibesDraft?.season ? tripVibesDraft.season.charAt(0).toUpperCase() + tripVibesDraft.season.slice(1) : "Not set"}</strong>}
+              </div>
+              {!editingTripParams && (
+                <div className="trip-params-row">
+                  <span className="trip-params-row-label"><Icon name="star" size={16} />Itinerary vibe</span>
+                  <strong>{tripVibesDraft?.vibes.length ? tripVibesDraft.vibes.join(" · ") : "Not set"}</strong>
+                </div>
+              )}
+            </div>
+            {editingTripParams && (
+              <div className="edit-categories trip-params-vibe-edit">
+                <span>Itinerary vibe (up to {MAX_TRIP_VIBES})</span>
+                <div>
+                  {TRIP_VIBE_OPTIONS.map((vibe) => {
+                    const selected = tripParamsDraft.vibes.includes(vibe);
+                    return (
+                      <button
+                        key={vibe}
+                        type="button"
+                        className={selected ? "selected" : ""}
+                        disabled={!selected && tripParamsDraft.vibes.length >= MAX_TRIP_VIBES}
+                        onClick={() => setTripParamsDraft((current) => ({
+                          ...current,
+                          vibes: selected ? current.vibes.filter((v) => v !== vibe) : [...current.vibes, vibe],
+                        }))}
+                      >{vibe}</button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            {editingTripParams
+              ? <div className="trip-params-actions">
+                  <button type="button" className="quiet-button" onClick={() => setEditingTripParams(false)}>Cancel</button>
+                  <button type="button" className="publish-button" onClick={saveTripParams}>Save</button>
+                </div>
+              : <button type="button" className="trip-params-edit-button" disabled={isLocked} onClick={startEditingTripParams}><Icon name="pencil" size={14} />Edit trip details</button>}
+          </Panel>
           <CopilotPanel
             client={copilotClient}
             // The active day's own city, not the package's overall
