@@ -636,6 +636,9 @@ figure .remove-photo-btn:focus-visible { outline: 2px solid var(--fc-focus-ring)
 .activity-form input:focus,.activity-form select:focus,.activity-form textarea:focus { border-color: var(--fc-blue); box-shadow: 0 0 0 3px var(--fc-focus-ring); }
 .activity-form input[readonly] { background: var(--fc-surface-subtle); color: var(--fc-secondary); }
 .activity-form.hotel-fixed-details { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.hotel-filter-row { display: flex; gap: 10px; margin-bottom: 14px; }
+.hotel-filter-row .activity-search { flex: 1 1 auto; min-width: 0; }
+.hotel-sort-field { flex: 0 0 auto; width: 180px; }
 .hotel-choice-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; }
 .hotel-choice-card { position: relative; min-width: 0; min-height: 132px; padding: 14px; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; text-align: left; border: 1px solid var(--fc-border); border-radius: 10px; background: #fff; color: var(--fc-ink); cursor: pointer; transition: border-color 140ms ease-out; }
 .hotel-choice-card:hover, .hotel-choice-card:focus-visible { border-color: var(--fc-blue); }

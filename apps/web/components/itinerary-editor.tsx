@@ -493,6 +493,10 @@ type AddStopFlowProps = {
   setSelectedHotelIndex: Dispatch<SetStateAction<number | null>>;
   moreHotelsOpen: boolean;
   setMoreHotelsOpen: Dispatch<SetStateAction<boolean>>;
+  hotelSearch: string;
+  setHotelSearch: Dispatch<SetStateAction<string>>;
+  hotelSort: "rating" | "price_asc" | "price_desc";
+  setHotelSort: Dispatch<SetStateAction<"rating" | "price_asc" | "price_desc">>;
   selectedHotelOption: CreatorHotelDetail | undefined;
   hotelCheckInDayId: string | null;
   setHotelCheckInDayId: Dispatch<SetStateAction<string | null>>;
@@ -561,6 +565,20 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
                     <div className="inline-add-head"><button className="inline-back" onClick={() => p.setAddFlow("type")} aria-label="Back to item types">‹</button><h4>Add hotel</h4><button onClick={() => p.setAddingAfter(null)}>Cancel</button></div>
                     <p className="database-note">Hotels are supplied by Travel Marketplace and cannot be edited here.</p>
                     {!p.selectedHotelOption && <>
+                      <div className="hotel-filter-row">
+                        <label className="activity-search"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" /></svg><input value={p.hotelSearch} onChange={(event) => p.setHotelSearch(event.target.value)} placeholder="Search hotels by name" /></label>
+                        <SelectField
+                          value={p.hotelSort}
+                          onChange={(value) => p.setHotelSort(value as "rating" | "price_asc" | "price_desc")}
+                          options={[
+                            { value: "rating", label: "Top rated" },
+                            { value: "price_asc", label: "Price: low to high" },
+                            { value: "price_desc", label: "Price: high to low" },
+                          ]}
+                          ariaLabel="Sort hotels"
+                          className="hotel-sort-field"
+                        />
+                      </div>
                       <div className="hotel-choice-grid" role="radiogroup" aria-label="Available hotels">
                         {p.availableHotels.map((hotel, index) => (index < 3 || p.moreHotelsOpen) && <button key={hotel.hotel_id ?? hotel.hotel_name ?? index} type="button" role="radio" aria-checked={p.selectedHotelIndex === index} title={hotel.star_rating != null ? formatHotelStarRating(hotel.star_rating) : undefined} className={`hotel-choice-card${p.selectedHotelIndex === index ? " selected" : ""}`} onClick={() => p.setSelectedHotelIndex(index)}>
                           {hotel.star_rating != null && <span className="hotel-choice-rating"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z" /></svg>{hotel.star_rating}</span>}
@@ -1030,23 +1048,32 @@ export default function ItineraryEditor({
     return () => window.clearTimeout(timer);
   }, [addFlow, activeDayCity, activitySearch]);
 
+  useEffect(() => {
+    if (addFlow !== "hotel") return;
+    setMoreHotelsOpen(false);
+    setHotelSearch("");
+    setHotelSort("rating");
+  }, [addFlow]);
+
   // Hotels are "supplied by Travel Marketplace" per the note in the add-hotel
   // flow — the full catalog for this destination, not just whatever the AI
   // happened to attach to the package at creation time.
   useEffect(() => {
     if (addFlow !== "hotel") return;
-    setMoreHotelsOpen(false);
-    void (async () => {
+    const timer = window.setTimeout(async () => {
       let query = supabase
         .from("hotels")
         .select("hotel_id,hotel_name,city,star_rating,room_type,price_per_night_aud")
-        .order("star_rating", { ascending: false })
+        .order(hotelSort === "rating" ? "star_rating" : "price_per_night_aud", { ascending: hotelSort === "price_asc" })
         .limit(24);
       if (activeDayCity) query = query.or(`city.eq.${activeDayCity},country.eq.${activeDayCity}`);
+      const search = hotelSearch.trim();
+      if (search) query = query.ilike("hotel_name", `%${search}%`);
       const { data, error } = await query;
       setCatalogHotels(error || !data ? [] : data.map((row) => ({ ...row, address: null })));
-    })();
-  }, [addFlow, activeDayCity]);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [addFlow, activeDayCity, hotelSearch, hotelSort]);
 
   const showNotice = (message: string) => {
     setNotice(message);
@@ -1750,6 +1777,8 @@ export default function ItineraryEditor({
     availableHotels: catalogHotels ?? hotels,
     selectedHotelIndex, setSelectedHotelIndex,
     moreHotelsOpen, setMoreHotelsOpen,
+    hotelSearch, setHotelSearch,
+    hotelSort, setHotelSort,
     selectedHotelOption,
     hotelCheckInDayId, setHotelCheckInDayId,
     setHotelCheckOutDayId,
