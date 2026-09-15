@@ -842,10 +842,6 @@ figure .remove-photo-btn:focus-visible { outline: 2px solid var(--fc-focus-ring)
 .trip-params-row strong { color: var(--fc-ink); font-size: 14px; font-weight: 600; text-align: right; }
 .trip-params-row .select-field { width: 150px; }
 .trip-params-vibe-edit { margin: 12px 0 0; }
-.trip-params-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
-.trip-params-edit-button { width: 100%; margin-top: 12px; min-height: 42px; display: flex; align-items: center; justify-content: center; gap: 8px; border: 1px solid var(--fc-info-border); border-radius: 8px; background: var(--fc-info-subtle); color: var(--fc-blue); font-size: 14px; font-weight: 600; cursor: pointer; transition: background 140ms ease-out; }
-.trip-params-edit-button:hover:not(:disabled) { background: #dcebff; }
-.trip-params-edit-button:disabled { opacity: .5; cursor: default; }
 .pricing-columns { display: grid; grid-template-columns: 1fr 1fr; }
 .pricing-columns > div:last-child { padding-left: 16px; border-left: 1px solid var(--fc-border); }
 .pricing-columns span { display: block; color: var(--fc-secondary); font-size: 12px; }

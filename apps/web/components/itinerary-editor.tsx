@@ -782,21 +782,14 @@ export default function ItineraryEditor({
   const [tripVibesDraft, setTripVibesDraft] = useState(() => (
     typeof window === "undefined" ? null : parseWizardVibesDraft(window.sessionStorage.getItem(wizardVibesStorageKey(pkg.package_id)))
   ));
-  const [editingTripParams, setEditingTripParams] = useState(false);
-  const [tripParamsDraft, setTripParamsDraft] = useState<{ vibes: string[]; season: string | null }>({ vibes: [], season: null });
-  const startEditingTripParams = () => {
-    setTripParamsDraft({ vibes: tripVibesDraft?.vibes ?? [], season: tripVibesDraft?.season ?? null });
-    setEditingTripParams(true);
-  };
-  const saveTripParams = () => {
-    const next = { vibes: tripParamsDraft.vibes, season: tripParamsDraft.season };
+  const updateTripVibes = (patch: Partial<{ vibes: string[]; season: string | null }>) => {
+    const next = { vibes: tripVibesDraft?.vibes ?? [], season: tripVibesDraft?.season ?? null, ...patch };
     try {
       window.sessionStorage.setItem(wizardVibesStorageKey(pkg.package_id), JSON.stringify(next));
     } catch {
       // best-effort only
     }
     setTripVibesDraft(next);
-    setEditingTripParams(false);
   };
   // buildDaysFromPackage stamps every row of a stay with `hotel-<id|name>`,
   // so the API hotel is looked up by that key rather than by counting rows —
@@ -2160,51 +2153,33 @@ export default function ItineraryEditor({
               </div>
               <div className="trip-params-row">
                 <span className="trip-params-row-label">Target season</span>
-                {editingTripParams
-                  ? <SelectField
-                      value={tripParamsDraft.season ?? ""}
-                      onChange={(season) => setTripParamsDraft((current) => ({ ...current, season }))}
-                      options={TRIP_SEASON_OPTIONS.map((season) => ({ value: season, label: season.charAt(0).toUpperCase() + season.slice(1) }))}
-                      ariaLabel="Target season"
-                      placeholder="Not set"
-                    />
-                  : <strong>{tripVibesDraft?.season ? tripVibesDraft.season.charAt(0).toUpperCase() + tripVibesDraft.season.slice(1) : "Not set"}</strong>}
+                <SelectField
+                  value={tripVibesDraft?.season ?? ""}
+                  onChange={(season) => updateTripVibes({ season })}
+                  options={TRIP_SEASON_OPTIONS.map((season) => ({ value: season, label: season.charAt(0).toUpperCase() + season.slice(1) }))}
+                  ariaLabel="Target season"
+                  placeholder="Not set"
+                />
               </div>
-              {!editingTripParams && (
-                <div className="trip-params-row">
-                  <span className="trip-params-row-label">Itinerary vibe</span>
-                  <strong>{tripVibesDraft?.vibes.length ? tripVibesDraft.vibes.join(" · ") : "Not set"}</strong>
-                </div>
-              )}
             </div>
-            {editingTripParams && (
-              <div className="edit-categories trip-params-vibe-edit">
-                <span>Itinerary vibe (up to {MAX_TRIP_VIBES})</span>
-                <div>
-                  {TRIP_VIBE_OPTIONS.map((vibe) => {
-                    const selected = tripParamsDraft.vibes.includes(vibe);
-                    return (
-                      <button
-                        key={vibe}
-                        type="button"
-                        className={selected ? "selected" : ""}
-                        disabled={!selected && tripParamsDraft.vibes.length >= MAX_TRIP_VIBES}
-                        onClick={() => setTripParamsDraft((current) => ({
-                          ...current,
-                          vibes: selected ? current.vibes.filter((v) => v !== vibe) : [...current.vibes, vibe],
-                        }))}
-                      >{vibe}</button>
-                    );
-                  })}
-                </div>
+            <div className="edit-categories trip-params-vibe-edit">
+              <span>Itinerary vibe (up to {MAX_TRIP_VIBES})</span>
+              <div>
+                {TRIP_VIBE_OPTIONS.map((vibe) => {
+                  const selected = tripVibesDraft?.vibes.includes(vibe) ?? false;
+                  const vibes = tripVibesDraft?.vibes ?? [];
+                  return (
+                    <button
+                      key={vibe}
+                      type="button"
+                      className={selected ? "selected" : ""}
+                      disabled={!selected && vibes.length >= MAX_TRIP_VIBES}
+                      onClick={() => updateTripVibes({ vibes: selected ? vibes.filter((v) => v !== vibe) : [...vibes, vibe] })}
+                    >{vibe}</button>
+                  );
+                })}
               </div>
-            )}
-            {editingTripParams
-              ? <div className="trip-params-actions">
-                  <button type="button" className="quiet-button" onClick={() => setEditingTripParams(false)}>Cancel</button>
-                  <button type="button" className="publish-button" onClick={saveTripParams}>Save</button>
-                </div>
-              : <button type="button" className="trip-params-edit-button" disabled={isLocked} onClick={startEditingTripParams}><Icon name="pencil" size={14} />Edit trip details</button>}
+            </div>
           </Panel>
           <CopilotPanel
             client={copilotClient}
