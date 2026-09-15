@@ -1721,10 +1721,16 @@ export default function ItineraryEditor({
   return (
     <main className="itinerary-editor">
       <header className="editor-topbar">
-        <div className="editor-topbar-start">
-          <Link href={APP_ROUTES.dashboard} className="editor-dashboard-link" aria-label="Back to dashboard" title="Back to dashboard"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m3 10 9-7 9 7" /><path d="M5 9v10a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V9" /></svg></Link>
-          <button className="text-action back-action" disabled={isLocked} onClick={onEditTripSetup} aria-label="Edit destination, travel style, duration, or season"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg> Edit trip setup</button>
-        </div>
+        <Link
+          href={APP_ROUTES.dashboard}
+          className="text-action back-action"
+          aria-label="Back to dashboard"
+          onClick={(event) => {
+            if (!saved && !window.confirm("Leave without saving? Changes you made since the last save will be lost.")) {
+              event.preventDefault();
+            }
+          }}
+        ><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg> Dashboard</Link>
         <div className="editor-title-block"><span className="editor-kicker">AI itinerary editor</span>{editingTitle ? <input className="package-title-input" value={titleDraft} autoFocus maxLength={200} aria-label="Package title" onChange={(event) => setTitleDraft(event.target.value)} onBlur={savePackageTitle} onKeyDown={(event) => { if (event.key === "Enter") savePackageTitle(); if (event.key === "Escape") { setTitleDraft(packageTitle); setEditingTitle(false); } }} /> : <button className="package-title-button" disabled={isLocked} onClick={() => { setTitleDraft(packageTitle); setEditingTitle(true); }} aria-label={`Edit package title, currently ${packageTitle}`} title="Edit package title"><h1>{packageTitle}</h1></button>}</div>
         <div className="editor-actions">
           <button className="quiet-button" disabled={saving || submitting || uploadingCount > 0 || isLocked} onClick={() => { void saveDraft(); }}>{uploadingCount > 0 ? `Uploading ${uploadingCount}…` : saving ? "Saving…" : saved ? "Saved" : "Save Draft"}</button>
@@ -1749,17 +1755,15 @@ export default function ItineraryEditor({
           <button className="add-day" disabled={isLocked} onClick={() => { const nextDay = days.length + 1; setDays([...days, { id: `day-${Date.now()}`, day: nextDay, title: "Untitled day", meta: "Add your first stop", items: [], story: "", photos: [], date: nextCalendarDate(days[days.length - 1]?.date) }]); setActiveDay(days.length); showNotice("A new day was added"); }}><Icon name="plus" size={24} /><span>Add Day</span></button>
         </div>
         <button type="button" className="day-scroll-btn" disabled={!dayScroll.canRight} onClick={() => scrollDayTabs(1)} aria-label="Scroll days right"><Icon name="chevron" size={18} /></button>
-        {(tripDestination || tripVibesDraft?.vibes.length || tripVibesDraft?.season) && (
-          <div className="trip-setup-summary">
-            {tripDestination && <strong>{tripDestination}</strong>}
-            {(tripVibesDraft?.vibes.length || tripVibesDraft?.season) && (
-              <span>{[
-                tripVibesDraft?.vibes.length ? tripVibesDraft.vibes.join(", ") : null,
-                tripVibesDraft?.season ? tripVibesDraft.season.charAt(0).toUpperCase() + tripVibesDraft.season.slice(1) : null,
-              ].filter(Boolean).join(" · ")}</span>
-            )}
-          </div>
-        )}
+        <button type="button" className="trip-setup-summary" disabled={isLocked} onClick={onEditTripSetup} aria-label="Edit destination, travel style, duration, or season" title={tripDestination || undefined}>
+          <strong>{tripDestination || "Set trip details"}</strong>
+          {(tripVibesDraft?.vibes.length || tripVibesDraft?.season) && (
+            <span>{[
+              tripVibesDraft?.vibes.length ? tripVibesDraft.vibes.join(", ") : null,
+              tripVibesDraft?.season ? tripVibesDraft.season.charAt(0).toUpperCase() + tripVibesDraft.season.slice(1) : null,
+            ].filter(Boolean).join(" · ")}</span>
+          )}
+        </button>
         <div className="trip-length"><strong>{days.length} days</strong><span>{Math.max(0, days.length - 1)} nights</span></div>
       </nav>
 
