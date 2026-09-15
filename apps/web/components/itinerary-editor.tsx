@@ -75,7 +75,7 @@ const MIN_TRANSFER_GAP_MIN = 15; // minutes — minimum breathing room between c
 const LONG_ACTIVITY_MIN = 240;   // minutes — 4 hours
 
 const ACTIVITY_CATEGORIES = ["Activity", "Restaurant", "Shopping", "Attraction", "Other"];
-const DURATION_OPTIONS = ["30", "60", "90", "120", "180"];
+const DURATION_OPTIONS = ["30", "60", "90", "120", "150", "180", "210", "240"];
 const MAX_ITEM_PHOTOS = 6;
 // The detail page only renders one hero image per day (assignDayImages maps
 // one media item per day slot) — a second upload here would never be shown.
