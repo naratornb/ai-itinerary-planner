@@ -410,6 +410,47 @@ function TimeField({ value, onChange, ariaLabel, className = "" }: { value: stri
   );
 }
 
+// A styled stand-in for a native <select> of a short fixed option list
+// (durations, categories, …) — no native dropdown to restyle, so this is a
+// plain button + custom list instead of an <input> like TimeField.
+function SelectField({ value, onChange, options, ariaLabel, className = "" }: { value: string; onChange: (value: string) => void; options: string[]; ariaLabel: string; className?: string }) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocMouseDown = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onDocMouseDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onDocMouseDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  return (
+    <div className={`select-field ${className}`} ref={containerRef}>
+      <button type="button" className="select-field-trigger" aria-label={ariaLabel} aria-haspopup="listbox" aria-expanded={open} onClick={() => setOpen((current) => !current)}>
+        <span>{value}</span>
+        <Icon name="chevron" size={13} />
+      </button>
+      {open && (
+        <div className="select-field-dropdown" role="listbox" aria-label={ariaLabel}>
+          {options.map((option) => (
+            <button type="button" key={option} role="option" aria-selected={option === value} className={`select-field-option${option === value ? " selected" : ""}`} onClick={() => { onChange(option); setOpen(false); }}>
+              <span className="select-field-check">{option === value && <Icon name="check" size={13} />}</span>
+              {option}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Hover (desktop) or tab-focus (keyboard/touch) reveals rating and
 // suitable-for — the two catalog fields that don't fit on the card face —
 // without an extra click. The "+" stays a separate button, so a tap that
@@ -558,7 +599,7 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
                       <label className="full"><span>Title</span><input value={p.creatorDraft.title} onChange={(event) => p.setCreatorDraft({ ...p.creatorDraft, title: event.target.value })} placeholder="Your recommendation" /></label>
                       <label><span>Category</span><select value={p.creatorDraft.category} onChange={(event) => p.setCreatorDraft({ ...p.creatorDraft, category: event.target.value })}>{ACTIVITY_CATEGORIES.map((category) => <option key={category}>{category}</option>)}</select></label>
                       <label><span>Start time</span><TimeField value={p.creatorDraft.time} onChange={(time) => p.setCreatorDraft({ ...p.creatorDraft, time })} ariaLabel="Start time" /></label>
-                      <label><span>Duration (min)</span><select value={p.creatorDraft.duration} onChange={(event) => p.setCreatorDraft({ ...p.creatorDraft, duration: event.target.value })}>{DURATION_OPTIONS.map((duration) => <option key={duration}>{duration}</option>)}</select></label>
+                      <label><span>Duration (min)</span><SelectField value={p.creatorDraft.duration} onChange={(duration) => p.setCreatorDraft({ ...p.creatorDraft, duration })} options={DURATION_OPTIONS} ariaLabel="Duration (min)" /></label>
                       <label className="full"><span>Address</span><input value={p.creatorDraft.address} onChange={(event) => p.setCreatorDraft({ ...p.creatorDraft, address: event.target.value })} /></label>
                       <label><span>Price</span><div className="price-input"><b>$</b><input inputMode="decimal" value={p.creatorDraft.price} onChange={(event) => p.setCreatorDraft({ ...p.creatorDraft, price: event.target.value.replace(/[^0-9.]/g, "") })} /></div></label>
                       <label className="full"><span>Why you recommend it</span><textarea value={p.creatorDraft.reason} onChange={(event) => p.setCreatorDraft({ ...p.creatorDraft, reason: event.target.value })} placeholder="Share the detail travellers should know" /></label>
@@ -1924,7 +1965,7 @@ export default function ItineraryEditor({
                       <label><span>Price</span><div className="price-input"><b>$</b><input inputMode="decimal" value={editingItem.price} onChange={(event) => setEditingItem({ ...editingItem, price: event.target.value.replace(/[^0-9.]/g, "") })} /></div></label>
                       <label className="edit-address"><span>Address</span><input value={editingItem.address} onChange={(event) => setEditingItem({ ...editingItem, address: event.target.value })} placeholder="Add an address" /></label>
                       <label><span>Start time</span><TimeField value={editingItem.time} onChange={(time) => setEditingItem({ ...editingItem, time })} ariaLabel="Start time" /></label>
-                      <label><span>Duration (min)</span><select value={editingItem.duration} onChange={(event) => setEditingItem({ ...editingItem, duration: event.target.value })}>{DURATION_OPTIONS.map((duration) => <option key={duration}>{duration}</option>)}</select></label>
+                      <label><span>Duration (min)</span><SelectField value={editingItem.duration} onChange={(duration) => setEditingItem({ ...editingItem, duration })} options={DURATION_OPTIONS} ariaLabel="Duration (min)" /></label>
                       <label><span>Ends at</span><input value={getEndTime(editingItem.time, editingItem.duration)} readOnly /></label>
                       <label className="edit-notes"><span>Notes</span><textarea value={editingItem.notes} onChange={(event) => setEditingItem({ ...editingItem, notes: event.target.value })} placeholder="Share why this is worth a stop" /></label>
                     </div>
