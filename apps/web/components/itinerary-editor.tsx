@@ -82,6 +82,8 @@ const DURATION_OPTIONS = ["30", "60", "90", "120", "150", "180", "210", "240"];
 const TRIP_VIBE_OPTIONS = ["Chill", "Adventure", "Luxury", "Local Experience", "Foodie", "Scenic"];
 const TRIP_SEASON_OPTIONS = ["spring", "summer", "autumn", "winter"];
 const MAX_TRIP_VIBES = 3;
+// Matches the wizard's longest duration bucket (9-14 days).
+const MAX_TRIP_DAYS = 14;
 const MAX_ITEM_PHOTOS = 6;
 // The detail page only renders one hero image per day (assignDayImages maps
 // one media item per day slot) — a second upload here would never be shown.
@@ -782,14 +784,21 @@ export default function ItineraryEditor({
   const [tripVibesDraft, setTripVibesDraft] = useState(() => (
     typeof window === "undefined" ? null : parseWizardVibesDraft(window.sessionStorage.getItem(wizardVibesStorageKey(pkg.package_id)))
   ));
-  const updateTripVibes = (patch: Partial<{ vibes: string[]; season: string | null }>) => {
-    const next = { vibes: tripVibesDraft?.vibes ?? [], season: tripVibesDraft?.season ?? null, ...patch };
+  const [editingTripParams, setEditingTripParams] = useState(false);
+  const [tripParamsDraft, setTripParamsDraft] = useState<{ vibes: string[]; season: string | null }>({ vibes: [], season: null });
+  const startEditingTripParams = () => {
+    setTripParamsDraft({ vibes: tripVibesDraft?.vibes ?? [], season: tripVibesDraft?.season ?? null });
+    setEditingTripParams(true);
+  };
+  const saveTripParams = () => {
+    const next = { vibes: tripParamsDraft.vibes, season: tripParamsDraft.season };
     try {
       window.sessionStorage.setItem(wizardVibesStorageKey(pkg.package_id), JSON.stringify(next));
     } catch {
       // best-effort only
     }
     setTripVibesDraft(next);
+    setEditingTripParams(false);
   };
   // buildDaysFromPackage stamps every row of a stay with `hotel-<id|name>`,
   // so the API hotel is looked up by that key rather than by counting rows —
@@ -1766,7 +1775,7 @@ export default function ItineraryEditor({
             <button aria-current={activeDay === index ? "page" : undefined} className={`day-tab ${activeDay === index ? "active" : ""}`} onClick={() => setActiveDay(index)}><span>DAY {day.day} <b>{day.items.length}</b></span><strong>{day.title}</strong><span className="day-tab-types">{dayItemTypeCounts(day).map((entry) => <span key={entry.key} className="day-tab-type-badge" aria-label={`${entry.count} ${entry.label}`}><Icon name={entry.icon} size={13} />{entry.count}</span>)}</span></button>
             <button className="delete-day-tab" disabled={days.length === 1 || isLocked} onClick={() => setPendingDeleteDay(index)} aria-label={`Delete Day ${day.day}`}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M6 6l12 12M18 6 6 18" /></svg></button>
           </div>)}
-          <button className="add-day" disabled={isLocked} onClick={() => { const nextDay = days.length + 1; setDays([...days, { id: `day-${Date.now()}`, day: nextDay, title: "Untitled day", meta: "Add your first stop", items: [], story: "", photos: [], date: nextCalendarDate(days[days.length - 1]?.date) }]); setActiveDay(days.length); showNotice("A new day was added"); }}><Icon name="plus" size={24} /><span>Add Day</span></button>
+          <button className="add-day" disabled={isLocked || days.length >= MAX_TRIP_DAYS} title={days.length >= MAX_TRIP_DAYS ? `Trips can have up to ${MAX_TRIP_DAYS} days` : undefined} onClick={() => { const nextDay = days.length + 1; setDays([...days, { id: `day-${Date.now()}`, day: nextDay, title: "Untitled day", meta: "Add your first stop", items: [], story: "", photos: [], date: nextCalendarDate(days[days.length - 1]?.date) }]); setActiveDay(days.length); showNotice("A new day was added"); }}><Icon name="plus" size={24} /><span>Add Day</span></button>
         </div>
         <button type="button" className="day-scroll-btn" disabled={!dayScroll.canRight} onClick={() => scrollDayTabs(1)} aria-label="Scroll days right"><Icon name="chevron" size={18} /></button>
       </nav>
@@ -2153,33 +2162,51 @@ export default function ItineraryEditor({
               </div>
               <div className="trip-params-row">
                 <span className="trip-params-row-label">Target season</span>
-                <SelectField
-                  value={tripVibesDraft?.season ?? ""}
-                  onChange={(season) => updateTripVibes({ season })}
-                  options={TRIP_SEASON_OPTIONS.map((season) => ({ value: season, label: season.charAt(0).toUpperCase() + season.slice(1) }))}
-                  ariaLabel="Target season"
-                  placeholder="Not set"
-                />
+                {editingTripParams
+                  ? <SelectField
+                      value={tripParamsDraft.season ?? ""}
+                      onChange={(season) => setTripParamsDraft((current) => ({ ...current, season }))}
+                      options={TRIP_SEASON_OPTIONS.map((season) => ({ value: season, label: season.charAt(0).toUpperCase() + season.slice(1) }))}
+                      ariaLabel="Target season"
+                      placeholder="Not set"
+                    />
+                  : <strong>{tripVibesDraft?.season ? tripVibesDraft.season.charAt(0).toUpperCase() + tripVibesDraft.season.slice(1) : "Not set"}</strong>}
               </div>
+              {!editingTripParams && (
+                <div className="trip-params-row">
+                  <span className="trip-params-row-label">Itinerary vibe</span>
+                  <strong>{tripVibesDraft?.vibes.length ? tripVibesDraft.vibes.join(" · ") : "Not set"}</strong>
+                </div>
+              )}
             </div>
-            <div className="edit-categories trip-params-vibe-edit">
-              <span>Itinerary vibe (up to {MAX_TRIP_VIBES})</span>
-              <div>
-                {TRIP_VIBE_OPTIONS.map((vibe) => {
-                  const selected = tripVibesDraft?.vibes.includes(vibe) ?? false;
-                  const vibes = tripVibesDraft?.vibes ?? [];
-                  return (
-                    <button
-                      key={vibe}
-                      type="button"
-                      className={selected ? "selected" : ""}
-                      disabled={!selected && vibes.length >= MAX_TRIP_VIBES}
-                      onClick={() => updateTripVibes({ vibes: selected ? vibes.filter((v) => v !== vibe) : [...vibes, vibe] })}
-                    >{vibe}</button>
-                  );
-                })}
+            {editingTripParams && (
+              <div className="edit-categories trip-params-vibe-edit">
+                <span>Itinerary vibe (up to {MAX_TRIP_VIBES})</span>
+                <div>
+                  {TRIP_VIBE_OPTIONS.map((vibe) => {
+                    const selected = tripParamsDraft.vibes.includes(vibe);
+                    return (
+                      <button
+                        key={vibe}
+                        type="button"
+                        className={selected ? "selected" : ""}
+                        disabled={!selected && tripParamsDraft.vibes.length >= MAX_TRIP_VIBES}
+                        onClick={() => setTripParamsDraft((current) => ({
+                          ...current,
+                          vibes: selected ? current.vibes.filter((v) => v !== vibe) : [...current.vibes, vibe],
+                        }))}
+                      >{vibe}</button>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
+            )}
+            {editingTripParams
+              ? <div className="trip-params-actions">
+                  <button type="button" className="quiet-button" onClick={() => setEditingTripParams(false)}>Cancel</button>
+                  <button type="button" className="publish-button" onClick={saveTripParams}>Save</button>
+                </div>
+              : <button type="button" className="trip-params-edit-button" disabled={isLocked} onClick={startEditingTripParams}><Icon name="pencil" size={14} />Edit trip details</button>}
           </Panel>
           <CopilotPanel
             client={copilotClient}

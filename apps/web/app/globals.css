@@ -343,6 +343,7 @@ button:focus-visible, textarea:focus-visible { outline: 3px solid var(--fc-focus
 .delete-day-tab:disabled { opacity: 0; cursor: default; }
 .add-day { width: 210px; height: 120px; flex: 0 0 auto; display: grid; place-content: center; gap: 5px; background: #fff; color: var(--fc-secondary); border: 1px dashed #bdbdbd; border-radius: 10px; cursor: pointer; }
 .add-day svg { margin: auto; }
+.add-day:disabled { opacity: .5; cursor: default; }
 
 .editor-shell { width: 100%; max-width: 1440px; min-inline-size: 0; margin: 0 auto; padding: 48px 32px 88px; border: 0; display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 28px; }
 .editor-main { min-width: 0; }
@@ -833,7 +834,7 @@ figure .remove-photo-btn:focus-visible { outline: 2px solid var(--fc-focus-ring)
 .route-map-key span b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; color: var(--fc-secondary); }
 .pricing-panel { padding: 0 18px 18px; }
 .pricing-panel .editor-panel-header { padding-left: 0; padding-right: 0; border: 0; }
-.trip-params-panel { padding: 0 18px 18px; }
+.trip-params-panel { padding: 0 18px 18px; overflow: visible; }
 .trip-params-panel .editor-panel-header { padding-left: 0; padding-right: 0; }
 .trip-params-rows { display: grid; }
 .trip-params-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--fc-border); }
@@ -843,6 +844,10 @@ figure .remove-photo-btn:focus-visible { outline: 2px solid var(--fc-focus-ring)
 .trip-params-row .select-field { width: 130px; }
 .trip-params-row .select-field-trigger { min-height: 32px; padding: 0 8px; font-size: 13px; }
 .trip-params-vibe-edit { margin: 12px 0 0; }
+.trip-params-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.trip-params-edit-button { width: 100%; margin-top: 12px; min-height: 42px; display: flex; align-items: center; justify-content: center; gap: 8px; border: 1px solid var(--fc-info-border); border-radius: 8px; background: var(--fc-info-subtle); color: var(--fc-blue); font-size: 14px; font-weight: 600; cursor: pointer; transition: background 140ms ease-out; }
+.trip-params-edit-button:hover:not(:disabled) { background: #dcebff; }
+.trip-params-edit-button:disabled { opacity: .5; cursor: default; }
 .pricing-columns { display: grid; grid-template-columns: 1fr 1fr; }
 .pricing-columns > div:last-child { padding-left: 16px; border-left: 1px solid var(--fc-border); }
 .pricing-columns span { display: block; color: var(--fc-secondary); font-size: 12px; }
