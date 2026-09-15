@@ -436,7 +436,7 @@ button:focus-visible, textarea:focus-visible { outline: 3px solid var(--fc-focus
 .item-action-icon:hover { background: var(--fc-surface-subtle); color: var(--fc-ink); }
 .item-action-icon-delete:hover { background: var(--fc-danger-subtle); color: var(--fc-red); }
 .item-copy { align-self: center; padding: 16px 20px; }
-.item-copy-head { min-height: 24px; margin-left: -10px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.item-copy-head { min-height: 24px; margin-left: -12px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .item-copy-head .stay-marker { margin-left: auto; font-size: 12px; line-height: 16px; font-weight: 500; letter-spacing: .02em; }
 .timeline-detail-panel { margin-top: 10px; border: 1px solid var(--fc-border); border-radius: 12px; background: #fff; overflow: hidden; }
 .timeline-detail-panel .detail-card { padding: 20px; }

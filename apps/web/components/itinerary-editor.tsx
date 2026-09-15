@@ -1168,17 +1168,37 @@ export default function ItineraryEditor({
       // a bare city name never hits, so this needs ilike instead.
       if (destinationCity) query = query.or(`destination.ilike.%${destinationCity}%,destination_country.ilike.%${destinationCity}%`);
       const { data, error } = await query;
-      setCatalogFlights(error || !data ? [] : data.map((row) => ({
-        flight_id: row.flight_id,
-        airline: row.airline,
-        flight_number: row.flight_number,
-        origin_iata: iataOf(row.origin),
-        destination_iata: iataOf(row.destination),
-        departure_datetime: row.departure_datetime,
-        arrival_datetime: row.arrival_datetime,
-        cabin_class: row.cabin_class,
-        price_aud: row.price_aud,
-      })));
+      if (error || !data) { setCatalogFlights([]); return; }
+      const mapped = data.map((row) => {
+        const originIata = iataOf(row.origin);
+        const destinationIata = iataOf(row.destination);
+        return {
+          flight_id: row.flight_id,
+          airline: row.airline,
+          flight_number: row.flight_number,
+          origin_iata: originIata,
+          destination_iata: destinationIata,
+          departure_datetime: row.departure_datetime,
+          arrival_datetime: row.arrival_datetime,
+          cabin_class: row.cabin_class,
+          price_aud: row.price_aud,
+          departureClock: extractClockTimeInZone(row.departure_datetime, timezoneForIata(originIata)),
+        };
+      });
+      // These are illustrative examples, not real bookings — the catalog
+      // seeds the "same" flight (route, airline, time of day) on several
+      // unrelated calendar dates, which otherwise shows as confusing
+      // near-duplicates and makes a time-of-day sort look broken. Treat
+      // same route + airline + local departure clock time as one flight.
+      const seen = new Set<string>();
+      const deduped = mapped.filter((flight) => {
+        const key = `${flight.airline}|${flight.origin_iata}|${flight.destination_iata}|${flight.departureClock}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      if (flightSort === "departure") deduped.sort((a, b) => (a.departureClock ?? "").localeCompare(b.departureClock ?? ""));
+      setCatalogFlights(deduped.map(({ departureClock: _departureClock, ...flight }) => flight));
     }, 250);
     return () => window.clearTimeout(timer);
   }, [addFlow, activeDayCity, flightSort]);
