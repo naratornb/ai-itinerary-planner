@@ -17,6 +17,7 @@ import {
   insertItemInDay,
   nextCalendarDate,
   removeDay,
+  STAY_LABEL_SUFFIX,
   timezoneForIata,
   type BuilderDay,
   type DayPhoto,
@@ -70,9 +71,42 @@ function timeToSlot(time: string): string {
   return "Evening";
 }
 
-// Transfer-gap check thresholds used by annotateItems.
+// Transfer-gap check threshold used by annotateItems.
 const MIN_TRANSFER_GAP_MIN = 15; // minutes — minimum breathing room between consecutive items
-const LONG_ACTIVITY_MIN = 240;   // minutes — 4 hours
+
+// Major Australian commercial airports — used by deriveFlightType to tell domestic
+// from international per flight leg, not just per package.
+const AU_AIRPORT_IATAS = new Set([
+  "SYD", "MEL", "BNE", "PER", "ADL", "CBR", "OOL", "CNS", "HBA", "DRW",
+  "TSV", "MCY", "LST", "NTL", "ASP", "AVV", "MKY", "ROK", "BME", "PPP",
+]);
+
+/**
+ * A flight's title is just IATA codes ("SYD to DPS"), never the word "international",
+ * so a text match always resolved to "domestic" — even for genuinely international
+ * flights, silently shrinking their R2 transfer buffer from 90min to 60min.
+ *
+ * `originIata`/`destinationIata` are already carried on TimelineItem for exactly this
+ * kind of lookup, so this classifies per LEG: both endpoints in the AU network ->
+ * domestic; exactly one -> international (crosses Australia's border either way).
+ * Only when NEITHER endpoint is a recognized AU airport (no reliable signal from the
+ * codes alone — e.g. an internal hop between two foreign cities) does it fall back to
+ * the package's destination_country, on the same "home base is Australia" assumption
+ * already used elsewhere in this app (see IATA_TIMEZONES in itinerary-builder.ts).
+ */
+export function deriveFlightType(
+  originIata: string | undefined,
+  destinationIata: string | undefined,
+  destinationCountry: string | undefined
+): "domestic" | "international" {
+  if (originIata && destinationIata) {
+    const originIsAU = AU_AIRPORT_IATAS.has(originIata.toUpperCase());
+    const destIsAU = AU_AIRPORT_IATAS.has(destinationIata.toUpperCase());
+    if (originIsAU && destIsAU) return "domestic";
+    if (originIsAU || destIsAU) return "international";
+  }
+  return (destinationCountry || "").trim().toLowerCase() === "australia" ? "domestic" : "international";
+}
 
 const ACTIVITY_CATEGORIES = ["Activity", "Restaurant", "Shopping", "Attraction", "Other"];
 const DURATION_OPTIONS = ["30", "60", "90", "120", "180"];
@@ -179,15 +213,23 @@ export function findTimeConflict(items: TimelineItem[], editingId: number, time:
 
   const previous = items[index - 1];
   if (previous && REAL_TIME_PATTERN.test(previous.time)) {
-    const previousEnds = getEndTime(previous.time, previous.duration ?? "0");
+    // A flight's `time` is already its arrival — the flight has landed by then, so
+    // its "end" for adjacency purposes IS that time. `duration` on a flight is its
+    // travel time (e.g. ~6hrs SYD→DPS), not time occupied after landing — adding it
+    // here double-counts the flight and pushes "ends at" hours past the real arrival.
+    const previousEnds = previous.type === "FLIGHT" ? previous.time : getEndTime(previous.time, previous.duration ?? "0");
     if (time < previousEnds) return `Must start at or after ${previous.title} ends, at ${previousEnds}`;
   }
 
   const next = items[index + 1];
   if (next && REAL_TIME_PATTERN.test(next.time)) {
-    const thisEnds = getEndTime(time, duration);
+    // Same fix as above, mirrored: if the item being checked here is ITSELF a flight,
+    // `time` (its arrival) is already its end — don't add its own travel duration on
+    // top when checking it against the next item's start.
+    const isFlight = items[index]?.type === "FLIGHT";
+    const thisEnds = isFlight ? time : getEndTime(time, duration);
     if (thisEnds > next.time) {
-      const latestStart = subtractMinutes(next.time, duration);
+      const latestStart = isFlight ? next.time : subtractMinutes(next.time, duration);
       return `Must start by ${latestStart}, so it ends before ${next.title} starts at ${next.time}`;
     }
   }
@@ -295,29 +337,23 @@ function detectGibberish(text: string): boolean {
 
 /**
  * Annotates each item with problem / problemDetail / status based on (priority order):
- *  1. LONG_ACTIVITY : a single item's duration exceeds LONG_ACTIVITY_MIN
- *  2. OVERLAP       : this item starts before the previous item ends
- *  3. SHORT_TRANSFER: gap to the next item is > 0 but < MIN_TRANSFER_GAP_MIN
- *  4. GIBBERISH     : item notes contain random/unreadable characters
+ *  1. OVERLAP       : this item starts before the previous item ends
+ *  2. SHORT_TRANSFER: gap to the next item is > 0 but < MIN_TRANSFER_GAP_MIN
+ *  3. GIBBERISH     : item notes contain random/unreadable characters
  * All other items are marked "pass" with no problem.
+ * (Unusually-long-duration is intentionally NOT flagged per-item here — it's already
+ * surfaced as a soft warning by the feasibility check (R5c), and some activities come
+ * from the catalog with a fixed duration the creator can't edit anyway.)
  */
-function annotateItems(raw: TimelineItem[]): TimelineItem[] {
+export function annotateItems(raw: TimelineItem[]): TimelineItem[] {
   return raw.map((item, i) => {
     const durationMin = Number(item.duration ?? 60);
-    const endMin = toMinutes(item.time) + durationMin;
+    // A flight's `time` is its arrival — it has already "ended" the moment it lands.
+    // `duration` on a flight is travel time, not time occupied after landing, so
+    // adding it here would double-count the flight (same bug fixed in findTimeConflict).
+    const endMin = item.type === "FLIGHT" ? toMinutes(item.time) : toMinutes(item.time) + durationMin;
 
-    // 1. Long single activity
-    if (durationMin > LONG_ACTIVITY_MIN) {
-      const hrs = (durationMin / 60).toFixed(1);
-      return {
-        ...item,
-        status: "critical" as const,
-        problem: "Activity is unusually long",
-        problemDetail: `${hrs} hrs scheduled — consider splitting into two stops`,
-      };
-    }
-
-    // 2 & 3. Gap vs next item — the list is a single day's items
+    // 1 & 2. Gap vs next item — the list is a single day's items
     const next = raw[i + 1];
     if (next) {
       const nextStartMin = toMinutes(next.time);
@@ -343,7 +379,7 @@ function annotateItems(raw: TimelineItem[]): TimelineItem[] {
       }
     }
 
-    // 4. Gibberish in description
+    // 3. Gibberish in description
     if (detectGibberish(item.notes ?? "")) {
       return {
         ...item,
@@ -715,6 +751,16 @@ export default function ItineraryEditor({
   };
 
   function buildValidationPayload() {
+    // Read from the live days/items state, not pkg.hotels — pkg is the package as
+    // originally fetched, so it still shows a hotel here even after the creator
+    // deletes every HOTEL item from the timeline. Used by R17 in route.ts.
+    // `title` carries a "(Night 2 of 4)"/"(Check-out)" suffix for display — `hotelName`
+    // is the clean name set alongside it; STAY_LABEL_SUFFIX strips the suffix as a
+    // fallback for older items that only ever had `title` (same pattern already used
+    // by summarizeDay in itinerary-builder.ts).
+    const hotelItem = days.flatMap((day) => day.items).find((item) => item.type === "HOTEL");
+    const hotelName = hotelItem?.hotelName ?? hotelItem?.title.replace(STAY_LABEL_SUFFIX, "") ?? "";
+
     return {
       package_id: pkg.package_id,
       trip_name: packageTitle,
@@ -724,19 +770,33 @@ export default function ItineraryEditor({
       travel_month: "April",
       total_days: days.length,
       group_size: 2,
-      hotel_name: pkg.hotels[0]?.hotel_name ?? "",
-      hotel_stars: pkg.hotels[0]?.star_rating ?? 4,
+      hotel_name: hotelName,
+      hotel_stars: hotelItem?.starRating ?? 4,
+      // Total photos across the whole package (every day + every item within it) —
+      // used by R18 in route.ts. Counted from live editor state, not pkg.media,
+      // so it reflects photos added/removed in this session before saving.
+      photo_count: days.reduce(
+        (sum, day) =>
+          sum +
+          day.photos.length +
+          day.items.reduce((itemSum, item) => itemSum + (item.photos?.length ?? 0), 0),
+        0
+      ),
       days_json: JSON.stringify(
         days.map((day) => ({
           day_number: day.day,
+          // Creator-written "Your story" text — included so the profanity/
+          // brand-safety/war-zone hard-block filters in route.ts scan it too.
+          summary: day.story ?? "",
+          // Used by R17 in route.ts — per-day, so a creator can jump straight to
+          // the day that's actually missing a hotel instead of a generic package error.
+          has_accommodation: day.items.some((item) => item.type === "HOTEL"),
           // Flights on this day — used by R2 transfer-time check in route.ts
           flights: day.items
             .filter((item) => item.type === "FLIGHT")
             .map((item) => ({
               arrival_time: item.time,
-              flight_type: item.title.toLowerCase().includes("international")
-                ? "international"
-                : "domestic",
+              flight_type: deriveFlightType(item.originIata, item.destinationIata, pkg.destination_country),
               title: item.title,
             })),
           activities: day.items
@@ -750,6 +810,7 @@ export default function ItineraryEditor({
               suitable_for: "Couple",
               address: item.address ?? "",
               description: item.notes ?? "",
+              price: item.price, // used by R16 — "$0" is valid (free), only a blank field fails
             })),
         }))
       ),
@@ -1466,10 +1527,24 @@ export default function ItineraryEditor({
   );
   const scorePassing = Boolean(feasResult) && !resultStale && (displayScore ?? 0) >= 70;
 
-  // The static checklist below always lists 4 criteria; they're treated as
-  // satisfied whenever there are no critical issues, mirroring the pass/fail
-  // logic the submit button itself relies on (isReadyToSubmit's hardErrors check).
-  const passedCount = feasResult ? (hardErrors.length === 0 ? 4 : 0) : undefined;
+  // "Daily schedule has a clear start and end" has no backing rule yet (nothing in
+  // the feasibility check currently validates it), so it's shown whenever a check has
+  // run at all. Every other line below IS backed by a real hard-error rule — each only
+  // counts as passed when its matching error isn't present in this result, so a
+  // creator can see exactly which of their own past fixes is still holding and get an
+  // early flag the moment an edit accidentally breaks one of them again.
+  const passedChecklist = [
+    { label: "Daily schedule has a clear start and end", passed: true },
+    { label: "All stops have pricing", passed: hardErrors.every((e) => e.error_code !== "MISSING_PRICE") },
+    { label: "Accommodation is included", passed: hardErrors.every((e) => e.error_code !== "MISSING_ACCOMMODATION") },
+    { label: "Every day has at least one activity", passed: hardErrors.every((e) => e.error_code !== "EMPTY_DAY") },
+    { label: "Flights have enough transfer time after landing", passed: hardErrors.every((e) => e.error_code !== "SHORT_TRANSFER") },
+    { label: "No scheduling conflicts between activities", passed: hardErrors.every((e) => e.error_code !== "TIME_OVERLAP") },
+    { label: "Daily schedule leaves room for travel between stops", passed: hardErrors.every((e) => e.error_code !== "SCHEDULE_TOO_PACKED") },
+    { label: "Package has at least one photo", passed: hardErrors.every((e) => e.error_code !== "MISSING_PHOTOS") },
+    { label: "No banned competitor mentions", passed: hardErrors.every((e) => e.rule !== "BrandSafety") },
+  ];
+  const passedCount = feasResult ? passedChecklist.filter((c) => c.passed).length : undefined;
 
   const submissionButtonLabel = isLocked
     ? STATUS_LABELS[packageStatus] ?? packageStatus
@@ -1987,7 +2062,10 @@ export default function ItineraryEditor({
               })}
               {softWarnings.length === 0 && <p style={{ padding: "8px", fontSize: "0.85rem" }}>No suggestions.</p>}
             </div>}
-            {expandedFeasibility === "passed" && <ul className="passed-details"><li><Icon name="check" size={15} />Daily schedule has a clear start and end</li><li><Icon name="check" size={15} />All stops have pricing</li><li><Icon name="check" size={15} />Accommodation is included</li><li><Icon name="check" size={15} />Required package photos are uploaded</li></ul>}
+            {expandedFeasibility === "passed" && <ul className="passed-details">
+              {passedChecklist.filter((c) => c.passed).map((c) => <li key={c.label}><Icon name="check" size={15} />{c.label}</li>)}
+              {passedChecklist.every((c) => !c.passed) && <p style={{ padding: "8px", fontSize: "0.85rem" }}>No checks passed yet.</p>}
+            </ul>}
             <p className="quality-footer">Last update: {feasResult && lastCheckedAt ? formatRelativeTime(lastCheckedAt) : "Not yet checked"}</p>
           </section>
           <CopilotPanel

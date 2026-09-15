@@ -5,6 +5,7 @@ import {
   FeasibilityRule,
   buildSystemPrompt,
   buildUserPrompt,
+  checkPackagePhotos,
   runCodeChecks,
 } from "../../../../lib/feasibility";
 
@@ -121,7 +122,7 @@ export const PROFANITY_WORDS = [
   "wanker", "wankers", "wanking",
   "arsehole", "arseholes", "arse", "arses",
   "twat", "twats",
-  "pussy", "pussies",
+  "cock", "pussy", "pussies",
   "slut", "sluts", "slutty",
   "whore", "whores", "whoring",
   // Slurs (racial / ethnic / identity)
@@ -144,7 +145,62 @@ export const PROFANITY_WORDS = [
   "molest", "molested", "molesting", "molester",
 ];
 
-export function runHardBlockFilters(pkg: any, warZones: string[]) {
+// A day's own text — summary plus every activity's name/description — used to
+// localize a profanity or banned-competitor match to a specific day so the UI can
+// offer a "Go to Day N" button instead of a generic package-wide message.
+function dayTextBlob(day: any): string {
+  const parts: string[] = [];
+  if (day.summary) parts.push(String(day.summary));
+  for (const act of day.activities || []) {
+    if (act.activity_name) parts.push(String(act.activity_name));
+    if (act.description) parts.push(String(act.description));
+  }
+  return parts.join(" ").toLowerCase();
+}
+
+/** Finds the first day whose own text contains `needle` (case-insensitive substring). */
+export function findDayContainingText(days: any[], needle: string | undefined): number | null {
+  const n = (needle || "").trim().toLowerCase();
+  if (!n) return null;
+  for (const day of days) {
+    if (dayTextBlob(day).includes(n)) return day.day_number;
+  }
+  return null;
+}
+
+/**
+ * True for an AI-generated issue that duplicates R2 (post-landing transfer time) —
+ * fully owned by the deterministic code check in runCodeChecks. The system prompt
+ * tells the model never to flag this itself, but that's not a hard guarantee, so
+ * entries matching it are filtered out of the AI's output as a safety net.
+ */
+export function isTransferTimeIssue(issue: any): boolean {
+  return issue?.error_code === "SHORT_TRANSFER" || issue?.rule === "R2 – Transfer Time";
+}
+
+/**
+ * R12 is the only contextual rule the system prompt allows to hard-block (a genuinely
+ * impossible activity-to-activity transfer, which the creator CAN fix by moving
+ * something). Every other AI hard_error is a judgment call about content the creator
+ * often can't act on (e.g. flight data is read-only, catalog-selected) — this splits
+ * the AI's hard_errors into ones that are allowed through as-is and ones that get
+ * demoted to a warning, independent of whether the model actually followed that
+ * instruction in the prompt.
+ */
+export function partitionAiHardErrors(issues: any[]): { allowed: any[]; downgraded: any[] } {
+  const allowed: any[] = [];
+  const downgraded: any[] = [];
+  for (const issue of issues) {
+    if (typeof issue?.rule === "string" && issue.rule.startsWith("R12")) {
+      allowed.push(issue);
+    } else {
+      downgraded.push({ ...issue, severity: "warning" });
+    }
+  }
+  return { allowed, downgraded };
+}
+
+export function runHardBlockFilters(pkg: any, warZones: string[], days: any[] = []) {
   const fullText = JSON.stringify(pkg).toLowerCase();
   const country = (pkg.country || "").toLowerCase();
 
@@ -157,6 +213,22 @@ export function runHardBlockFilters(pkg: any, warZones: string[]) {
       };
     }
   }
+  // Check per-day first (in day order) so a match can be attributed to a specific
+  // day; a match that only shows up in a package-level field (trip name, hotel name)
+  // falls through to the whole-package scan below with no day to point to.
+  for (const day of days) {
+    const dayText = dayTextBlob(day);
+    for (const comp of BANNED_COMPETITORS) {
+      if (dayText.includes(comp)) {
+        return {
+          blocked: true,
+          type: "BrandSafety",
+          message: `Brand Safety: Mentions of competitor '${comp}' are blocked, in Day ${day.day_number}.`,
+          field: `Day ${day.day_number}`,
+        };
+      }
+    }
+  }
   for (const comp of BANNED_COMPETITORS) {
     if (fullText.includes(comp)) {
       return {
@@ -164,6 +236,19 @@ export function runHardBlockFilters(pkg: any, warZones: string[]) {
         type: "BrandSafety",
         message: `Brand Safety: Mentions of competitor '${comp}' are blocked.`,
       };
+    }
+  }
+  for (const day of days) {
+    const dayText = dayTextBlob(day);
+    for (const word of PROFANITY_WORDS) {
+      if (new RegExp(`\\b${word}\\b`, "i").test(dayText)) {
+        return {
+          blocked: true,
+          type: "SafetyStatus",
+          message: `Profanity detected in Day ${day.day_number}.`,
+          field: `Day ${day.day_number}`,
+        };
+      }
     }
   }
   for (const word of PROFANITY_WORDS) {
@@ -198,7 +283,7 @@ export async function POST(req: NextRequest) {
     // 1. Text-based hard block filters (competitors, war zones, profanity)
     //    War zone list is fetched from AI once and cached for 24 hours.
     const warZones = await getWarZones();
-    const blockCheck = runHardBlockFilters(pkg, warZones);
+    const blockCheck = runHardBlockFilters(pkg, warZones, days);
     let brandSafety = 1;
     let safetyStatus = 1;
     let hardBlockError: any = null;
@@ -210,7 +295,7 @@ export async function POST(req: NextRequest) {
         error_code: "POLICY_VIOLATION",
         rule: blockCheck.type,
         severity: "error",
-        field: "package_content",
+        field: blockCheck.field || "package_content",
         field_value: "N/A",
         affected_item: "Entire Package",
         message: blockCheck.message,
@@ -218,8 +303,9 @@ export async function POST(req: NextRequest) {
       };
     }
 
-    // 2. Code-based deterministic checks (R1, R2, R5, R7, R9, R13) — always consistent
+    // 2. Code-based deterministic checks (R1, R2, R5, R7, R9, R13, R16, R17) — always consistent
     const codeResults = runCodeChecks(days);
+    const photosError = checkPackagePhotos(pkg); // R18 — package-level, not per-day
 
     //console.log("\n========== [AI VALIDATE] CODE CHECK RESULTS ==========");
     //console.log("Hard errors:", JSON.stringify(codeResults.hard, null, 2));
@@ -272,28 +358,41 @@ export async function POST(req: NextRequest) {
     let aiProfanityError: any = null;
     if (!hardBlockError && Boolean(aiResult.scores?.contains_profanity)) {
       safetyStatus = 0;
+      const evidenceDay = findDayContainingText(days, aiResult.profanity_evidence);
       aiProfanityError = {
         error_code: "POLICY_VIOLATION",
         rule: "SafetyStatus",
         severity: "error",
-        field: "package_content",
+        field: evidenceDay !== null ? `Day ${evidenceDay}` : "package_content",
         field_value: aiResult.profanity_evidence || "N/A",
         affected_item: "Entire Package",
-        message: "Profanity detected in package content (AI-detected).",
+        message:
+          evidenceDay !== null
+            ? `Profanity detected in Day ${evidenceDay} (AI-detected).`
+            : "Profanity detected in package content (AI-detected).",
         action: "Remove prohibited content to proceed.",
       };
     }
 
     // 4. Merge: code results + AI contextual results + any policy block error
+    //    R2 (post-landing transfer time) is fully owned by the deterministic code
+    //    check above — the system prompt tells the AI never to flag it too, but that's
+    //    not a hard guarantee the model always follows, so entries matching it are
+    //    dropped here as well rather than relying on prompt wording alone.
+    //    See isTransferTimeIssue/partitionAiHardErrors for why each filter exists.
+    const aiHardErrors: any[] = (aiResult.hard_errors || []).filter((issue: any) => !isTransferTimeIssue(issue));
+    const { allowed: allowedAiHardErrors, downgraded: downgradedAiHardErrors } = partitionAiHardErrors(aiHardErrors);
     const mergedHardErrors = [
       ...codeResults.hard,
-      ...(aiResult.hard_errors || []),
+      ...(photosError ? [photosError] : []),
+      ...allowedAiHardErrors,
       ...(hardBlockError ? [hardBlockError] : []),
       ...(aiProfanityError ? [aiProfanityError] : []),
     ];
     const mergedSoftWarnings = [
       ...codeResults.soft,
-      ...(aiResult.soft_warnings || []),
+      ...downgradedAiHardErrors,
+      ...(aiResult.soft_warnings || []).filter((issue: any) => !isTransferTimeIssue(issue)),
     ];
 
     // 5. Quality score: FinalScore = SafetyStatus x BrandSafety x [(Grammar x 0.2) + (Completeness x 0.3) + (Feasibility x 0.5)] x 100
