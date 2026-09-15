@@ -838,8 +838,7 @@ figure .remove-photo-btn:focus-visible { outline: 2px solid var(--fc-focus-ring)
 .trip-params-rows { display: grid; }
 .trip-params-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--fc-border); }
 .trip-params-row:last-child { border-bottom: 0; }
-.trip-params-row-label { display: flex; align-items: center; gap: 8px; color: var(--fc-secondary); font-size: 14px; }
-.trip-params-row-label svg { flex: 0 0 auto; }
+.trip-params-row-label { color: var(--fc-secondary); font-size: 14px; }
 .trip-params-row strong { color: var(--fc-ink); font-size: 14px; font-weight: 600; text-align: right; }
 .trip-params-row .select-field { width: 150px; }
 .trip-params-vibe-edit { margin: 12px 0 0; }

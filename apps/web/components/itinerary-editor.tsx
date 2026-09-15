@@ -2148,18 +2148,18 @@ export default function ItineraryEditor({
             {expandedFeasibility === "passed" && <ul className="passed-details"><li><Icon name="check" size={15} />Daily schedule has a clear start and end</li><li><Icon name="check" size={15} />All stops have pricing</li><li><Icon name="check" size={15} />Accommodation is included</li><li><Icon name="check" size={15} />Required package photos are uploaded</li></ul>}
             <p className="quality-footer">Last update: {feasResult && lastCheckedAt ? formatRelativeTime(lastCheckedAt) : "Not yet checked"}</p>
           </section>
-          <Panel title="Trip parameters" className="trip-params-panel" icon={<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><line x1="4" y1="6" x2="20" y2="6" /><circle cx="9" cy="6" r="2" /><line x1="4" y1="12" x2="20" y2="12" /><circle cx="15" cy="12" r="2" /><line x1="4" y1="18" x2="20" y2="18" /><circle cx="9" cy="18" r="2" /></svg>}>
+          <Panel title="Trip parameters" className="trip-params-panel">
             <div className="trip-params-rows">
               <div className="trip-params-row">
-                <span className="trip-params-row-label"><Icon name="pin" size={16} />Destination</span>
+                <span className="trip-params-row-label">Destination</span>
                 <strong>{tripDestination || "Not set"}</strong>
               </div>
               <div className="trip-params-row">
-                <span className="trip-params-row-label"><Icon name="hourglass" size={16} />Duration</span>
+                <span className="trip-params-row-label">Duration</span>
                 <strong>{days.length} day{days.length === 1 ? "" : "s"} ({Math.max(0, days.length - 1)} night{Math.max(0, days.length - 1) === 1 ? "" : "s"})</strong>
               </div>
               <div className="trip-params-row">
-                <span className="trip-params-row-label"><Icon name="clock" size={16} />Target season</span>
+                <span className="trip-params-row-label">Target season</span>
                 {editingTripParams
                   ? <SelectField
                       value={tripParamsDraft.season ?? ""}
@@ -2172,7 +2172,7 @@ export default function ItineraryEditor({
               </div>
               {!editingTripParams && (
                 <div className="trip-params-row">
-                  <span className="trip-params-row-label"><Icon name="star" size={16} />Itinerary vibe</span>
+                  <span className="trip-params-row-label">Itinerary vibe</span>
                   <strong>{tripVibesDraft?.vibes.length ? tripVibesDraft.vibes.join(" · ") : "Not set"}</strong>
                 </div>
               )}
