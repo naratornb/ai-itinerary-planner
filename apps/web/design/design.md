@@ -1,12 +1,12 @@
 ---
 version: anydesign-1
 name: Influencer Travel Marketplace web experience
-source: repository root
-captured_at: 2026-08-13
+source: apps/web
+captured_at: 2026-09-14
 description: |
-  An energetic retail-travel workspace that separates brand structure from user action.
-  A saturated red header supplies recognition, blue marks interaction, and restrained white
-  work surfaces keep itinerary details, pricing, and photography easy to scan.
+  An energetic travel marketplace and creator workspace built around a strict division of
+  colour roles. Saturated red establishes the product environment, blue identifies actions
+  and selections, and neutral work surfaces keep complex package-building tasks legible.
 colors:
   brand: "#D40119"
   action: "#0072EA"
@@ -16,6 +16,7 @@ colors:
   text-disabled: "#9E9E9E"
   surface: "#FFFFFF"
   surface-subtle: "#F5F5F5"
+  selected-surface: "#EFF6FF"
   border: "#E0E0E0"
   success: "#14804A"
   warning: "#A45B00"
@@ -54,24 +55,45 @@ components:
     textColor: "{colors.surface}"
     typography: "{typography.label}"
     rounded: "{rounded.md}"
-    padding: 12px 20px
+    minHeight: 44px
   button-secondary:
     backgroundColor: "{colors.surface}"
     textColor: "{colors.text-primary}"
     typography: "{typography.label}"
     rounded: "{rounded.md}"
-    padding: 12px 20px
+    minHeight: 44px
   input:
     backgroundColor: "{colors.surface}"
     textColor: "{colors.text-primary}"
     typography: "{typography.body}"
     rounded: "{rounded.md}"
-    padding: 0 16px
+    minHeight: 44px
   card:
     backgroundColor: "{colors.surface}"
     textColor: "{colors.text-primary}"
     rounded: "{rounded.md}"
     padding: 16px
+  creation-subnav:
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.text-primary}"
+    minHeight: 64px
+  wizard-progress:
+    backgroundColor: "{colors.surface-subtle}"
+    textColor: "{colors.text-primary}"
+    nodeSize: 28px
+  season-card:
+    backgroundColor: "{colors.surface}"
+    selectedBackgroundColor: "{colors.selected-surface}"
+    rounded: "{rounded.md}"
+    height: 168px
+  generation-loader:
+    backgroundColor: "{colors.surface-subtle}"
+    actionColor: "{colors.action}"
+    rounded: "{rounded.md}"
+  dashboard-package-row:
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.text-primary}"
+    padding: 22px 28px
   creator-day-strip:
     backgroundColor: "{colors.surface}"
     textColor: "{colors.text-primary}"
@@ -92,21 +114,21 @@ components:
 # Design Analysis — Influencer Travel Marketplace web experience
 
 > Analysis generated with the `anydesign` skill.
-> Date: 2026-08-13
+> Date: 2026-09-14
 > Analysis emphasis: reconstruction and design system
 
 ---
 
 ## Source
 
-- **Source type**: Local React application and explicit CSS design tokens
-- **Path / URL**: repository root
-- **Capture method**: Source inspection of component styles, global CSS, and supplied design documentation
-- **Detected limitations**: The source is a front-end demo; backend-connected states are outside this reconstruction.
+- **Source type**: Local Next.js application, CSS design tokens, and current routed UI.
+- **Path / URL**: `apps/web`
+- **Capture method**: Source inspection of page routes, component states, global CSS, and focused desktop previews.
+- **Detected limitations**: Desktop creation flows have the strongest visual evidence. Mobile rules are present in CSS but have not received equivalent visual QA. Destination-specific recommended months and temperatures are unavailable.
 
 ## TL;DR
 
-An energetic, practical travel interface with a dense creator workspace and vivid destination photography. The system uses `{colors.brand}` (#D40119) for structural recognition and `{colors.action}` (#0072EA) exclusively for actions, while neutral surfaces protect readability.
+The experience combines an energetic marketplace with a task-focused creator workspace. `{colors.brand}` (#D40119) identifies the environment, `{colors.action}` (#0072EA) marks interaction, and border-first white surfaces preserve clarity across the dashboard, guided builders, editor, and package detail views.
 
 ## 1. Visual identity
 
@@ -114,28 +136,28 @@ An energetic, practical travel interface with a dense creator workspace and vivi
 
 **Personality**: energetic, practical, direct, trustworthy, approachable
 
-**Mood**: Forward-moving and optimistic without luxury styling.
+**Mood**: Optimistic during discovery and calm during operational work.
 
-**Detectable stylistic references**: Retail travel merchandising combined with a productivity dashboard.
+**Detectable stylistic references**: Retail travel merchandising combined with a structured productivity dashboard.
 
-**Information density**: Balanced on marketplace pages and dense in the editor.
+**Information density**: Balanced on marketplace and creation screens; dense in the editor and dashboard table.
 
-**Implicit positioning**: Travel creators assembling saleable packages for mainstream travellers.
+**Implicit positioning**: Travel creators turn personal knowledge into reviewable, bookable package drafts for mainstream travellers.
 
-**Confidence**: ✅ high — tokens and component dimensions are explicit in the source.
+**Confidence**: ✅ high — values and layout rules are taken directly from the current source.
 
 ### 1.2 Brand voice / Atmosphere
 
-The interface assumes planning a trip is emotional and operational at the same time. Photography creates anticipation, while prices, dates, warnings, and itinerary controls remain on clear white surfaces. The visual system therefore spends colour deliberately: red identifies the product environment and blue tells the user where action is possible.
+The interface treats travel planning as both inspiration and production. Photography helps creators recognise the feeling of a destination or season, while explicit steps, prices, statuses, and validation controls turn that feeling into a package that can be reviewed and sold.
 
-The creator workspace treats complexity as something to organise rather than hide. Dense timelines, quality checks, and pricing panels remain legible through repeated spacing, modest borders, and restrained elevation. Copy should be direct and specific, especially around publishing requirements and costs.
+Colour carries responsibility rather than decoration. Red says where the user is, blue says what they can do, and neutral surfaces hold the work. The creator flow avoids pretending that generation is instant or final: setup is progressive, AI work receives a visible loading sequence, and publishing is described as submission for review.
 
 ### 1.3 The "ONE brand thing"
 
-- **The thing**: A full-width `{colors.brand}` (#D40119) navigation field paired with white surfaces.
-- **Why it carries the brand**: It creates immediate recognition and energetic contrast without colouring every component.
-- **How everything else supports it**: Cards, forms, and editor panels stay neutral; actionable emphasis is reserved for `{colors.action}` (#0072EA).
-- **Where it appears (and where it deliberately doesn't)**: Global marketplace navigation and high-level brand structure only, never as the default button colour.
+- **The thing**: A full-width `{colors.brand}` (#D40119) header above restrained white and light-gray work surfaces.
+- **Why it carries the brand**: It creates recognition before any content, photography, or copy is read.
+- **How everything else supports it**: Controls, cards, and data regions stay neutral; `{colors.action}` (#0072EA) is reserved for interaction.
+- **Where it appears**: Global product structure. It does not become the default card fill or primary action colour.
 
 *Confidence*: ✅ high
 
@@ -145,189 +167,286 @@ The creator workspace treats complexity as something to organise rather than hid
 
 | Token | Hex | Role | Where it appears | Confidence |
 |---|---|---|---|---|
-| `brand` | `#D40119` | Structural identity | Global navigation | ✅ high |
-| `action` | `#0072EA` | Primary interaction | CTAs, links, focus | ✅ high |
-| `action-hover` | `#005DC7` | Hover/pressed action | Primary button hover | ✅ high |
-| `surface` | `#FFFFFF` | Base and elevated surface | Page, card, input | ✅ high |
-| `surface-subtle` | `#F5F5F5` | Quiet separation | Secondary regions | ✅ high |
-| `text-primary` | `#212121` | Main text | Headings and body | ✅ high |
-| `text-secondary` | `#616161` | Supporting text | Metadata and labels | ✅ high |
-| `border` | `#E0E0E0` | Component boundary | Cards and fields | ✅ high |
-| `success` | `#14804A` | Positive status | Quality checks | ✅ high |
-| `warning` | `#A45B00` | Caution status | Feasibility guidance | ✅ high |
+| `brand` | `#D40119` | Structural identity | Global header and restrained brand accents | ✅ high |
+| `action` | `#0072EA` | Primary interaction | CTAs, links, focus, selected cards | ✅ high |
+| `action-hover` | `#005DC7` | Hover and pressed action | Primary button hover | ✅ high |
+| `surface` | `#FFFFFF` | Base and elevated surface | Cards, fields, subnav, panels | ✅ high |
+| `surface-subtle` | `#F5F5F5` | Quiet separation | Page backgrounds and secondary regions | ✅ high |
+| `selected-surface` | `#EFF6FF` | Selected option feedback | Season, style, and duration cards | ✅ high |
+| `text-primary` | `#212121` | Main text | Headings, values, controls | ✅ high |
+| `text-secondary` | `#616161` | Supporting text | Descriptions, labels, metadata | ✅ high |
+| `text-disabled` | `#9E9E9E` | Unavailable state | Disabled actions and pending steps | ✅ high |
+| `border` | `#E0E0E0` | Component boundary | Cards, fields, panels, table rows | ✅ high |
+| `success` | `#14804A` | Positive status | Approved/live states and completed checks | ✅ high |
+| `warning` | `#A45B00` | Caution status | Review and feasibility guidance | ✅ high |
 
 ### 2.2 Typography
 
-- **Detected family**: Roboto for display and body *(confidence: ✅ high — declared in the root layout and design tokens)*
-- **Suggested fallback**: sans-serif
+- **Detected family**: Roboto *(confidence: ✅ high — declared in the root layout and tokens)*
+- **Fallback**: `sans-serif`
 
 | Token | Size | Weight | Line-height | Use |
-|---|---|---|---|---|
-| `display` | 44px | 800 | 1.1 | Hero messages |
-| `headline` | 32px | 700 | 1.25 | Page and section headings |
+|---|---:|---:|---:|---|
+| `display` | 44px | 800 | 1.1 | Large marketplace messages |
+| `headline` | 32px | 700 | 1.25 | Page titles and builder entry heading |
 | `body` | 16px | 400 | 1.5 | Primary copy |
-| `label` | 14px | 500 | 1.43 | Controls and navigation |
+| `label` | 14px | 500 | 1.43 | Buttons, navigation, table labels |
 
-**Notable tracking**: Large editor headings use approximately -0.025em.
+Creation-step headings commonly use 28px/700 and approximately -0.02em tracking. Season-card titles use 16px/700; their descriptions use 13px and metadata uses 11px.
 
 ### 2.3 Spacing
 
-- **Inferred base unit**: 4px
-- **Observable multiples**: 4, 8, 12, 16, 24, 32, 48, 64
-- **Consistency**: ✅ high — the source documentation declares the same scale.
+- **Base unit**: `{spacing.base}` (4px)
+- **Scale**: 4, 8, 12, 16, 24, 32, 48, and 64px
+- **Grouping rule**: Keep title and description close; use a larger break before metadata or the next decision group.
+- **Consistency**: ✅ high
 
 ### 2.4 Radii
 
-- `sm`: 8px for compact controls
-- `md`: 12px for buttons, inputs, and cards
-- `lg`: 16px for large panels
-- `pill`: 999px for chips and circular controls
+- `{rounded.sm}` (8px): compact controls and footer actions
+- `{rounded.md}` (12px): inputs, option cards, and panels
+- `{rounded.lg}` (16px): large overlays and major surfaces
+- `{rounded.pill}` (999px): statuses, chips, avatars, and circular states
 
 ### 2.5 Elevation system
 
 | Level | Name | Treatment | Use |
 |---|---|---|---|
-| 0 | Flat | No shadow | Full-width page regions |
-| 1 | Boundary | `1px solid #E0E0E0` | Default fields and cards |
-| 2 | Card | `0 2px 8px rgba(33,33,33,0.11)` | Cards and hover emphasis |
-| 3 | Raised | `0 6px 20px rgba(33,33,33,0.14)` | Menus and overlays |
+| 0 | Flat | No shadow | Page regions and fixed bands |
+| 1 | Boundary | `1px solid #E0E0E0` | Default fields, cards, and table structure |
+| 2 | Card | `0 1px 3px rgba(33,33,33,0.07)` | Resting cards and controls |
+| 3 | Raised | `0 2px 8px rgba(33,33,33,0.09)` | Menus, featured entry card, hover emphasis |
+| 4 | Overlay | Stronger shadow with dimmed backdrop | Dialogs and focused overlays |
 
-The system is border-first. Shadows only identify interaction or temporary elevation.
+The system is border-first. Shadows communicate hierarchy or temporary elevation rather than decorating every surface.
+
+#### Decorative depth
+
+The AI entry action uses a contained violet gradient to distinguish generation from standard blue application actions. Destination and season photography supply atmosphere; the broader workspace stays neutral.
 
 ### 2.6 Borders
 
-Default boundaries use `{colors.border}` (#E0E0E0) at 1px. Focus changes the boundary to `{colors.action}` (#0072EA) and adds a translucent 3px halo.
+Default boundaries use `{colors.border}` (#E0E0E0) at 1px or 1.5px. Selected cards use a 2px `{colors.action}` (#0072EA) border with a translucent 3px halo. Keyboard focus uses a visible blue halo and must not depend on colour alone.
 
 ## 3. Components Inventory
 
 ### 3.1 Generic components
 
 #### Button Primary
-- **Variants**: solid blue
-- **Observed size**: minimum 44px height
-- **Visible states**: default, hover, focus, disabled
-- **Padding**: 12px 20px
-- **Radius**: `{rounded.md}` (12px)
+
+- Solid `{colors.action}` (#0072EA), white label, minimum 44px height.
+- States: default, hover, focus-visible, disabled, loading.
+- Used for the single strongest next action in a task region.
 - **Confidence**: ✅ high
 
 #### Button Secondary
-- **Variants**: white with a quiet border
-- **Observed size**: minimum 44px height
-- **Visible states**: default, hover, focus
-- **Radius**: `{rounded.md}` (12px)
+
+- White surface, quiet border, primary or secondary text, minimum 44px height.
+- Used for back, clear, edit, and alternative actions.
+- Consequence-bearing labels must name their result; for example, `Build without season` and `Clear season` are separate actions.
 - **Confidence**: ✅ high
 
 #### Input
-- **Variants**: text, search, textarea, select
-- **Visible states**: empty, filled, focus, disabled
-- **Border**: 1px `{colors.border}` (#E0E0E0) with blue focus ring
+
+- Text, search, textarea, and numeric variants.
+- Focus uses a blue boundary and translucent halo.
+- Search results remain connected to the input through a listbox; typing alone does not count as choosing a destination.
 - **Confidence**: ✅ high
 
 #### Card
-- **Variants**: destination, package, editor panel, timeline item
-- **Visible states**: default, hover, selected
-- **Surface**: `{colors.surface}` (#FFFFFF)
+
+- Destination, package, setup choice, editor panel, and timeline variants.
+- Default cards use white surfaces and borders; selection adds blue border, pale-blue surface, and a check icon.
 - **Confidence**: ✅ high
 
 ### 3.2 Signature components
 
-#### Creator day strip
+#### Creation Subnav
+
+- **What it is**: A 64px sticky white band containing only `Back to dashboard`.
+- **Why it is signature**: It keeps package creation anchored without importing unrelated dashboard navigation into the focused flow.
+- **Composition**: White surface, bottom border, 1200px capped inner row, 48px minimum link target.
+- **Where it appears**: Creation-method choice, AI setup, manual setup, and AI loading.
+- **Confidence**: ✅ high
+
+#### Wizard Progress
+
+- **What it is**: A compact horizontal progress row aligned to the same 960px container as the step content.
+- **Composition**: Four AI steps — Destination, Travel style, Duration, Season. Manual creation uses Destination, Travel style, and Season because duration is refined in the editor.
+- Completed steps show checks and remain clickable; the current step uses a dark numbered node; future steps use outlined nodes.
+- Labels collapse below 600px while nodes and connectors remain visible.
+- **Confidence**: ✅ high
+
+#### Season Card
+
+- **What it is**: A two-by-two grid of 168px image-led season choices.
+- **Composition**: Image occupies 40% on the left; the right side uses 20px padding, a 16px title, 13px description, and three 11px tags.
+- Selection uses an icon-only check, blue boundary, and `{colors.selected-surface}` (#EFF6FF) content surface.
+- No month ranges or temperatures are displayed because destination-aware data is not available.
+- With no selection, the secondary action creates or builds without season. With a selection, it becomes `Clear season`, which clears only and does not start creation.
+- **Confidence**: ✅ high
+
+#### Generation Loader
+
+- **What it is**: AI-only progress feedback for Flights, Hotels, Activities, and Finalising.
+- **Composition**: Compact cards with state-specific icons, rotating status copy, a determinate-looking percentage capped below completion, and an accessible progress bar.
+- Manual creation never shows this state.
+- **Confidence**: ✅ high
+
+#### Dashboard Package Row
+
+- **What it is**: A creator package summary row with aligned destination, duration, formatted AUD price, status, and centred actions.
+- **Routing rule**: Draft and rejected packages open the editor; approved packages open creator preview; live packages open the marketplace detail page.
+- Delete is available only for drafts and requires confirmation.
+- **Confidence**: ✅ high
+
+#### Creator Day Strip
+
 - **What it is**: Fixed-size day cards and an equal-size add control in a horizontal strip.
-- **Why it's signature**: It makes itinerary sequence tangible while preserving dense editing space.
 - **Composition**: 210 by 120px cards, 12px gaps, dark selected state, dashed add state.
-- **Where it appears**: Package editor only.
+- **Where it appears**: Package editor.
 - **Confidence**: ✅ high
 
-#### Feasibility sidebar
-- **What it is**: A stack of quality, schedule, price, map, and hotel panels alongside the timeline.
-- **Why it's signature**: It keeps commercial and practical validation visible during editing.
+#### Feasibility Sidebar
+
+- **What it is**: Quality, schedule, price, map, and hotel panels alongside the editor timeline.
+- **Submission rule**: The primary action says `Submit for review`; submission does not imply immediate publication.
 - **Composition**: 340px desktop column with border-first white panels.
-- **Where it appears**: Package editor only.
 - **Confidence**: ✅ high
 
-#### Copilot conversation
-- **What it is**: A task-focused assistant surface with a compact identity header, explicit mock-data notice, conversational welcome, large request shortcuts, and a persistent composer.
-- **Why it's signature**: It turns itinerary editing guidance into a visible conversation while keeping the prototype boundary unmistakable.
-- **Composition**: A 340px desktop sidebar panel that becomes a full-viewport mobile sheet below 700px. Blue marks identity and action; white and subtle-gray surfaces carry messages and guidance.
-- **Where it appears**: Package editor only.
-- **Confidence**: ✅ high — adapted from the supplied mobile reference.
+#### Copilot Conversation
+
+- **What it is**: A task-focused assistant surface with a compact identity header, request shortcuts, conversation, and persistent composer.
+- **Composition**: 340px desktop sidebar that becomes a full-viewport mobile sheet below 700px.
+- **Confidence**: ✅ high
 
 ## 4. Layout & Composition
 
 ### 4.1 Grid & containers
 
-- Marketing content caps near 1248px with 24px desktop gutters.
-- The editor caps at 1440px and uses a flexible main column plus a 340px sidebar.
-- Section spacing follows 48–64px intervals.
+- Marketplace content caps near 1248px with 24px desktop gutters.
+- Dashboard content caps at 1200px.
+- Creation-method content caps at 800px.
+- AI and manual step content uses `width: min(calc(100% - 64px), 960px)` and stays centred.
+- Package detail caps at 1120px; the editor caps at 1440px with a flexible main column and 340px sidebar.
 
 ### 4.2 Composition patterns
 
-- Brand navigation over marketplace content
-- Destination photography card grids
-- Creator sidebar plus flexible dashboard workspace
-- Step-by-step package builder
-- Timeline editor plus validation sidebar
+- Brand header over a focused white creation subnav
+- Compact horizontal progress over a single task surface
+- Image-led choice grids for destination mood and season
+- Persistent bottom action row within desktop setup views
+- Dashboard summary cards above a package table
+- Timeline editor beside continuous validation and pricing context
+
+Desktop setup pages are designed to complete within one viewport where practical. The content area, not an internal modal, owns each step.
 
 ### 4.3 Responsive behavior
 
+#### Breakpoints
+
 | Name | Width | Key changes |
 |---|---|---|
-| Mobile | < 600px | One column, stacked fields, condensed navigation |
-| Tablet | 600–959px | Two-column content where space allows |
-| Desktop | 960–1279px | Full navigation and multi-column cards |
-| Wide | ≥ 1280px | Capped containers and stable editor sidebar |
+| Mobile | < 600px | Progress copy hides; nodes remain; fields and cards stack |
+| Tablet | 600–800px | Creation viewport becomes page-scrolling; progress spacing tightens |
+| Desktop | 801–1279px | 960px guided-flow container and multi-column option grids |
+| Wide | ≥ 1280px | Containers remain capped and centred |
 
-Interactive controls must remain at least 44 by 44px. Card grids collapse from three columns to two and then one; day cards retain fixed size and scroll horizontally.
+#### Touch targets
+
+Primary and secondary actions use at least 44px height. Creation navigation uses a 48px minimum target. Small visual badges are not interactive.
+
+#### Collapsing strategy
+
+- Progress retains order but removes text below 600px.
+- Desktop overflow locking is removed below 800px so the document scrolls naturally.
+- Editor sidebars collapse below 1100px and become a single column below 700px.
+- Creation footer actions may wrap on narrow screens.
 
 ### 4.4 Image behavior
 
-- Destination photography uses cover crops and card-matched top radii.
-- Hero images use wide natural crops with controlled gradients behind overlaid text.
-- Informative images require descriptive alternative text.
-- Icons use compact inline SVG with consistent 16–24px sizing.
+- Destination and travel-style photography uses cover crops with card-matched radii.
+- Season photography occupies the full left 40% of each card and may zoom subtly on hover.
+- Package cover imagery uses wide cover crops and a maximum displayed height.
+- Inline SVG icons use 16–24px sizing and mostly stroked geometry; selection checks use high-contrast filled circles.
+- Informative images require descriptive alternative text; decorative imagery should use empty alternative text.
 
 ## 5. Reconstruction Notes
 
 ### Suggested stack
 
-Use the target repository's Next.js App Router, React, TypeScript, and Tailwind CSS 4. Preserve client interactivity in focused client components. Load Leaflet only on the client to avoid server-rendering access to browser globals.
+Use the repository's Next.js App Router, React, TypeScript, CSS custom properties, and focused global component classes. Keep Supabase access and API calls behind the existing client helpers; do not introduce a second design framework for isolated screens.
 
 ### Quick wins
 
-- Reuse the existing explicit token values as CSS custom properties.
-- Convert screen-state navigation to `next/link` and `useRouter` paths.
-- Keep all demonstration data inside the web app and do not call backend endpoints.
+- Reuse existing semantic colour, spacing, and radius values rather than adding screen-specific shades.
+- Reuse `CreatorCreationSubnav`, `PackageWizardProgress`, and the shared destination catalog across creation modes.
+- Keep price display locale-aware with thousands separators.
+- Preserve status-to-route mapping in one route helper instead of duplicating it in dashboard rows.
 
-### Tricky parts
+### Tricky bits
 
-- Wizard-to-editor state currently survives because both screens remain mounted; route separation needs a small browser-session store.
-- Leaflet and `ResizeObserver` require a client-only boundary.
-- The source is one large component; migration should split only by page and shared navigation to avoid speculative abstraction.
+- A typed search string is not a valid destination until the user selects a catalog result.
+- AI loading must reflect real completion while still providing paced visual progress during long requests.
+- Season is currently a single optional generation hint, not persistent package metadata. Do not imply destination-specific months or temperatures.
+- Approved is a creator-preview state; live is the public marketplace state.
+- Reference flights are creator suggestions, not guaranteed purchaser inventory. Traveller-facing copy must preserve that distinction.
+
+### Implicit states to preserve
+
+- Loading, empty, error, disabled, selected, hover, and focus-visible states
+- Session-expired redirects and retry actions
+- Submission in progress and locked non-draft packages
+- No-season creation and clear-season behavior
 
 ### Confidence map
 
-- Tokens and component dimensions: ✅ high
-- Desktop page composition: ✅ high
-- Mobile behavior: ⚠️ medium, inferred from documented responsive intent
-- Backend-connected states: not in scope
+| Layer | Confidence | Why |
+|---|---|---|
+| Identity | ✅ high | Repeated across marketplace and creator surfaces |
+| Colors | ✅ high | Extracted from source constants and CSS variables |
+| Typography | ✅ high | Declared in source and tokens |
+| Spacing | ✅ high | Repeated 4px-based values in current CSS |
+| Components | ✅ high | Current implementations and tests are present |
+| Desktop layout | ✅ high | Source dimensions and focused previews agree |
+| Mobile layout | ⚠️ medium | CSS rules exist, but visual coverage is less complete |
+| Destination-specific seasonal facts | ❓ low | No backend source exists |
 
-## 6. Brand Rules — Do's and Don'ts
+## 6. Do's and Don'ts
 
 ### Do
 
-- Use `{colors.brand}` (#D40119) for structural identity and `{colors.action}` (#0072EA) for interaction.
-- Keep itinerary facts, pricing, and warnings on solid readable surfaces.
-- Preserve the fixed-size day-card rhythm and visible validation sidebar on desktop.
-- Preserve the Co-Pilot's chat-first order: identity, prototype disclosure, welcome, request shortcuts, conversation, then composer.
-- Use only neutral Marketplace naming and approved public-facing identifiers.
+- Reserve `{colors.brand}` (#D40119) for structural identity and `{colors.action}` (#0072EA) for interaction.
+- Keep the package creation subnav limited to `Back to dashboard` so setup remains focused.
+- Align progress, headings, cards, and footer actions to the same 960px creation container.
+- Use a blue boundary, pale-blue surface, and check icon together for selected option cards.
+- Keep title and description grouped, then separate tags or metadata with a larger vertical gap.
+- Use explicit workflow language: `Submit for review`, `Approved`, creator preview, and `Live` must remain distinct.
+- Keep alternative creation actions consequence-specific, such as `Build without season` and `Clear season`.
 
 ### Don't
 
-- Do not place restricted client, institution, team, email, or placeholder production-domain identifiers in any web file.
-- Do not use the brand red as the default CTA colour.
-- Do not introduce luxury styling that weakens the practical retail-travel character.
-- Do not connect demo controls to the backend as part of this migration.
+- Do not use `{colors.brand}` (#D40119) as the default primary button colour.
+- Do not add unrelated dashboard tabs to package creation screens.
+- Do not use free-text destination entry where the catalog picker is required for safety filtering.
+- Do not display hard-coded month ranges, temperatures, or destination claims without a destination-aware source.
+- Do not show `Build without season` when a season is selected; use `Clear season` to prevent accidental omission.
+- Do not describe reference flights as booked, guaranteed, or purchaser-specific inventory.
+- Do not treat approval as publication or route an approved package directly to the public marketplace detail page.
 
 ## 7. Open Questions
 
-No open questions remain because the supplied reference establishes the Co-Pilot's mobile composition. Exact device chrome is intentionally excluded because the browser supplies its own viewport controls.
+- Should recommended season become persistent package metadata? If so, define an API field before enabling multiple seasons or destination-specific month ranges.
+- What event moves an approved package to live, and should that transition remain automatic or require an explicit administrative action?
+- Mobile creation layouts need a dedicated visual QA pass at common phone widths and 200% zoom.
+- Booking, earnings, and analytics navigation remains outside the focused creation-flow design until those destinations are implemented.
+
+## 8. Companion files
+
+- [x] `design-tokens.json` — canonical W3C DTCG token data; no token values changed in this update.
+- [ ] `design-a11y.md` — not regenerated in this documentation-only update.
+- [ ] Multi-viewport screenshots — desktop creation screens have been previewed; tablet and mobile captures remain open.
+
+---
+
+*This document is the current design-system reference for extending the web experience. Feature-specific element notes in this directory refine, but do not override, these global rules.*

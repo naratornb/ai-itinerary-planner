@@ -7,7 +7,11 @@ export type IconName =
   | "check"
   | "clock"
   | "chevron"
-  | "pin";
+  | "pin"
+  | "hourglass"
+  | "trash"
+  | "pencil"
+  | "refresh";
 
 export type TimelineItem = {
   id: number;
@@ -22,8 +26,12 @@ export type TimelineItem = {
   category?: string;
   address?: string;
   duration?: string;
+  bookingRequired?: boolean | null;
+  /** Short factual line under the title (e.g. a flight's airline + duration). */
+  subtitle?: string;
   notes?: string;
-  photos?: string[];
+  photos?: DayPhoto[];
+  sequenceOrder?: number;
   checkIn?: string;
   checkOut?: string;
   roomType?: string;
@@ -32,6 +40,21 @@ export type TimelineItem = {
   stayGroupId?: string;
   /** Inventory ID from the Co-Pilot suggestion this item was added from. */
   sourceId?: string;
+  // Raw source-record fields, undecorated by display formatting — kept
+  // alongside title/price/time so a save can round-trip real flight/hotel/
+  // activity data instead of re-parsing it back out of display strings.
+  originIata?: string;
+  destinationIata?: string;
+  airline?: string;
+  flightNumber?: string;
+  departureDatetime?: string;
+  arrivalDatetime?: string;
+  departureTime?: string;
+  arrivalTime?: string;
+  cabinClass?: string;
+  hotelName?: string;
+  city?: string;
+  activityDate?: string;
 };
 
 export type BuilderDay = {
@@ -42,6 +65,8 @@ export type BuilderDay = {
   items: TimelineItem[];
   story: string;
   photos: DayPhoto[];
+  /** This day's real calendar date (YYYY-MM-DD), when one is known. */
+  date?: string | null;
 };
 
 /** `media_id` is absent while an optimistic blob preview is still uploading. */
@@ -57,6 +82,13 @@ export function computePackagePrice(days: BuilderDay[]): number {
     .flatMap((day) => day.items)
     .filter((item) => item.stayMarker !== "check-out")
     .reduce((sum, item) => sum + (Number(item.price.replace(/[^0-9.]/g, "")) || 0), 0);
+}
+
+/** The next legacy calendar date, or null for a date-flexible package. */
+export function nextCalendarDate(dateStr?: string | null): string | null {
+  if (!dateStr) return null;
+  const base = new Date(`${dateStr}T00:00:00Z`).getTime();
+  return new Date(base + 86_400_000).toISOString().slice(0, 10);
 }
 
 /** Day-tab subtitle: the day's story, clipped for the narrow tab. */
@@ -232,10 +264,11 @@ export function copilotSuggestionToTimelineItem(
     duration: String(Math.round((suggestion.duration_hours ?? 1) * 60)),
     notes: suggestion.why_recommended,
     sourceId: suggestion.item_id,
+    city: suggestion.city,
   };
 }
 import type { CopilotSuggestionV1 } from "./copilot";
-import type { CreatorPackageDetail } from "./creator-api";
+import type { CreatorPackageDetail, UpdatePackageInput } from "./creator-api";
 
 function parseDay(dateStr: string | null): number | null {
   if (!dateStr) return null;
@@ -255,6 +288,15 @@ const IATA_TIMEZONES: Record<string, string> = {
   NRT: "Asia/Tokyo",
   HND: "Asia/Tokyo",
 };
+
+function formatFlightDuration(departure: string | null, arrival: string | null): string | null {
+  if (!departure || !arrival) return null;
+  const start = Date.parse(departure);
+  const end = Date.parse(arrival);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null;
+  const minutes = Math.round((end - start) / 60_000);
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
 
 export function timezoneForIata(iata: string | null | undefined): string {
   return (iata && IATA_TIMEZONES[iata]) || "Australia/Sydney";
@@ -287,15 +329,8 @@ export function extractClockTimeInZone(dateStr: string | null, timeZone: string)
   return `${hour}:${minute}`;
 }
 
-/**
- * Builds the editor's day/timeline from a real package's flights, hotels,
- * and activities — none of which carry a day number, only calendar dates.
- * The earliest date across all of them anchors day 1.
- */
+/** Builds the editor from relative package days, with dated rows as a legacy fallback. */
 export function buildDaysFromPackage(pkg: CreatorPackageDetail): BuilderDay[] {
-  // Anchor day 1 on activity/hotel dates only: AI-selected flights are matched
-  // by route and price, not date, so a flight can depart months before the
-  // stay — anchoring on it would push every activity onto the final day.
   const stayDates = [
     ...pkg.activities.map((a) => parseDay(a.activity_date)),
     ...pkg.hotels.map((h) => parseDay(h.check_in_date)),
@@ -307,14 +342,29 @@ export function buildDaysFromPackage(pkg: CreatorPackageDetail): BuilderDay[] {
     ? Math.min(...stayDates)
     : flightDates.length
       ? Math.min(...flightDates)
-      : Date.now();
+      : null;
+  const relativeDayMaximum = Math.max(
+    1,
+    ...pkg.days.map((day) => day.day_number ?? 1),
+    ...pkg.activities.map((activity) => activity.day_number ?? 1),
+    ...pkg.flights.map((flight) => flight.day_number ?? 1),
+    ...pkg.hotels.map((hotel) => hotel.check_out_day ?? hotel.check_in_day ?? 1),
+  );
+  const dayCount = Math.max(pkg.duration_days || 1, relativeDayMaximum);
   const dayIndexFor = (dateStr: string | null, fallback = 0) => {
     const parsed = parseDay(dateStr);
-    const raw = parsed === null ? fallback : Math.round((parsed - anchor) / 86_400_000);
-    return Math.min(Math.max(raw, 0), days.length - 1);
+    const raw = parsed === null || anchor === null ? fallback : Math.round((parsed - anchor) / 86_400_000);
+    return Math.min(Math.max(raw, 0), dayCount - 1);
   };
+  const dayIndexFromNumber = (dayNumber: number | null | undefined, fallback = 0) =>
+    Math.min(Math.max((dayNumber ?? fallback + 1) - 1, 0), dayCount - 1);
+  const mediaById = new Map((pkg.media ?? []).map((media) => [media.media_id, media]));
+  const photosFor = (mediaIds: string[] | undefined, fallbackAlt: string): DayPhoto[] =>
+    (mediaIds ?? []).flatMap((mediaId) => {
+      const media = mediaById.get(mediaId);
+      return media ? [{ src: media.url, alt: media.caption || fallbackAlt, media_id: mediaId }] : [];
+    });
 
-  const dayCount = Math.max(pkg.duration_days || 1, 1);
   const dayMeta = new Map(pkg.days.map((d) => [d.day_number, d]));
   const days: BuilderDay[] = Array.from({ length: dayCount }, (_, index) => {
     const dayNumber = index + 1;
@@ -323,59 +373,92 @@ export function buildDaysFromPackage(pkg: CreatorPackageDetail): BuilderDay[] {
       id: `day-${dayNumber}`,
       day: dayNumber,
       title: meta?.title || `Day ${dayNumber}`,
-      // The AI day description is edited in the "Your story" textarea; the
-      // day tab derives its subtitle from story, so meta stays empty here.
-      meta: "",
+      meta: meta?.meta || "",
       items: [],
       story: meta?.summary || "",
-      photos: [],
+      photos: photosFor(meta?.media_ids, `Day ${dayNumber} photo`),
+      date: anchor === null ? null : new Date(anchor + index * 86_400_000).toISOString().slice(0, 10),
     };
   });
 
   let nextId = 0;
-  for (const activity of [...pkg.activities].sort((a, b) => (a.sequence_order ?? 0) - (b.sequence_order ?? 0))) {
+  for (const activity of pkg.activities) {
     nextId += 1;
-    days[dayIndexFor(activity.activity_date)].items.push({
+    const dayIndex = activity.day_number
+      ? dayIndexFromNumber(activity.day_number)
+      : dayIndexFor(activity.activity_date ?? null);
+    days[dayIndex].items.push({
       id: nextId,
-      time: "09:00",
+      time: activity.start_time || "09:00",
       type: "ACTIVITY",
       title: activity.activity_name || "Activity",
       price: `$${activity.price_aud ?? 0}`,
       icon: "star",
       status: "pass",
-      address: activity.city || undefined,
+      category: activity.category || undefined,
+      address: activity.address || activity.city || undefined,
       duration: activity.duration_hours ? String(Math.round(activity.duration_hours * 60)) : undefined,
-      notes: activity.description || undefined,
+      notes: activity.notes || activity.description || undefined,
+      photos: photosFor(activity.media_ids, activity.activity_name || "Activity photo"),
+      sequenceOrder: activity.sequence_order ?? undefined,
+      bookingRequired: activity.booking_required,
+      sourceId: activity.source_id || undefined,
+      city: activity.city || undefined,
+      activityDate: activity.activity_date || undefined,
     });
   }
 
   for (const flight of pkg.flights) {
     nextId += 1;
-    // The flight is placed on its arrival day, at its arrival time in the
-    // destination's zone — the day/time it actually delivers you into,
-    // shown in local Japan (or wherever) time so it lines up with that
-    // day's activities instead of the day/zone it merely left from.
     const scheduleDatetime = flight.arrival_datetime ?? flight.departure_datetime;
-    const time = extractClockTimeInZone(scheduleDatetime, timezoneForIata(flight.destination_iata ?? flight.origin_iata)) ?? "09:00";
-    days[dayIndexFor(scheduleDatetime)].items.push({
+    const isRelative = flight.day_number !== null && flight.day_number !== undefined;
+    const dayIndex = isRelative ? dayIndexFromNumber(flight.day_number) : dayIndexFor(scheduleDatetime ?? null);
+    const legacyTime = extractClockTimeInZone(scheduleDatetime ?? null, timezoneForIata(flight.destination_iata ?? flight.origin_iata));
+    const departureTime = flight.departure_time
+      || extractClockTimeInZone(flight.departure_datetime ?? null, timezoneForIata(flight.origin_iata));
+    const arrivalTime = flight.arrival_time
+      || extractClockTimeInZone(flight.arrival_datetime ?? null, timezoneForIata(flight.destination_iata));
+    days[dayIndex].items.push({
       id: nextId,
-      time,
+      time: isRelative ? departureTime || "09:00" : legacyTime || "09:00",
       type: "FLIGHT",
       title: [flight.origin_iata, flight.destination_iata].filter(Boolean).join(" to ") || flight.airline || "Flight",
+      subtitle: [flight.airline, formatFlightDuration(flight.departure_datetime, flight.arrival_datetime)].filter(Boolean).join(" · ") || undefined,
       price: `$${flight.price_aud ?? 0}`,
       icon: "plane",
       status: "pass",
-      duration: (() => {
-        const minutes = flightDurationMinutes(flight.departure_datetime, flight.arrival_datetime);
-        return minutes === undefined ? undefined : String(minutes);
-      })(),
+      duration: flight.duration_minutes
+        ? String(flight.duration_minutes)
+        : (() => {
+            const minutes = flightDurationMinutes(flight.departure_datetime, flight.arrival_datetime);
+            return minutes === undefined ? undefined : String(minutes);
+          })(),
+      notes: flight.notes || undefined,
+      photos: photosFor(flight.media_ids, flight.airline || "Flight photo"),
+      sequenceOrder: flight.sequence_order ?? undefined,
+      sourceId: flight.source_id || undefined,
+      originIata: flight.origin_iata ?? undefined,
+      destinationIata: flight.destination_iata ?? undefined,
+      airline: flight.airline ?? undefined,
+      flightNumber: flight.flight_number ?? undefined,
+      departureDatetime: flight.departure_datetime ?? undefined,
+      arrivalDatetime: flight.arrival_datetime ?? undefined,
+      departureTime: departureTime ?? undefined,
+      arrivalTime: arrivalTime ?? undefined,
+      cabinClass: flight.cabin_class ?? undefined,
     });
   }
 
   for (const hotel of pkg.hotels) {
-    const checkInIndex = dayIndexFor(hotel.check_in_date);
-    const checkOutIndex = hotel.check_out_date ? dayIndexFor(hotel.check_out_date) : checkInIndex;
-    const nights = Math.max(1, checkOutIndex - checkInIndex);
+    const checkInIndex = hotel.check_in_day
+      ? dayIndexFromNumber(hotel.check_in_day)
+      : dayIndexFor(hotel.check_in_date);
+    const checkOutIndex = hotel.check_out_day
+      ? dayIndexFromNumber(hotel.check_out_day)
+      : hotel.check_out_date ? dayIndexFor(hotel.check_out_date) : checkInIndex;
+    const nights = hotel.check_in_day && hotel.check_out_day
+      ? Math.max(1, checkOutIndex - checkInIndex)
+      : Math.max(1, hotel.nights ?? checkOutIndex - checkInIndex);
     const stayGroupId = `hotel-${hotel.hotel_id ?? hotel.hotel_name ?? nextId}`;
     for (let offset = 0; offset <= nights; offset += 1) {
       const dayIndex = checkInIndex + offset;
@@ -395,6 +478,10 @@ export function buildDaysFromPackage(pkg: CreatorPackageDetail): BuilderDay[] {
         price: `$${hotel.price_per_night_aud ?? 0}/night`,
         icon: "hotel",
         status: "pass",
+        notes: hotel.notes || undefined,
+        photos: photosFor(hotel.media_ids, hotel.hotel_name || "Hotel photo"),
+        sequenceOrder: hotel.sequence_order ?? undefined,
+        sourceId: hotel.source_id || undefined,
         address: hotel.address || hotel.city || undefined,
         checkIn: hotel.check_in_date || undefined,
         checkOut: hotel.check_out_date || undefined,
@@ -402,10 +489,120 @@ export function buildDaysFromPackage(pkg: CreatorPackageDetail): BuilderDay[] {
         starRating: hotel.star_rating || undefined,
         stayMarker: offset === 0 ? "check-in" : isCheckOut ? "check-out" : undefined,
         stayGroupId,
+        hotelName: hotel.hotel_name ?? undefined,
+        city: hotel.city ?? undefined,
       });
     }
   }
 
-  for (const day of days) day.items.sort((a, b) => a.time.localeCompare(b.time));
+  for (const day of days) day.items.sort((a, b) => {
+    if (a.sequenceOrder !== undefined || b.sequenceOrder !== undefined) {
+      return (a.sequenceOrder ?? Number.MAX_SAFE_INTEGER) - (b.sequenceOrder ?? Number.MAX_SAFE_INTEGER);
+    }
+    return a.time.localeCompare(b.time);
+  });
   return days;
 }
+
+const priceNumber = (price: string) => Number(price.replace(/[^0-9.]/g, "")) || null;
+const mediaIds = (photos: DayPhoto[] | undefined) =>
+  (photos ?? []).flatMap((photo) => photo.media_id ? [photo.media_id] : []);
+
+/** Serializes the date-flexible editor state into the proposed package PUT contract. */
+export function buildPackageUpdate(
+  pkg: CreatorPackageDetail,
+  days: BuilderDay[],
+  title: string,
+): UpdatePackageInput {
+  const flat = days.flatMap((day, dayIndex) =>
+    day.items.map((item, itemIndex) => ({ item, dayIndex, itemIndex })));
+
+  const flights = flat
+    .filter(({ item }) => item.type === "FLIGHT" && item.originIata && item.destinationIata)
+    .map(({ item, dayIndex, itemIndex }) => ({
+      origin_iata: item.originIata!,
+      destination_iata: item.destinationIata!,
+      airline: item.airline || "Unknown",
+      flight_number: item.flightNumber || null,
+      departure_time: item.departureTime || (REAL_TIME.test(item.time) ? item.time : null),
+      arrival_time: item.arrivalTime || null,
+      duration_minutes: item.duration ? Number(item.duration) : null,
+      cabin_class: item.cabinClass || null,
+      price_aud: priceNumber(item.price),
+      day_number: dayIndex + 1,
+      sequence_order: itemIndex + 1,
+      notes: item.notes || null,
+      media_ids: mediaIds(item.photos),
+      source_id: item.sourceId || null,
+    }));
+
+  const activities = flat
+    .filter(({ item }) => item.type === "ACTIVITY" || item.type === "CREATOR PICK")
+    .map(({ item, dayIndex, itemIndex }) => ({
+      activity_name: item.title,
+      city: item.city || pkg.destination_city || "",
+      duration_hours: item.duration ? Number(item.duration) / 60 : null,
+      price_aud: priceNumber(item.price),
+      description: item.notes || null,
+      notes: item.notes || null,
+      booking_required: item.bookingRequired ?? null,
+      day_number: dayIndex + 1,
+      sequence_order: itemIndex + 1,
+      start_time: REAL_TIME.test(item.time) ? item.time : null,
+      category: item.category || null,
+      address: item.address || null,
+      media_ids: mediaIds(item.photos),
+      source_id: item.sourceId || null,
+    }));
+
+  const stayGroupIds = [...new Set(flat
+    .filter(({ item }) => item.type === "HOTEL" && item.stayGroupId)
+    .map(({ item }) => item.stayGroupId!))];
+  const hotels = stayGroupIds.flatMap((groupId) => {
+    const group = flat.filter(({ item }) => item.stayGroupId === groupId);
+    const checkIn = group.find(({ item }) => item.stayMarker === "check-in") ?? group[0];
+    const checkOut = group.find(({ item }) => item.stayMarker === "check-out") ?? group[group.length - 1];
+    const base = checkIn.item;
+    if (!base.hotelName) return [];
+    const checkInDay = checkIn.dayIndex + 1;
+    const checkOutDay = checkOut.dayIndex + 1;
+    return [{
+      hotel_name: base.hotelName,
+      star_rating: base.starRating ?? null,
+      city: base.city || pkg.destination_city || "",
+      address: base.address || null,
+      price_per_night_aud: priceNumber(base.price),
+      room_type: base.roomType || null,
+      check_in_day: checkInDay,
+      check_out_day: checkOutDay,
+      nights: Math.max(1, checkOutDay - checkInDay),
+      sequence_order: checkIn.itemIndex + 1,
+      notes: base.notes || null,
+      media_ids: mediaIds(base.photos),
+      source_id: base.sourceId || null,
+    }];
+  });
+
+  return {
+    title,
+    base_price_aud: Math.round(computePackagePrice(days)),
+    description: pkg.description ?? undefined,
+    destination_country: pkg.destination_country ?? undefined,
+    destination_city: pkg.destination_city ?? undefined,
+    duration_days: days.length,
+    max_group_size: pkg.max_group_size ?? undefined,
+    tags: pkg.tags ?? undefined,
+    days: days.map((day, index) => ({
+      day_number: index + 1,
+      title: day.title === `Day ${index + 1}` ? null : day.title || null,
+      summary: day.story || null,
+      meta: day.meta || null,
+      media_ids: mediaIds(day.photos),
+    })),
+    flights,
+    hotels,
+    activities,
+  };
+}
+
+const REAL_TIME = /^\d{2}:\d{2}$/;

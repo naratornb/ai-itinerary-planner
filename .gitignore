@@ -72,3 +72,6 @@ supabase/.temp/
 
 # root has no deps; real lockfile is apps/web/package-lock.json
 /package-lock.json
+
+# Impeccable design-hook local cache/config
+.impeccable/

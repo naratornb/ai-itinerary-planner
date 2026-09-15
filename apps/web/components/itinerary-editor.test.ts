@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { findTimeConflict } from "./itinerary-editor";
+import { findTimeConflict, referenceFlightPresentation } from "./itinerary-editor";
 import type { TimelineItem } from "../lib/itinerary-builder";
 
 function item(overrides: Partial<TimelineItem> & { id: number; time: string }): TimelineItem {
@@ -95,4 +95,33 @@ test("a hotel's own check-in slot is never flagged against a real neighbor, sinc
   ];
 
   assert.equal(findTimeConflict(items, 2, "Check-in", "0"), null);
+});
+
+test("a selected flight is presented as a reference rather than a confirmed booking", () => {
+  const presentation = referenceFlightPresentation(
+    item({
+      id: 1,
+      time: "09:30",
+      type: "FLIGHT",
+      title: "SYD to HND",
+      price: "$850",
+      icon: "plane",
+      originIata: "SYD",
+      destinationIata: "HND",
+      flightNumber: "QF25",
+      departureTime: "09:30",
+      arrivalTime: "17:00",
+      cabinClass: "economy",
+    }),
+  );
+
+  assert.deepEqual(presentation, {
+    label: "REFERENCE FLIGHT",
+    subtitle: "Creator’s suggested option",
+    title: "QF25 · SYD → HND",
+    schedule: "09:30–17:00 · Economy",
+    priceLabel: "Estimated",
+    price: "$850",
+    guidance: "Travellers will see similar flights for their dates and departure airport.",
+  });
 });

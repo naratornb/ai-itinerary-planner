@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   appendItemToDay,
+  buildPackageUpdate,
   buildDaysFromPackage,
   computePackagePrice,
   copilotSuggestionToTimelineItem,
@@ -232,6 +233,190 @@ test("the AI day summary loads into the story textarea, not the day meta", () =>
   assert.equal(day.title, "Arrive");
   assert.equal(day.story, "Check in and wander.");
   assert.equal(day.meta, "");
+});
+
+test("relative day placement and authored details survive a package reload", () => {
+  const pkg = {
+    package_id: "pkg-relative",
+    title: "Date-flexible Kyoto",
+    duration_days: 3,
+    destination_city: "Kyoto",
+    destination_country: "Japan",
+    media: [
+      { media_id: "day-photo", url: "https://cdn.example.com/day.jpg", caption: "Day view" },
+      { media_id: "item-photo", url: "https://cdn.example.com/item.jpg", caption: "Tea ceremony" },
+    ],
+    days: [
+      { id: "d1", day_number: 1, title: "Arrival", summary: "Settle in", meta: "Easy start", media_ids: ["day-photo"] },
+      { id: "d2", day_number: 2, title: "Traditions", summary: "Meet local makers", meta: "Culture" },
+      { id: "d3", day_number: 3, title: "Departure", summary: null, meta: null },
+    ],
+    flights: [{
+      flight_id: "flight-1",
+      origin_iata: "SYD",
+      destination_iata: "KIX",
+      airline: "Example Air",
+      flight_number: "EA1",
+      departure_time: "08:30",
+      arrival_time: "17:00",
+      duration_minutes: 570,
+      cabin_class: "economy",
+      price_aud: 800,
+      day_number: 1,
+      sequence_order: 1,
+      notes: "Morning departure",
+      media_ids: [],
+      source_id: "catalog-flight",
+    }],
+    hotels: [{
+      hotel_id: "hotel-1",
+      hotel_name: "Kyoto House",
+      star_rating: 4,
+      city: "Kyoto",
+      address: "Gion",
+      price_per_night_aud: 250,
+      room_type: "Twin",
+      check_in_day: 1,
+      check_out_day: 3,
+      nights: 2,
+      sequence_order: 2,
+      notes: "Quiet room",
+      media_ids: [],
+      source_id: "catalog-hotel",
+    }],
+    activities: [{
+      activity_id: "activity-1",
+      sequence_order: 1,
+      activity_name: "Tea ceremony",
+      city: "Kyoto",
+      duration_hours: 1.5,
+      price_aud: 90,
+      description: "Hosted by a tea master",
+      booking_required: true,
+      day_number: 2,
+      start_time: "14:30",
+      category: "Culture",
+      address: "Gion district",
+      notes: "Wear comfortable socks",
+      media_ids: ["item-photo"],
+      source_id: "catalog-activity",
+    }],
+  } as unknown as CreatorPackageDetail;
+
+  const days = buildDaysFromPackage(pkg);
+
+  assert.equal(days[0].meta, "Easy start");
+  assert.deepEqual(days[0].photos, [{ src: "https://cdn.example.com/day.jpg", alt: "Day view", media_id: "day-photo" }]);
+  assert.equal(days[0].date, null);
+  assert.deepEqual(days[0].items.map((item) => item.type), ["FLIGHT", "HOTEL"]);
+  assert.equal(days[1].items[0].time, "14:30");
+  assert.equal(days[1].items[0].category, "Culture");
+  assert.equal(days[1].items[0].address, "Gion district");
+  assert.equal(days[1].items[0].notes, "Wear comfortable socks");
+  assert.deepEqual(days[1].items[0].photos, [{ src: "https://cdn.example.com/item.jpg", alt: "Tea ceremony", media_id: "item-photo" }]);
+});
+
+test("package updates use relative days and never manufacture calendar dates", () => {
+  const pkg = {
+    package_id: "pkg-relative",
+    title: "Date-flexible Kyoto",
+    duration_days: 2,
+    destination_city: "Kyoto",
+    destination_country: "Japan",
+    description: "A flexible itinerary",
+    max_group_size: 8,
+    tags: ["culture"],
+    flights: [], hotels: [], activities: [], days: [],
+  } as CreatorPackageDetail;
+  const days: BuilderDay[] = [
+    {
+      id: "day-1", day: 1, title: "Arrival", meta: "Easy start", story: "Settle in", date: null,
+      photos: [{ src: "https://cdn.example.com/day.jpg", alt: "Day", media_id: "day-media" }],
+      items: [{
+        id: 1, time: "08:30", type: "FLIGHT", title: "SYD to KIX", price: "$800", icon: "plane", status: "pass",
+        originIata: "SYD", destinationIata: "KIX", airline: "Example Air", flightNumber: "EA1",
+        arrivalTime: "17:00", duration: "570", notes: "Morning departure", sourceId: "catalog-flight",
+      }, {
+        id: 3, time: "Check-in", type: "HOTEL", title: "Kyoto House", price: "$250/night", icon: "hotel", status: "pass",
+        hotelName: "Kyoto House", starRating: 4, city: "Kyoto", address: "Gion", roomType: "Twin",
+        notes: "Quiet room", sourceId: "catalog-hotel", stayGroupId: "stay-1", stayMarker: "check-in",
+      }],
+    },
+    {
+      id: "day-2", day: 2, title: "Traditions", meta: "Culture", story: "Meet local makers", date: null, photos: [],
+      items: [{
+        id: 2, time: "14:30", type: "ACTIVITY", title: "Tea ceremony", price: "$90", icon: "star", status: "pass",
+        city: "Kyoto", address: "Gion district", duration: "90", category: "Culture", notes: "Wear comfortable socks",
+        photos: [{ src: "https://cdn.example.com/item.jpg", alt: "Tea ceremony", media_id: "item-media" }],
+        sourceId: "catalog-activity",
+      }, {
+        id: 4, time: "Check-out", type: "HOTEL", title: "Kyoto House (Check-out)", price: "$250/night", icon: "hotel", status: "pass",
+        hotelName: "Kyoto House", starRating: 4, city: "Kyoto", address: "Gion", roomType: "Twin",
+        notes: "Quiet room", sourceId: "catalog-hotel", stayGroupId: "stay-1", stayMarker: "check-out",
+      }],
+    },
+  ];
+
+  const update = buildPackageUpdate(pkg, days, "Date-flexible Kyoto");
+
+  assert.deepEqual(update.days?.[0], {
+    day_number: 1,
+    title: "Arrival",
+    summary: "Settle in",
+    meta: "Easy start",
+    media_ids: ["day-media"],
+  });
+  assert.deepEqual(update.flights?.[0], {
+    origin_iata: "SYD",
+    destination_iata: "KIX",
+    airline: "Example Air",
+    flight_number: "EA1",
+    departure_time: "08:30",
+    arrival_time: "17:00",
+    duration_minutes: 570,
+    cabin_class: null,
+    price_aud: 800,
+    day_number: 1,
+    sequence_order: 1,
+    notes: "Morning departure",
+    media_ids: [],
+    source_id: "catalog-flight",
+  });
+  assert.deepEqual(update.activities?.[0], {
+    activity_name: "Tea ceremony",
+    city: "Kyoto",
+    duration_hours: 1.5,
+    price_aud: 90,
+    description: "Wear comfortable socks",
+    notes: "Wear comfortable socks",
+    booking_required: null,
+    day_number: 2,
+    sequence_order: 1,
+    start_time: "14:30",
+    category: "Culture",
+    address: "Gion district",
+    media_ids: ["item-media"],
+    source_id: "catalog-activity",
+  });
+  assert.deepEqual(update.hotels?.[0], {
+    hotel_name: "Kyoto House",
+    star_rating: 4,
+    city: "Kyoto",
+    address: "Gion",
+    price_per_night_aud: 250,
+    room_type: "Twin",
+    check_in_day: 1,
+    check_out_day: 2,
+    nights: 1,
+    sequence_order: 2,
+    notes: "Quiet room",
+    media_ids: [],
+    source_id: "catalog-hotel",
+  });
+  assert.equal("activity_date" in update.activities![0], false);
+  assert.equal("departure_datetime" in update.flights![0], false);
+  assert.equal("check_in_date" in update.hotels![0], false);
+  assert.equal("check_out_date" in update.hotels![0], false);
 });
 
 test("daySubtitle clips the story with an ellipsis and falls back to meta", () => {

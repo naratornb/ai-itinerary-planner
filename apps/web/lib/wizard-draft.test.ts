@@ -41,10 +41,10 @@ test("custom duration uses the supplied day count", () => {
   assert.equal(input.duration_days, 9);
 });
 
-test("custom duration below one clamps to one", () => {
-  for (const days of [0, -3]) {
+test("custom duration below two clamps to two", () => {
+  for (const days of [1, 0, -3]) {
     const input = wizardDraftToPackageInput(draft({ duration: "custom", customDurationDays: days }));
-    assert.equal(input.duration_days, 1);
+    assert.equal(input.duration_days, 2);
   }
 });
 

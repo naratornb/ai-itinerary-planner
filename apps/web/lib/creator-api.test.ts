@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  CreatorApiError,
   createPackage,
   fetchOwnPackage,
   fetchOwnPackages,
@@ -11,6 +12,7 @@ import {
   resolveCreatorProfile,
   signInWithEmail,
   submitPackage,
+  updatePackage,
   SubmitPackageError,
 } from "./creator-api";
 
@@ -61,6 +63,22 @@ test("fetchOwnPackage identifies an expired login", async () => {
   await assert.rejects(
     fetchOwnPackage(fetcher, "http://localhost:8000", "expired-token", "package-1"),
     /sign in again/i,
+  );
+});
+
+test("updatePackage preserves a 409 status so the editor can become read-only", async () => {
+  const fetcher: typeof fetch = async () => new Response(JSON.stringify({
+    message: "This package can no longer be edited.",
+  }), {
+    status: 409,
+    headers: { "Content-Type": "application/json" },
+  });
+
+  await assert.rejects(
+    updatePackage(fetcher, "http://localhost:8000", "token", "package-1", { title: "Updated" }),
+    (error) => error instanceof CreatorApiError
+      && error.status === 409
+      && /no longer be edited/i.test(error.message),
   );
 });
 
@@ -221,6 +239,22 @@ test("formatCreatorPackage uses a concise edit action for drafts", () => {
   });
 
   assert.equal(formatted.rowAction, "Edit");
+});
+
+test("formatCreatorPackage labels an approved package as a preview", () => {
+  const formatted = formatCreatorPackage({
+    package_id: "package-1",
+    title: "Approved trip",
+    destination_country: "Japan",
+    destination_city: "Tokyo",
+    duration_days: 5,
+    base_price_aud: 2485,
+    status: "approved",
+    creator_id: "creator-1",
+    created_at: "2026-08-20T00:00:00Z",
+  });
+
+  assert.equal(formatted.rowAction, "Preview");
 });
 
 test("resolveCreatorProfile prefers the database profile", () => {

@@ -8,6 +8,18 @@ type AuthClient = {
   }>;
 };
 
+export class CreatorApiError extends Error {
+  constructor(message: string, public readonly status: number) {
+    super(message);
+    this.name = "CreatorApiError";
+  }
+}
+
+async function creatorApiError(response: Response, fallback: string): Promise<CreatorApiError> {
+  const body = await response.json().catch(() => null);
+  return new CreatorApiError(body?.message || fallback, response.status);
+}
+
 export type CreatorPackage = {
   package_id: string;
   title: string;
@@ -25,38 +37,60 @@ export type CreatorPackage = {
 
 export type CreatorHotelDetail = {
   hotel_id: string | null;
+  sequence_order?: number | null;
   hotel_name: string | null;
   star_rating: number | null;
   city: string | null;
   address: string | null;
-  check_in_date: string | null;
-  check_out_date: string | null;
+  check_in_date?: string | null;
+  check_out_date?: string | null;
   price_per_night_aud: number | null;
   room_type: string | null;
+  check_in_day?: number | null;
+  check_out_day?: number | null;
+  nights?: number | null;
+  notes?: string | null;
+  media_ids?: string[];
+  source_id?: string | null;
 };
 
 export type CreatorFlightDetail = {
   flight_id: string | null;
+  day_number?: number | null;
+  sequence_order?: number | null;
   airline: string | null;
   flight_number: string | null;
   origin_iata: string | null;
   destination_iata: string | null;
-  departure_datetime: string | null;
-  arrival_datetime: string | null;
+  departure_datetime?: string | null;
+  arrival_datetime?: string | null;
+  departure_time?: string | null;
+  arrival_time?: string | null;
+  duration_minutes?: number | null;
   cabin_class: string | null;
   price_aud: number | null;
+  notes?: string | null;
+  media_ids?: string[];
+  source_id?: string | null;
 };
 
 export type CreatorActivityDetail = {
   activity_id: string | null;
   sequence_order: number | null;
   activity_name: string | null;
-  activity_date: string | null;
+  activity_date?: string | null;
   city: string | null;
   duration_hours: number | null;
   price_aud: number | null;
   description: string | null;
   booking_required: boolean | null;
+  day_number?: number | null;
+  start_time?: string | null;
+  category?: string | null;
+  address?: string | null;
+  notes?: string | null;
+  media_ids?: string[];
+  source_id?: string | null;
 };
 
 export type CreatorPackageDay = {
@@ -64,21 +98,34 @@ export type CreatorPackageDay = {
   day_number: number | null;
   title: string | null;
   summary: string | null;
+  meta?: string | null;
+  media_ids?: string[];
+};
+
+export type CreatorMediaDetail = {
+  media_id: string;
+  url: string;
+  caption?: string | null;
 };
 
 export type CreatorPackageDetail = {
   package_id: string;
   title: string;
   duration_days: number;
+  base_price_aud?: number;
   destination_city?: string | null;
   destination_country?: string | null;
-  // Already returned by GET /packages/{id} (TravelPackageDetail in
-  // apps/api/app/packages/schemas.py) — just missing from this type before.
+  // Present on the real GET /packages/{id} response (TravelPackageDetail in
+  // apps/api/app/packages/schemas.py) but unused until now, so left untyped.
   description?: string | null;
+  max_group_size?: number | null;
+  tags?: string[];
+  status?: string;
   flights: CreatorFlightDetail[];
   hotels: CreatorHotelDetail[];
   activities: CreatorActivityDetail[];
   days: CreatorPackageDay[];
+  media?: CreatorMediaDetail[];
 };
 
 type ProfileRow = {
@@ -111,13 +158,14 @@ export function resolveCreatorProfile(
   };
 }
 
-const STATUS_LABELS: Record<string, string> = {
+export const STATUS_LABELS: Record<string, string> = {
   draft: "Draft",
   pending_review: "Under review",
   approved: "Approved",
   rejected: "Rejected",
   live: "Live",
   archived: "Archived",
+  not_editable: "No longer editable",
 };
 
 export function formatCreatorPackage(pkg: CreatorPackage) {
@@ -133,7 +181,11 @@ export function formatCreatorPackage(pkg: CreatorPackage) {
     }).format(pkg.base_price_aud),
     status: STATUS_LABELS[pkg.status] ?? pkg.status,
     statusKey: pkg.status,
-    rowAction: pkg.status === "draft" || pkg.status === "rejected" ? "Edit" : "View",
+    rowAction: pkg.status === "draft" || pkg.status === "rejected"
+      ? "Edit"
+      : pkg.status === "approved"
+        ? "Preview"
+        : "View",
   };
 }
 
@@ -230,15 +282,28 @@ export async function fetchOwnPackages(
 }
 
 // Mirrors FlightInput/HotelInput/ActivityInput in apps/api/app/packages/schemas.py.
+// day_number/sequence_order/start_time/category/address/source_id are not
+// accepted by the backend yet (proposed in the save/submit handover doc) —
+// sent ahead of that landing so nothing has to change here once it does.
 export type FlightInput = {
   origin_iata: string;              // exactly 3 chars
   destination_iata: string;         // exactly 3 chars
   airline: string;
   flight_number?: string | null;
-  departure_datetime: string;
-  arrival_datetime: string;
+  // Legacy dated inventory fields remain readable, but package templates use
+  // relative days and clock times because the traveller chooses the dates.
+  departure_datetime?: string | null;
+  arrival_datetime?: string | null;
+  departure_time?: string | null;
+  arrival_time?: string | null;
+  duration_minutes?: number | null;
   cabin_class?: string | null;
   price_aud?: number | null;
+  day_number?: number;
+  sequence_order?: number;
+  notes?: string | null;
+  media_ids?: string[];
+  source_id?: string | null;
 };
 
 export type HotelInput = {
@@ -246,26 +311,43 @@ export type HotelInput = {
   star_rating?: number | null;      // 1–5
   city: string;
   address?: string | null;
-  check_in_date: string;            // YYYY-MM-DD
-  check_out_date: string;           // YYYY-MM-DD
+  check_in_date?: string | null;     // legacy dated package rows
+  check_out_date?: string | null;    // legacy dated package rows
   price_per_night_aud?: number | null;
   room_type?: string | null;
+  check_in_day?: number;
+  check_out_day?: number;
+  nights?: number;
+  sequence_order?: number;
+  notes?: string | null;
+  media_ids?: string[];
+  source_id?: string | null;
 };
 
 export type ActivityInput = {
   activity_name: string;
-  activity_date: string;            // YYYY-MM-DD
+  activity_date?: string | null;     // legacy dated package rows
   city: string;
   duration_hours?: number | null;
   price_aud?: number | null;
   description?: string | null;
   booking_required?: boolean | null;
+  day_number?: number;
+  sequence_order?: number;
+  start_time?: string | null;
+  category?: string | null;
+  address?: string | null;
+  notes?: string | null;
+  media_ids?: string[];
+  source_id?: string | null;
 };
 
 export type PackageDayInput = {
   day_number: number;
   title: string | null;
   summary: string | null;
+  meta?: string | null;
+  media_ids?: string[];
 };
 
 export type CreatePackageInput = {
@@ -288,7 +370,19 @@ export type UpdatePackageInput = {
   // apps/api/app/packages/schemas.py) — just unused by any caller before.
   description?: string;
   base_price_aud?: number;
+  destination_country?: string;
+  destination_city?: string;
+  duration_days?: number;
+  max_group_size?: number;
+  tags?: string[];
   days?: PackageDayInput[];
+  // Not yet persisted by PUT /packages/{id} — the backend still only reads
+  // metadata + day title/summary and silently ignores everything else here.
+  // Sent anyway so the editor round-trips real content once that ships;
+  // see the save/submit handover doc.
+  flights?: FlightInput[];
+  hotels?: HotelInput[];
+  activities?: ActivityInput[];
 };
 
 export async function createPackage(
@@ -307,7 +401,7 @@ export async function createPackage(
   });
   if (response.status === 401) throw new Error("Your session expired. Please sign in again.");
   if (!response.ok) throw new Error("Unable to create this package. Please try again.");
-  return response.json() as Promise<{ package_id: string }>;
+  return response.json() as Promise<CreatorPackageDetail>;
 }
 
 export async function fetchOwnPackage(
@@ -344,13 +438,28 @@ export async function updatePackage(
       body: JSON.stringify(input),
     },
   );
-  if (response.status === 401) throw new Error("Your session expired. Please sign in again.");
+  if (response.status === 401) throw new CreatorApiError("Your session expired. Please sign in again.", 401);
   if (!response.ok) {
-    // e.g. 409 PACKAGE_NOT_EDITABLE on a submitted package — "try again" would lie.
-    const body = await response.json().catch(() => null);
-    throw new Error(body?.message || "Unable to save this package. Please try again.");
+    throw await creatorApiError(response, "Unable to save this package. Please try again.");
   }
-  return response.json() as Promise<{ package_id: string }>;
+  return response.json() as Promise<CreatorPackageDetail>;
+}
+
+export async function deletePackage(
+  fetcher: typeof fetch,
+  apiUrl: string,
+  accessToken: string,
+  packageId: string,
+) {
+  const response = await fetcher(
+    `${apiUrl.replace(/\/$/, "")}/packages/${encodeURIComponent(packageId)}`,
+    { method: "DELETE", headers: { Authorization: `Bearer ${accessToken}` } },
+  );
+  if (response.status === 401) throw new Error("Your session expired. Please sign in again.");
+  if (response.status === 204 || response.ok) return;
+  // e.g. 409 PACKAGE_NOT_DELETABLE if the status changed since the page loaded.
+  const body = await response.json().catch(() => null);
+  throw new Error(body?.message || "Unable to delete this package. Please try again.");
 }
 
 // Mirrors MediaItem/MediaUploadResponse in apps/api/app/media/schemas.py.

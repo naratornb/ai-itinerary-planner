@@ -3,13 +3,13 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
-import ItineraryEditor from "./itinerary-editor";
-import { fetchOwnPackage, type CreatorPackageDetail } from "../lib/creator-api";
+import { fetchOwnPackage, STATUS_LABELS, type CreatorPackageDetail } from "../lib/creator-api";
 import { supabase } from "../lib/supabase/client";
+import { PackageDetailView } from "./marketplace-detail-screen";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-export default function PackageEditorScreen({ packageId }: { packageId: string }) {
+export default function CreatorPackagePreviewScreen({ packageId }: { packageId: string }) {
   const router = useRouter();
   const [pkg, setPackage] = useState<CreatorPackageDetail | null>(null);
   const [error, setError] = useState("");
@@ -27,7 +27,7 @@ export default function PackageEditorScreen({ packageId }: { packageId: string }
         if (!cancelled) setPackage(result);
       } catch (loadError) {
         if (cancelled) return;
-        const message = loadError instanceof Error ? loadError.message : "Unable to load this package.";
+        const message = loadError instanceof Error ? loadError.message : "Unable to load this package preview.";
         setError(message);
         if (message.includes("sign in again")) router.replace("/login");
       }
@@ -35,15 +35,15 @@ export default function PackageEditorScreen({ packageId }: { packageId: string }
     return () => { cancelled = true; };
   }, [packageId, router]);
 
-  if (error) return <main className="editor-load-state" role="alert"><h1>Unable to open package</h1><p>{error}</p></main>;
-  if (!pkg) return <main className="editor-load-state" aria-busy="true"><span className="editor-load-spinner" aria-hidden="true" /><p>Loading package…</p></main>;
+  if (error) return <main className="editor-load-state" role="alert"><h1>Unable to open preview</h1><p>{error}</p></main>;
+  if (!pkg) return <main className="editor-load-state" aria-busy="true"><span className="editor-load-spinner" aria-hidden="true" /><p>Loading preview…</p></main>;
 
   return (
-    <ItineraryEditor
+    <PackageDetailView
       pkg={pkg}
+      backLabel="Back to dashboard"
       onBack={() => router.push("/dashboard")}
-      onSessionExpired={() => router.replace("/login")}
-      onContinueToReview={() => router.push(`/packages/editor/${encodeURIComponent(packageId)}/review`)}
+      previewLabel={`${STATUS_LABELS[pkg.status ?? ""] ?? pkg.status ?? "Approved"} creator preview`}
     />
   );
 }
