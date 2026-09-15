@@ -330,6 +330,14 @@ Evaluate the package ONLY against the contextual rules listed below.
 Be strict and consistent: the same input must always produce the same output.
 Return empty arrays when no issues are found — never invent problems.
 
+In addition to the numbered rules, re-check the ENTIRE package text (trip name, hotel name,
+activity names, descriptions — every field) for profanity, slurs, drug references, or violent/
+threatening language. This is a second-pass safety net behind a static keyword filter, so focus on
+what a fixed word list would miss: misspellings, leetspeak substitutions (e.g. "b4d", "fvck"),
+spaced-out letters, or other obvious evasions of an obscene/offensive word. Do not flag mild,
+borderline, or merely blunt language (e.g. "kill some time", "killer view") — only genuine
+profanity or offensive content you are confident about.
+
 Do NOT flag the gap between a flight's arrival time and the day's first activity (post-landing
 transfer/immigration/customs time) under any rule, including general or route-efficiency judgment
 calls. That check is already handled deterministically elsewhere with a fixed policy: domestic
@@ -372,8 +380,10 @@ Return ONLY a valid JSON object — no markdown, no explanation:
     "grammar_score": <0.0-1.0, rate quality of activity descriptions>,
     "completeness_score": <0.0-1.0, rate how complete the itinerary feels>,
     "feasibility_score": <0.0-1.0, based only on the contextual rules above>,
-    "illegal_act": <true only if an activity is clearly illegal or unethical, else false>
+    "illegal_act": <true only if an activity is clearly illegal or unethical, else false>,
+    "contains_profanity": <true only if you found profanity/offensive content missed by a static keyword filter, else false>
   },
+  "profanity_evidence": "<short quote of the offending text if contains_profanity is true, else empty string>",
   "summary": "<one sentence overview of the contextual check>"
 }`;
 }

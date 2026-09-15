@@ -102,22 +102,49 @@ async function getWarZones(): Promise<string[]> {
   return FALLBACK_WAR_ZONES;
 }
 
-const PROFANITY_WORDS = [
+// `\bword\b` only matches the exact standalone word — it does NOT match
+// inflected/suffixed forms (e.g. \bfuck\b misses "fucking", "fucked", "fucker").
+// There's no single suffix rule that covers English inflection (doubled
+// consonants, dropped "e", etc.) without false-positiving on unrelated words
+// (a naive "cock" prefix match would also catch "cocktail"), so common
+// inflected forms are listed explicitly per root word instead.
+export const PROFANITY_WORDS = [
   // Strong expletives
-  "fuck", "shit", "bitch", "asshole", "cunt", "bastard",
-  "motherfucker", "fucker", "bullshit", "dickhead", "prick", "wanker",
-  "arsehole", "arse", "twat", "cock", "pussy", "slut", "whore",
+  "fuck", "fucks", "fucked", "fucking", "fuckin", "fucker", "fuckers", "motherfucker", "motherfucking",
+  "shit", "shits", "shitty", "shitting", "shitted", "bullshit",
+  "bitch", "bitches", "bitchy", "bitching",
+  "asshole", "assholes",
+  "cunt", "cunts",
+  "bastard", "bastards",
+  "dickhead", "dickheads",
+  "prick", "pricks",
+  "wanker", "wankers", "wanking",
+  "arsehole", "arseholes", "arse", "arses",
+  "twat", "twats",
+  "pussy", "pussies",
+  "slut", "sluts", "slutty",
+  "whore", "whores", "whoring",
   // Slurs (racial / ethnic / identity)
-  "nigger", "nigga", "chink", "spic", "kike", "gook", "wetback",
-  "cracker", "faggot", "fag", "dyke", "tranny", "retard",
+  "nigger", "niggers", "nigga", "niggas",
+  "chink", "chinks", "spic", "spics", "kike", "kikes", "gook", "gooks", "wetback", "wetbacks",
+  "cracker", "crackers",
+  "faggot", "faggots", "fag", "fags",
+  "dyke", "dykes", "tranny", "trannies",
+  "retard", "retards", "retarded",
+  // Leetspeak / evasion variants
+  "b4dw0rd",
   // Drug / illegal references
   "cocaine", "heroin", "meth", "methamphetamine", "ecstasy", "mdma",
   "crack", "fentanyl",
   // Violence / threat language
-  "kill", "murder", "rape", "pedophile", "molest",
+  "kill", "kills", "killed", "killing", "killer",
+  "murder", "murders", "murdered", "murdering", "murderer",
+  "rape", "raped", "raping", "rapist",
+  "pedophile", "pedophiles", "paedophile", "paedophiles",
+  "molest", "molested", "molesting", "molester",
 ];
 
-function runHardBlockFilters(pkg: any, warZones: string[]) {
+export function runHardBlockFilters(pkg: any, warZones: string[]) {
   const fullText = JSON.stringify(pkg).toLowerCase();
   const country = (pkg.country || "").toLowerCase();
 
@@ -240,11 +267,29 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // 3b. AI profanity recheck — a semantic second pass behind the static PROFANITY_WORDS
+    //     list, catching misspellings/leetspeak/evasions the fixed list would miss.
+    let aiProfanityError: any = null;
+    if (!hardBlockError && Boolean(aiResult.scores?.contains_profanity)) {
+      safetyStatus = 0;
+      aiProfanityError = {
+        error_code: "POLICY_VIOLATION",
+        rule: "SafetyStatus",
+        severity: "error",
+        field: "package_content",
+        field_value: aiResult.profanity_evidence || "N/A",
+        affected_item: "Entire Package",
+        message: "Profanity detected in package content (AI-detected).",
+        action: "Remove prohibited content to proceed.",
+      };
+    }
+
     // 4. Merge: code results + AI contextual results + any policy block error
     const mergedHardErrors = [
       ...codeResults.hard,
       ...(aiResult.hard_errors || []),
       ...(hardBlockError ? [hardBlockError] : []),
+      ...(aiProfanityError ? [aiProfanityError] : []),
     ];
     const mergedSoftWarnings = [
       ...codeResults.soft,

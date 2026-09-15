@@ -65,6 +65,14 @@ test("buildSystemPrompt renders the supplied rule list", () => {
   assert.match(prompt, /R14 \(Similar Duplicate Activity\): Test description\./);
 });
 
+test("buildSystemPrompt asks the AI to recheck for profanity missed by a static filter", () => {
+  const prompt = buildSystemPrompt(FALLBACK_RULES);
+
+  assert.match(prompt, /re-check the ENTIRE package text/i);
+  assert.match(prompt, /"contains_profanity"/);
+  assert.match(prompt, /"profanity_evidence"/);
+});
+
 test("FALLBACK_RULES still covers every contextual rule code previously hardcoded", () => {
   const codes = FALLBACK_RULES.map((r) => r.rule_code);
   assert.deepEqual(codes, ["R3", "R4", "R6", "R8", "R10", "R11", "R12", "R14", "R15"]);
