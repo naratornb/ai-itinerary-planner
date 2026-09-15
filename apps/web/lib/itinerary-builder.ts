@@ -103,7 +103,12 @@ export type DaySummary = {
   hotelName: string | null;
 };
 
-const STAY_LABEL_SUFFIX = /\s*\((Check-in|Check-out|Night \d+ of \d+)\)\s*$/i;
+export const STAY_LABEL_SUFFIX = /\s*\((Check-in|Check-out|Night \d+ of \d+)\)\s*$/i;
+
+// Matches a genuine "HH:MM" clock time, as opposed to a hotel row's booking-only
+// label ("Check-in" / "Overnight stay" / "Check-out"). Mirrors the same pattern used
+// in itinerary-editor.tsx's REAL_TIME_PATTERN.
+const REAL_TIME_PATTERN = /^\d{1,2}:\d{2}/;
 
 /** Collapsed-card rollup for the Finalise & Review page's day timeline. */
 export function summarizeDay(day: BuilderDay): DaySummary {
@@ -495,7 +500,16 @@ export function buildDaysFromPackage(pkg: CreatorPackageDetail): BuilderDay[] {
     }
   }
 
+  // sequenceOrder comes from the DB and can go stale relative to `time` (e.g. after a
+  // flight's local time gets corrected without its sequence_order being re-derived) —
+  // so when BOTH items have a genuine clock time, that's trusted as ground truth over
+  // sequenceOrder. sequenceOrder is only the tiebreaker for items that don't have a
+  // real time to compare (hotel Check-in/Overnight stay/Check-out rows), since sorting
+  // "Check-in" vs "Check-out" lexicographically wouldn't reflect their intended order.
   for (const day of days) day.items.sort((a, b) => {
+    const aReal = REAL_TIME_PATTERN.test(a.time);
+    const bReal = REAL_TIME_PATTERN.test(b.time);
+    if (aReal && bReal) return a.time.localeCompare(b.time);
     if (a.sequenceOrder !== undefined || b.sequenceOrder !== undefined) {
       return (a.sequenceOrder ?? Number.MAX_SAFE_INTEGER) - (b.sequenceOrder ?? Number.MAX_SAFE_INTEGER);
     }
