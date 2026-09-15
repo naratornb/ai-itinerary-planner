@@ -475,6 +475,25 @@ test("computePackagePrice of no days is 0", () => {
   assert.equal(computePackagePrice([]), 0);
 });
 
+test("a creator pick's price never counts toward the package total", () => {
+  const days: BuilderDay[] = [
+    {
+      id: "day-1",
+      day: 1,
+      title: "Mixed",
+      meta: "",
+      items: [
+        { ...firstItem, id: 1, price: "$50" },
+        { ...firstItem, id: 2, type: "CREATOR PICK", price: "$999" },
+      ],
+      story: "",
+      photos: [],
+    },
+  ];
+
+  assert.equal(computePackagePrice(days), 50);
+});
+
 test("timezoneForIata knows Sydney and Tokyo, and falls back to Sydney for an unknown code", () => {
   assert.equal(timezoneForIata("SYD"), "Australia/Sydney");
   assert.equal(timezoneForIata("NRT"), "Asia/Tokyo");

@@ -75,12 +75,14 @@ export type DayPhoto = { src: string; alt: string; media_id?: string };
 /**
  * A multi-night stay renders one row per night *plus* a check-out row, and
  * every row carries the same per-night price — so the check-out row would
- * bill an extra night it never covers.
+ * bill an extra night it never covers. Creator picks are a free personal
+ * recommendation, not a bookable package inclusion, so their price never
+ * counts toward what the traveller pays or the creator earns.
  */
 export function computePackagePrice(days: BuilderDay[]): number {
   return days
     .flatMap((day) => day.items)
-    .filter((item) => item.stayMarker !== "check-out")
+    .filter((item) => item.stayMarker !== "check-out" && item.type !== "CREATOR PICK")
     .reduce((sum, item) => sum + (Number(item.price.replace(/[^0-9.]/g, "")) || 0), 0);
 }
 
