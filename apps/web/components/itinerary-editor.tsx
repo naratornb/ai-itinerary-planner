@@ -1104,6 +1104,21 @@ export default function ItineraryEditor({
   useEffect(() => {
     if (addFlow !== "flight") return;
     const timer = window.setTimeout(async () => {
+      // flights.destination_country is only populated for some routes, so a
+      // country-level destination (e.g. "Iceland", picked from the wizard's
+      // destination catalog) can't always be matched directly. activities
+      // and hotels both carry a reliable city+country pair, so resolve the
+      // real city through them first — a live lookup against the actual
+      // catalog beats a hand-maintained country→city table.
+      let destinationCity = activeDayCity;
+      if (activeDayCity) {
+        const { data: cityLookup } = await supabase
+          .from("activities")
+          .select("city")
+          .or(`city.eq.${activeDayCity},country.eq.${activeDayCity}`)
+          .limit(1);
+        if (cityLookup?.[0]?.city) destinationCity = cityLookup[0].city;
+      }
       let query = supabase
         .from("flights")
         .select("flight_id,airline,flight_number,origin,destination,departure_datetime,arrival_datetime,cabin_class,price_aud")
@@ -1112,7 +1127,7 @@ export default function ItineraryEditor({
       // Unlike activities/hotels' plain city columns, flights.destination is
       // stored as "City (CODE)" (e.g. "Kyoto (UKY)") — an exact match against
       // a bare city name never hits, so this needs ilike instead.
-      if (activeDayCity) query = query.or(`destination.ilike.%${activeDayCity}%,destination_country.ilike.%${activeDayCity}%`);
+      if (destinationCity) query = query.or(`destination.ilike.%${destinationCity}%,destination_country.ilike.%${destinationCity}%`);
       const { data, error } = await query;
       setCatalogFlights(error || !data ? [] : data.map((row) => ({
         flight_id: row.flight_id,
