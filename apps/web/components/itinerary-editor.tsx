@@ -491,6 +491,8 @@ type AddStopFlowProps = {
   availableHotels: CreatorHotelDetail[];
   selectedHotelIndex: number | null;
   setSelectedHotelIndex: Dispatch<SetStateAction<number | null>>;
+  moreHotelsOpen: boolean;
+  setMoreHotelsOpen: Dispatch<SetStateAction<boolean>>;
   selectedHotelOption: CreatorHotelDetail | undefined;
   hotelCheckInDayId: string | null;
   setHotelCheckInDayId: Dispatch<SetStateAction<string | null>>;
@@ -559,18 +561,21 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
                     <div className="inline-add-head"><button className="inline-back" onClick={() => p.setAddFlow("type")} aria-label="Back to item types">‹</button><h4>Add hotel</h4><button onClick={() => p.setAddingAfter(null)}>Cancel</button></div>
                     <p className="database-note">Hotels are supplied by Travel Marketplace and cannot be edited here.</p>
                     <div className="hotel-choice-grid" role="radiogroup" aria-label="Available hotels">
-                      {p.availableHotels.map((hotel, index) => <button key={hotel.hotel_id ?? hotel.hotel_name ?? index} type="button" role="radio" aria-checked={p.selectedHotelIndex === index} className={`hotel-choice-card${p.selectedHotelIndex === index ? " selected" : ""}`} onClick={() => p.setSelectedHotelIndex(index)}>
-                        <span className="hotel-choice-copy">
-                          <strong>{hotel.hotel_name ?? "Hotel"}</strong>
-                          {hotel.star_rating != null && <span className="hotel-star-rating">{formatHotelStarRating(hotel.star_rating)}</span>}
-                          <small>{hotel.city ?? "Not provided"}</small>
-                          {hotel.room_type && <span>{hotel.room_type}</span>}
-                          <b>{hotel.price_per_night_aud != null ? `$${hotel.price_per_night_aud.toLocaleString("en-US")}/night` : "Price not provided"}</b>
-                        </span>
-                        <span className="hotel-choice-check" aria-hidden="true">{p.selectedHotelIndex === index ? <Icon name="check" size={20} /> : ""}</span>
+                      {p.availableHotels.map((hotel, index) => (index < 3 || p.moreHotelsOpen) && <button key={hotel.hotel_id ?? hotel.hotel_name ?? index} type="button" role="radio" aria-checked={p.selectedHotelIndex === index} title={hotel.star_rating != null ? formatHotelStarRating(hotel.star_rating) : undefined} className={`hotel-choice-card${p.selectedHotelIndex === index ? " selected" : ""}`} onClick={() => p.setSelectedHotelIndex(index)}>
+                        {hotel.star_rating != null && <span className="item-type-pill item-type-pill-hotel">{Math.round(hotel.star_rating)}-star</span>}
+                        <span className="hotel-choice-check" aria-hidden="true">{p.selectedHotelIndex === index && <Icon name="check" size={16} />}</span>
+                        <strong>{hotel.hotel_name ?? "Hotel"}</strong>
+                        <small><Icon name="pin" size={12} />{hotel.city ?? "Not provided"}{hotel.room_type ? ` · ${hotel.room_type}` : ""}</small>
+                        <span className="hotel-choice-from"><small>FROM</small><b>{hotel.price_per_night_aud != null ? `$${hotel.price_per_night_aud.toLocaleString("en-US")}/night` : "Price not provided"}</b></span>
                       </button>)}
                       {p.availableHotels.length === 0 && <p>No hotels found for this destination.</p>}
                     </div>
+                    {p.availableHotels.length > 3 && (
+                      <button className="activity-more-toggle" onClick={() => p.setMoreHotelsOpen((open) => !open)} aria-expanded={p.moreHotelsOpen}>
+                        <span className="status-chevron"><Icon name="chevron" size={14} /></span>
+                        {p.moreHotelsOpen ? "Show fewer hotels" : `See ${p.availableHotels.length - 3} more`}
+                      </button>
+                    )}
                     {p.selectedHotelOption && <>
                       <div className="hotel-confirm-card">
                         <div className="hotel-confirm-top">
@@ -751,6 +756,7 @@ export default function ItineraryEditor({
   const [flightSearch, setFlightSearch] = useState("");
   const [selectedFlightIndex, setSelectedFlightIndex] = useState<number | null>(null);
   const [selectedHotelIndex, setSelectedHotelIndex] = useState<number | null>(null);
+  const [moreHotelsOpen, setMoreHotelsOpen] = useState(false);
   const [hotelNotes, setHotelNotes] = useState("");
   const [hotelCheckInDayId, setHotelCheckInDayId] = useState<string | null>(null);
   const [hotelCheckOutDayId, setHotelCheckOutDayId] = useState<string | null>(null);
@@ -1024,6 +1030,7 @@ export default function ItineraryEditor({
   // happened to attach to the package at creation time.
   useEffect(() => {
     if (addFlow !== "hotel") return;
+    setMoreHotelsOpen(false);
     void (async () => {
       let query = supabase
         .from("hotels")
@@ -1737,6 +1744,7 @@ export default function ItineraryEditor({
     addSelectedFlight,
     availableHotels: catalogHotels ?? hotels,
     selectedHotelIndex, setSelectedHotelIndex,
+    moreHotelsOpen, setMoreHotelsOpen,
     selectedHotelOption,
     hotelCheckInDayId, setHotelCheckInDayId,
     setHotelCheckOutDayId,
