@@ -1429,16 +1429,17 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
 
                 {/* Row action */}
                 <div style={{ textAlign: dashboardActionAlignment.buttons, display: "flex", justifyContent: dashboardActionAlignment.buttons, gap: 8 }}>
-                  <Link className="dashboard-row-action" href={packageHref}>
-                    {pkg.rowAction === "Edit" && <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>}
-                    {pkg.rowAction}
+                  <Link className="dashboard-row-action" href={packageHref} aria-label={`${pkg.rowAction} ${pkg.name}`} title={pkg.rowAction}>
+                    {pkg.rowAction === "Edit"
+                      ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>
+                      : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z" /><circle cx="12" cy="12" r="3" /></svg>}
                   </Link>
                   {pkg.statusKey === "draft" && (
                     <button className="dashboard-row-action dashboard-row-action-delete"
+                      aria-label={`Delete ${pkg.name}`} title="Delete"
                       onClick={() => { setDeleteError(""); setPendingDelete({ id: pkg.id, name: pkg.name }); }}
                     >
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><path d="M19 6l-.867 12.142A2 2 0 0 1 16.138 20H7.862a2 2 0 0 1-1.995-1.858L5 6" /><path d="M10 11v6M14 11v6" /></svg>
-                      Delete
                     </button>
                   )}
                 </div>
@@ -1611,7 +1612,7 @@ export function CreatorNav({ onNav }: { onNav: (s: Screen) => void }) {
   );
 }
 
-function CreatorCreationSubnav({ confirmBeforeLeaving = false, backHref, backLabel }: { confirmBeforeLeaving?: boolean; backHref?: string; backLabel?: string }) {
+function CreatorCreationSubnav({ confirmBeforeLeaving = false, backHref, backLabel, icon = "chevron" }: { confirmBeforeLeaving?: boolean; backHref?: string; backLabel?: string; icon?: "chevron" | "x" }) {
   return (
     <nav
       aria-label="Package creation navigation"
@@ -1636,7 +1637,7 @@ function CreatorCreationSubnav({ confirmBeforeLeaving = false, backHref, backLab
           }}
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="m15 18-6-6 6-6" />
+            {icon === "x" ? <path d="M18 6 6 18M6 6l12 12" /> : <path d="m15 18-6-6 6-6" />}
           </svg>
           {backLabel ?? creatorDashboardBackLink.label}
         </Link>
@@ -2552,7 +2553,7 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
 
   return (
     <div className="ai-wizard-screen" style={{ minHeight: "calc(100vh - 64px)", background: "#FAFAFA", display: "flex", flexDirection: "column" }}>
-      <CreatorCreationSubnav confirmBeforeLeaving={hasWizardProgress && !isLoading} backHref={editBackHref} backLabel={editPackageId ? "Back to editor" : undefined} />
+      <CreatorCreationSubnav confirmBeforeLeaving={hasWizardProgress && !isLoading} backHref={editBackHref} backLabel={editPackageId ? "Cancel" : undefined} icon={editPackageId ? "x" : "chevron"} />
       {isLoading ? (
         <PackageGenerationLoader elapsedMs={generationElapsedMs} complete={generationComplete} />
       ) : (

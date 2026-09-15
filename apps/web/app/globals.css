@@ -309,7 +309,10 @@ button:focus-visible, textarea:focus-visible { outline: 3px solid var(--fc-focus
 .package-title-input { width: min(560px,45vw); height: 38px; margin: 3px auto 0; padding: 0 10px; display: block; border: 1px solid var(--fc-blue); border-radius: 7px; background: #fff; color: var(--fc-ink); font-family: var(--fc-font-display); font-size: 21px; line-height: 1.25; font-weight: 700; text-align: center; outline: 3px solid var(--fc-focus-ring); }
 .editor-kicker { display: block; color: var(--fc-red); font-size: 10px; line-height: 14px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
 .text-action { border: 0; background: transparent; color: var(--fc-secondary); font-weight: 600; cursor: pointer; }
-.back-action { justify-self: start; display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0; }
+.editor-topbar-start { justify-self: start; display: flex; align-items: center; gap: 12px; }
+.back-action { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0; }
+.editor-dashboard-link { flex: 0 0 auto; width: 38px; height: 38px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--fc-border); border-radius: 8px; color: var(--fc-secondary); text-decoration: none; transition: border-color 140ms ease-out, background 140ms ease-out, color 140ms ease-out; }
+.editor-dashboard-link:hover { border-color: #9e9e9e; background: var(--fc-surface-subtle); color: var(--fc-ink); }
 .editor-actions { justify-self: end; display: flex; gap: 8px; }
 .quiet-button, .publish-button { min-height: 42px; padding: 0 18px; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; transition: background 140ms ease-out, border-color 140ms ease-out; }
 .quiet-button { background: #fff; color: var(--fc-ink); border: 1px solid var(--fc-border); }
@@ -345,6 +348,11 @@ button:focus-visible, textarea:focus-visible { outline: 3px solid var(--fc-focus
 .add-day svg { margin: auto; }
 .trip-length { flex: 0 0 auto; padding-left: 28px; border-left: 1px solid var(--fc-border); display: flex; gap: 9px; font-size: 20px; color: var(--fc-secondary); }
 .trip-length strong { color: var(--fc-ink); }
+.trip-setup-summary { flex: 0 1 auto; min-width: 0; max-width: 180px; padding-left: 20px; border-left: 1px solid var(--fc-border); display: flex; flex-direction: column; justify-content: center; gap: 2px; }
+.trip-setup-summary strong,
+.trip-setup-summary span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.trip-setup-summary strong { color: var(--fc-ink); font-size: 14px; font-weight: 600; }
+.trip-setup-summary span { color: var(--fc-secondary); font-size: 12px; }
 
 .editor-shell { width: 100%; max-width: 1440px; min-inline-size: 0; margin: 0 auto; padding: 48px 32px 88px; border: 0; display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 28px; }
 .editor-main { min-width: 0; }
@@ -863,7 +871,7 @@ figure .remove-photo-btn:focus-visible { outline: 2px solid var(--fc-focus-ring)
 .dashboard-package-link:hover, .dashboard-package-link:focus-visible { color: var(--fc-blue); text-decoration: underline; text-underline-offset: 3px; }
 .dashboard-package-link:hover svg, .dashboard-package-link:focus-visible svg { opacity: 1; transform: translateX(0); }
 .dashboard-package-link:focus-visible { border-radius: 4px; outline: 3px solid var(--fc-focus-ring); outline-offset: 3px; }
-.dashboard-row-action { min-width: 64px; min-height: 38px; padding: 0 14px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--fc-border); border-radius: 6px; background: transparent; color: var(--fc-ink); font-size: 14px; line-height: 20px; font-weight: 500; text-decoration: none; white-space: nowrap; cursor: pointer; transition: border-color 140ms ease-out, background 140ms ease-out; }
+.dashboard-row-action { width: 38px; min-height: 38px; padding: 0; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--fc-border); border-radius: 6px; background: transparent; color: var(--fc-ink); text-decoration: none; cursor: pointer; transition: border-color 140ms ease-out, background 140ms ease-out; }
 .dashboard-row-action svg { flex: 0 0 auto; }
 .dashboard-row-action:hover { border-color: #9e9e9e; background: var(--fc-surface-subtle); }
 .dashboard-row-action:focus-visible { outline: 3px solid var(--fc-focus-ring); outline-offset: 2px; }
@@ -932,6 +940,7 @@ figure .remove-photo-btn:focus-visible { outline: 2px solid var(--fc-focus-ring)
   .copilot-panel { grid-column: 1 / -1; }
   .day-strip { align-items: flex-start; }
   .trip-length { display: none; }
+  .trip-setup-summary { display: none; }
 }
 
 @media (max-width: 700px) {

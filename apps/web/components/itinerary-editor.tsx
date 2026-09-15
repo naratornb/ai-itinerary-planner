@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import Link from "next/link";
 import CopilotPanel from "./copilot/copilot-panel";
 import { formatHotelStarRating } from "./hotel-catalog";
 import RouteMap, { type RouteStop } from "./route-map";
@@ -34,7 +35,8 @@ import {
   type CreatorHotelDetail,
   type CreatorPackageDetail,
 } from "../lib/creator-api";
-import { itinerarySnapshotStorageKey } from "../lib/review-draft";
+import { itinerarySnapshotStorageKey, parseWizardVibesDraft, wizardVibesStorageKey } from "../lib/review-draft";
+import { APP_ROUTES } from "../lib/routes";
 import { supabase } from "../lib/supabase/client";
 import Icon from "./icon";
 
@@ -768,6 +770,13 @@ export default function ItineraryEditor({
   // hotels sometimes carry a full street address instead, so activities are
   // the more reliable signal for "what city is this day actually in."
   const activeDayCity = pkg.destination_city ?? null;
+  const tripDestination = [pkg.destination_city, pkg.destination_country].filter(Boolean).join(", ");
+  // Vibes/season have no backend field (see the wizard's create flow) — this
+  // is a best-effort read of the sessionStorage stash written at creation,
+  // so it only shows up in the browser tab that made or last edited the trip.
+  const [tripVibesDraft] = useState(() => (
+    typeof window === "undefined" ? null : parseWizardVibesDraft(window.sessionStorage.getItem(wizardVibesStorageKey(pkg.package_id)))
+  ));
   // buildDaysFromPackage stamps every row of a stay with `hotel-<id|name>`,
   // so the API hotel is looked up by that key rather than by counting rows —
   // the item list here is one day's worth, not the whole trip.
@@ -1712,7 +1721,10 @@ export default function ItineraryEditor({
   return (
     <main className="itinerary-editor">
       <header className="editor-topbar">
-        <button className="text-action back-action" disabled={isLocked} onClick={onEditTripSetup} aria-label="Edit destination, travel style, duration, or season"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg> Edit trip setup</button>
+        <div className="editor-topbar-start">
+          <Link href={APP_ROUTES.dashboard} className="editor-dashboard-link" aria-label="Back to dashboard" title="Back to dashboard"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m3 10 9-7 9 7" /><path d="M5 9v10a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V9" /></svg></Link>
+          <button className="text-action back-action" disabled={isLocked} onClick={onEditTripSetup} aria-label="Edit destination, travel style, duration, or season"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg> Edit trip setup</button>
+        </div>
         <div className="editor-title-block"><span className="editor-kicker">AI itinerary editor</span>{editingTitle ? <input className="package-title-input" value={titleDraft} autoFocus maxLength={200} aria-label="Package title" onChange={(event) => setTitleDraft(event.target.value)} onBlur={savePackageTitle} onKeyDown={(event) => { if (event.key === "Enter") savePackageTitle(); if (event.key === "Escape") { setTitleDraft(packageTitle); setEditingTitle(false); } }} /> : <button className="package-title-button" disabled={isLocked} onClick={() => { setTitleDraft(packageTitle); setEditingTitle(true); }} aria-label={`Edit package title, currently ${packageTitle}`} title="Edit package title"><h1>{packageTitle}</h1></button>}</div>
         <div className="editor-actions">
           <button className="quiet-button" disabled={saving || submitting || uploadingCount > 0 || isLocked} onClick={() => { void saveDraft(); }}>{uploadingCount > 0 ? `Uploading ${uploadingCount}…` : saving ? "Saving…" : saved ? "Saved" : "Save Draft"}</button>
@@ -1737,6 +1749,17 @@ export default function ItineraryEditor({
           <button className="add-day" disabled={isLocked} onClick={() => { const nextDay = days.length + 1; setDays([...days, { id: `day-${Date.now()}`, day: nextDay, title: "Untitled day", meta: "Add your first stop", items: [], story: "", photos: [], date: nextCalendarDate(days[days.length - 1]?.date) }]); setActiveDay(days.length); showNotice("A new day was added"); }}><Icon name="plus" size={24} /><span>Add Day</span></button>
         </div>
         <button type="button" className="day-scroll-btn" disabled={!dayScroll.canRight} onClick={() => scrollDayTabs(1)} aria-label="Scroll days right"><Icon name="chevron" size={18} /></button>
+        {(tripDestination || tripVibesDraft?.vibes.length || tripVibesDraft?.season) && (
+          <div className="trip-setup-summary">
+            {tripDestination && <strong>{tripDestination}</strong>}
+            {(tripVibesDraft?.vibes.length || tripVibesDraft?.season) && (
+              <span>{[
+                tripVibesDraft?.vibes.length ? tripVibesDraft.vibes.join(", ") : null,
+                tripVibesDraft?.season ? tripVibesDraft.season.charAt(0).toUpperCase() + tripVibesDraft.season.slice(1) : null,
+              ].filter(Boolean).join(" · ")}</span>
+            )}
+          </div>
+        )}
         <div className="trip-length"><strong>{days.length} days</strong><span>{Math.max(0, days.length - 1)} nights</span></div>
       </nav>
 
