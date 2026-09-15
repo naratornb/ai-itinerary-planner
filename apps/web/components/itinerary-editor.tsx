@@ -2150,7 +2150,7 @@ export default function ItineraryEditor({
             {expandedFeasibility === "passed" && <ul className="passed-details"><li><Icon name="check" size={15} />Daily schedule has a clear start and end</li><li><Icon name="check" size={15} />All stops have pricing</li><li><Icon name="check" size={15} />Accommodation is included</li><li><Icon name="check" size={15} />Required package photos are uploaded</li></ul>}
             <p className="quality-footer">Last update: {feasResult && lastCheckedAt ? formatRelativeTime(lastCheckedAt) : "Not yet checked"}</p>
           </section>
-          <Panel title="Trip parameters" className="trip-params-panel">
+          <Panel title="Trip details" className="trip-params-panel">
             <div className="trip-params-rows">
               <div className="trip-params-row">
                 <span className="trip-params-row-label">Destination</span>
@@ -2219,6 +2219,7 @@ export default function ItineraryEditor({
             dayLabel={`Day ${activeDay + 1}`}
             onAddSuggestion={addCopilotSuggestion}
           />
+          <Panel title="Route map" className="route-panel"><RouteMap stops={routeStops} /></Panel>
           <Panel
             title="Pricing & earnings"
             className="pricing-panel"
@@ -2229,7 +2230,6 @@ export default function ItineraryEditor({
               <div><span>Your 20% cut</span><strong className="commission">${Math.round(packagePrice * .2).toLocaleString()}</strong></div>
             </div>
           </Panel>
-          <Panel title="Route map" className="route-panel"><RouteMap stops={routeStops} /></Panel>
         </aside>
       </fieldset>
       {notice && <div className="editor-toast" role="status">{notice}</div>}

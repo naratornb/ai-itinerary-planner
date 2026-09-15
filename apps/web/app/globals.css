@@ -845,6 +845,7 @@ figure .remove-photo-btn:focus-visible { outline: 2px solid var(--fc-focus-ring)
 .trip-params-row .select-field-trigger { min-height: 32px; padding: 0 8px; font-size: 13px; }
 .trip-params-vibe-edit { margin: 12px 0 0; }
 .trip-params-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.trip-params-actions button { min-height: 34px; padding: 0 14px; font-size: 13px; }
 .trip-params-edit-button { width: 100%; margin-top: 12px; min-height: 42px; display: flex; align-items: center; justify-content: center; gap: 8px; border: 1px solid var(--fc-info-border); border-radius: 8px; background: var(--fc-info-subtle); color: var(--fc-blue); font-size: 14px; font-weight: 600; cursor: pointer; transition: background 140ms ease-out; }
 .trip-params-edit-button:hover:not(:disabled) { background: #dcebff; }
 .trip-params-edit-button:disabled { opacity: .5; cursor: default; }
