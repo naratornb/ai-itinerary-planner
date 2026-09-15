@@ -1,7 +1,6 @@
 "use client";
 
-import { Suspense } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 
 import { useDemoState } from "./demo-state";
 import {
@@ -58,20 +57,14 @@ export function ManualBuilderRouteScreen() {
   return <><CreatorNav onNav={onNav} /><AIWizardScreen onNav={onNav} variant="manual" /></>;
 }
 
-function WizardRouteScreenInner() {
+export function WizardRouteScreen() {
   const onNav = useScreenNavigation();
   const { wizardStep } = useDemoState();
-  const editPackageId = useSearchParams().get("edit");
 
   return <><CreatorNav onNav={onNav} /><AIWizardScreen
     initialStep={wizardStep}
     onNav={onNav}
     requestedStep={wizardStep}
     stepRequestId={wizardStep}
-    editPackageId={editPackageId}
   /></>;
-}
-
-export function WizardRouteScreen() {
-  return <Suspense fallback={null}><WizardRouteScreenInner /></Suspense>;
 }

@@ -8,7 +8,6 @@ import type { Session } from "@supabase/supabase-js";
 import {
   createPackage,
   deletePackage,
-  fetchOwnPackage,
   fetchOwnPackages,
   formatCreatorPackage,
   resolveCreatorProfile,
@@ -27,7 +26,7 @@ import {
   itineraryToPackageInput,
   type WizardSelection,
 } from "../lib/ai/itinerary";
-import { parseWizardVibesDraft, wizardVibesStorageKey } from "../lib/review-draft";
+import { wizardVibesStorageKey } from "../lib/review-draft";
 import { supabase } from "../lib/supabase/client";
 import { creatorPackageRoute } from "../lib/routes";
 import { creatorDashboardBackLink, dashboardActionAlignment } from "./navigation-model";
@@ -1612,7 +1611,7 @@ export function CreatorNav({ onNav }: { onNav: (s: Screen) => void }) {
   );
 }
 
-function CreatorCreationSubnav({ confirmBeforeLeaving = false, backHref, backLabel, icon = "chevron" }: { confirmBeforeLeaving?: boolean; backHref?: string; backLabel?: string; icon?: "chevron" | "x" }) {
+function CreatorCreationSubnav({ confirmBeforeLeaving = false }: { confirmBeforeLeaving?: boolean }) {
   return (
     <nav
       aria-label="Package creation navigation"
@@ -1624,7 +1623,7 @@ function CreatorCreationSubnav({ confirmBeforeLeaving = false, backHref, backLab
     >
       <div style={{ width: "min(calc(100% - 80px), 1200px)", height: "100%", margin: "0 auto", display: "flex", alignItems: "center" }}>
         <Link
-          href={backHref ?? creatorDashboardBackLink.href}
+          href={creatorDashboardBackLink.href}
           onClick={(event) => {
             if (confirmBeforeLeaving && !window.confirm("Leave without finishing this package? Your progress will be lost.")) {
               event.preventDefault();
@@ -1637,9 +1636,9 @@ function CreatorCreationSubnav({ confirmBeforeLeaving = false, backHref, backLab
           }}
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            {icon === "x" ? <path d="M18 6 6 18M6 6l12 12" /> : <path d="m15 18-6-6 6-6" />}
+            <path d="m15 18-6-6 6-6" />
           </svg>
-          {backLabel ?? creatorDashboardBackLink.label}
+          {creatorDashboardBackLink.label}
         </Link>
       </div>
     </nav>
@@ -2128,15 +2127,6 @@ const VIBES = [
 
 const DURATION_DAYS = { short: 4, mid: 7, long: 12 } as const;
 
-/** Inverse of the wizard's duration cards — maps a stored day count back to the bucket it fits. */
-export function durationBucketFromDays(days: number | null | undefined): { duration: "short" | "mid" | "long" | "custom"; customDurationDays: number } {
-  if (!days || days < 2) return { duration: "short", customDurationDays: 7 };
-  if (days >= 3 && days <= 5) return { duration: "short", customDurationDays: days };
-  if (days >= 6 && days <= 8) return { duration: "mid", customDurationDays: days };
-  if (days >= 9 && days <= 14) return { duration: "long", customDurationDays: days };
-  return { duration: "custom", customDurationDays: days };
-}
-
 export function wizardDraftToPackageInput(draft: {
   destination: string;
   vibes: string[];
@@ -2294,9 +2284,8 @@ function PackageGenerationLoader({ elapsedMs, complete }: { elapsedMs: number; c
   );
 }
 
-export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequestId = 0, variant = "ai", editPackageId = null }: { onNav: (s: Screen) => void; initialStep?: number; requestedStep?: number; stepRequestId?: number; variant?: "ai" | "manual"; editPackageId?: string | null }) {
+export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequestId = 0, variant = "ai" }: { onNav: (s: Screen) => void; initialStep?: number; requestedStep?: number; stepRequestId?: number; variant?: "ai" | "manual" }) {
   const router = useRouter();
-  const editBackHref = editPackageId ? `/packages/editor/${encodeURIComponent(editPackageId)}` : undefined;
   const kinds = variant === "manual" ? MANUAL_STEP_KINDS : AI_STEP_KINDS;
   const [step, setStep] = useState(initialStep);
   const [selected, setSelected] = useState<string | null>(null);
@@ -2320,53 +2309,6 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
   // Manual builds skip AI generation entirely, so they never enter the
   // full-screen generation step — creation happens inline on the last step.
   const isLoading = variant === "ai" && step === AI_STEP_KINDS.length;
-
-  // Editing an existing package: load its current destination/duration
-  // (real fields) and vibes/season (best-effort, stashed in sessionStorage —
-  // see the "Vibes/season have no backend field" note below) to prefill
-  // the wizard steps instead of starting from a blank draft.
-  // No "already ran" ref guard here: Strict Mode's dev-only double-invoke
-  // (mount → cleanup → mount) would let the first invocation mark itself
-  // done before its own cleanup ever lets it apply the fetched result,
-  // silently skipping the second, real invocation and leaving every field
-  // blank. `cancelled` alone is the correct guard — the stale invocation's
-  // own cleanup discards its result, and the fresh one still runs.
-  useEffect(() => {
-    if (!editPackageId) return;
-    let cancelled = false;
-    void (async () => {
-      try {
-        const { data } = await supabase.auth.getSession();
-        const accessToken = data.session?.access_token;
-        if (!accessToken) {
-          if (!cancelled) router.push("/login");
-          return;
-        }
-        const existing = await fetchOwnPackage(fetch, BUILDER_API_URL, accessToken, editPackageId);
-        if (cancelled) return;
-        if (existing.destination_city && existing.destination_country) {
-          const name = `${existing.destination_city}, ${existing.destination_country}`;
-          setSelected(name);
-          setDest(name);
-          setDestinationSearch(name);
-        }
-        const { duration: bucket, customDurationDays: days } = durationBucketFromDays(existing.duration_days);
-        setDuration(bucket);
-        setCustomDurationDays(days);
-        const vibesDraft = parseWizardVibesDraft(window.sessionStorage.getItem(wizardVibesStorageKey(editPackageId)));
-        if (vibesDraft) {
-          const ids = vibesDraft.vibes
-            .map((label) => VIBES.find((vibe) => vibe.label === label)?.id)
-            .filter((id): id is string => Boolean(id));
-          if (ids.length) setVibes(ids);
-          if (vibesDraft.season) setSeason(vibesDraft.season);
-        }
-      } catch {
-        if (!cancelled) setCreateError("Unable to load this package's current settings. You can still fill them in manually.");
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [editPackageId, router]);
 
   useEffect(() => {
     if (requestedStep === undefined) return;
@@ -2543,9 +2485,6 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
       void createManualPackage();
       return;
     }
-    if (editPackageId && !window.confirm(
-      "Regenerating builds a brand-new itinerary from these settings. Any stops, notes, or photos you added by hand in the current one won't carry over. Continue?",
-    )) return;
     startBuild(currentSetup);
   };
 
@@ -2553,7 +2492,7 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
 
   return (
     <div className="ai-wizard-screen" style={{ minHeight: "calc(100vh - 64px)", background: "#FAFAFA", display: "flex", flexDirection: "column" }}>
-      <CreatorCreationSubnav confirmBeforeLeaving={hasWizardProgress && !isLoading} backHref={editBackHref} backLabel={editPackageId ? "Cancel" : undefined} icon={editPackageId ? "x" : "chevron"} />
+      <CreatorCreationSubnav confirmBeforeLeaving={hasWizardProgress && !isLoading} />
       {isLoading ? (
         <PackageGenerationLoader elapsedMs={generationElapsedMs} complete={generationComplete} />
       ) : (
@@ -2716,17 +2655,13 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
             onSelect={selectDestination}
           />
         )}</div>
-        {createError && (isLastStep || editPackageId) && (
+        {createError && isLastStep && (
           <p role="alert" style={{ margin: "12px 0 0", fontFamily: "var(--fc-font-body)", fontSize: 13, color: "#B42318" }}>
             {createError}
           </p>
         )}
         <div className="ai-wizard-footer" style={{ flexShrink: 0, display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, padding: "16px 0 20px", borderTop: `1px solid ${C.border}`, background: "#FAFAFA" }}>
-          <button onClick={() => {
-            if (step > 0) { setStep((s) => s - 1); return; }
-            if (editBackHref) { router.push(editBackHref); return; }
-            onNav("builder");
-          }} style={{
+          <button onClick={() => step === 0 ? onNav("builder") : setStep((s) => s - 1)} style={{
             height: 44, padding: "0 24px",
             fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 500,
             color: C.ink, background: C.white,
@@ -2773,7 +2708,7 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
               onMouseEnter={(e) => { if (canContinue) e.currentTarget.style.opacity = "0.88"; }}
               onMouseLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
             >
-              {isLastStep ? (manualCreating ? "Creating…" : variant === "manual" ? "Create package" : editPackageId ? "Regenerate itinerary" : "Build your trip") : "Continue"}
+              {isLastStep ? (manualCreating ? "Creating…" : variant === "manual" ? "Create package" : "Build your trip") : "Continue"}
               {!isLastStep && (
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M5 12h14M12 5l7 7-7 7"/>
