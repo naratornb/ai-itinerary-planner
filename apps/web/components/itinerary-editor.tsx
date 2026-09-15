@@ -569,7 +569,7 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
                         </span>
                         <span className="hotel-choice-check" aria-hidden="true">{p.selectedHotelIndex === index ? <Icon name="check" size={20} /> : ""}</span>
                       </button>)}
-                      {p.availableHotels.length === 0 && <p>No hotels found for this package.</p>}
+                      {p.availableHotels.length === 0 && <p>No hotels found for this destination.</p>}
                     </div>
                     {p.selectedHotelOption && <>
                       <div className="hotel-confirm-card">
@@ -747,6 +747,7 @@ export default function ItineraryEditor({
   const [activitySearch, setActivitySearch] = useState("");
   const [recommendedActivities, setRecommendedActivities] = useState<{ title: string; meta: string; price: string; rating: number | null; suitableFor: string | null }[]>([]);
   const [moreActivitiesOpen, setMoreActivitiesOpen] = useState(false);
+  const [catalogHotels, setCatalogHotels] = useState<CreatorHotelDetail[] | null>(null);
   const [flightSearch, setFlightSearch] = useState("");
   const [selectedFlightIndex, setSelectedFlightIndex] = useState<number | null>(null);
   const [selectedHotelIndex, setSelectedHotelIndex] = useState<number | null>(null);
@@ -1017,6 +1018,23 @@ export default function ItineraryEditor({
     }, 250);
     return () => window.clearTimeout(timer);
   }, [addFlow, activeDayCity, activitySearch]);
+
+  // Hotels are "supplied by Travel Marketplace" per the note in the add-hotel
+  // flow — the full catalog for this destination, not just whatever the AI
+  // happened to attach to the package at creation time.
+  useEffect(() => {
+    if (addFlow !== "hotel") return;
+    void (async () => {
+      let query = supabase
+        .from("hotels")
+        .select("hotel_id,hotel_name,city,star_rating,room_type,price_per_night_aud")
+        .order("star_rating", { ascending: false })
+        .limit(24);
+      if (activeDayCity) query = query.or(`city.eq.${activeDayCity},country.eq.${activeDayCity}`);
+      const { data, error } = await query;
+      setCatalogHotels(error || !data ? [] : data.map((row) => ({ ...row, address: null })));
+    })();
+  }, [addFlow, activeDayCity]);
 
   const showNotice = (message: string) => {
     setNotice(message);
@@ -1437,7 +1455,7 @@ export default function ItineraryEditor({
   const matchingFlights = flights.filter((flight) =>
     [flight.airline, flight.flight_number, flight.origin_iata, flight.destination_iata].join(" ").toLowerCase().includes(flightSearch.trim().toLowerCase()),
   );
-  const selectedHotelOption = selectedHotelIndex !== null ? hotels[selectedHotelIndex] : undefined;
+  const selectedHotelOption = selectedHotelIndex !== null ? (catalogHotels ?? hotels)[selectedHotelIndex] : undefined;
 
   const hotelCheckInDayIndex = hotelCheckInDayId === NEW_DAY_OPTION_ID
     ? days.length
@@ -1717,7 +1735,7 @@ export default function ItineraryEditor({
     matchingFlights,
     selectedFlightIndex, setSelectedFlightIndex,
     addSelectedFlight,
-    availableHotels: hotels,
+    availableHotels: catalogHotels ?? hotels,
     selectedHotelIndex, setSelectedHotelIndex,
     selectedHotelOption,
     hotelCheckInDayId, setHotelCheckInDayId,
