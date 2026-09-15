@@ -236,6 +236,13 @@ def test_package_fetch_uses_narrow_select(db):
         )
 
 
+def test_activity_turn_does_not_scan_the_flight_catalog(db):
+    client.post(BASE, json={"prompt": "Tokyo food"})
+    assert not [c for c in db.calls if c[1] == "flights"]
+    client.post(BASE, json={"prompt": "flights to Tokyo"})
+    assert [c for c in db.calls if c[1] == "flights"]
+
+
 def test_followup_context_and_per_item_feedback(db):
     first = client.post(BASE, json={"prompt": "Tokyo food"}).json()
     item_url = f"{BASE}/{first['turn_id']}/items/AC-1"

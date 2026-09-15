@@ -43,6 +43,25 @@ def normalize(kind: str, row: dict) -> Suggestion:
     )
 
 
+def wanted_type(prompt: str, package: dict, previous: dict) -> str | None:
+    """The single item_type retrieve() will filter on; None if ambiguous.
+
+    Split out so callers can tell which catalog they need before loading it.
+    """
+    types = [k for k, pattern in TYPE_WORDS.items() if re.search(pattern, prompt, re.I)]
+    if len(types) > 1:
+        return None
+    if types:
+        return types[0]
+    next_type = next(
+        (kind for kind, table in TABLES.items() if not package.get(f"package_{table}")),
+        "activity",
+    )
+    if re.search(r"\b(?:what.*next|next step)\b", prompt, re.I):
+        return next_type
+    return previous.get("item_type") or next_type
+
+
 def retrieve(
     prompt: str,
     package: dict,
@@ -83,24 +102,14 @@ def retrieve(
         context.setdefault("country", package.get("destination_country"))
     if not context.get("city") and not context.get("country"):
         return [], context, "Which city or country would you like suggestions for?"
-    types = [
-        kind for kind, pattern in TYPE_WORDS.items() if re.search(pattern, prompt, re.I)
-    ]
-    if len(types) > 1:
+    kind = wanted_type(prompt, package, previous)
+    if kind is None:
         return (
             [],
             context,
             "Would you like activities, accommodation, or flights first?",
         )
-    if types:
-        context["item_type"] = types[0]
-    next_type = next(
-        (kind for kind, table in TABLES.items() if not package.get(f"package_{table}")),
-        "activity",
-    )
-    if not types and re.search(r"\b(?:what.*next|next step)\b", prompt, re.I):
-        context["item_type"] = next_type
-    context.setdefault("item_type", next_type)
+    context["item_type"] = kind
     price = re.search(
         # Bounded \s{0,20} and \d{1,9}: three adjacent unbounded optional
         # whitespace groups made this backtrack on "under" plus a long
@@ -117,7 +126,6 @@ def retrieve(
         context["max_price"] = 100.0
     if re.search(r"\b(no budget|any price|remove budget)\b", prompt, re.I):
         context.pop("max_price", None)
-    kind = context["item_type"]
     categories = {
         str(i.details.get("category")) for i in inventory if i.details.get("category")
     }
