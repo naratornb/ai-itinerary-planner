@@ -644,6 +644,9 @@ figure .remove-photo-btn:focus-visible { outline: 2px solid var(--fc-focus-ring)
 .hotel-choice-card > strong { max-width: 100%; overflow: hidden; font-size: 14px; line-height: 20px; text-overflow: ellipsis; white-space: nowrap; }
 .hotel-choice-card > small { display: flex; align-items: center; gap: 4px; color: var(--fc-secondary); font-size: 12px; line-height: 16px; }
 .hotel-choice-card > small svg { flex: 0 0 auto; }
+.hotel-choice-rating { display: flex; align-items: center; gap: 4px; color: #212121; font-size: 13px; font-weight: 700; }
+.hotel-choice-rating svg { color: #F5A623; }
+.hotel-choice-rating svg { flex: 0 0 auto; }
 .hotel-choice-from { margin-top: auto; padding-top: 8px; display: flex; align-items: baseline; gap: 5px; }
 .hotel-choice-from small { color: var(--fc-secondary); font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
 .hotel-choice-from b { color: var(--fc-ink); font-size: 13px; font-weight: 700; }

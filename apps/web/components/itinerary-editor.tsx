@@ -562,7 +562,7 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
                     <p className="database-note">Hotels are supplied by Travel Marketplace and cannot be edited here.</p>
                     <div className="hotel-choice-grid" role="radiogroup" aria-label="Available hotels">
                       {p.availableHotels.map((hotel, index) => (index < 3 || p.moreHotelsOpen) && <button key={hotel.hotel_id ?? hotel.hotel_name ?? index} type="button" role="radio" aria-checked={p.selectedHotelIndex === index} title={hotel.star_rating != null ? formatHotelStarRating(hotel.star_rating) : undefined} className={`hotel-choice-card${p.selectedHotelIndex === index ? " selected" : ""}`} onClick={() => p.setSelectedHotelIndex(index)}>
-                        {hotel.star_rating != null && <span className="item-type-pill item-type-pill-hotel">{Math.round(hotel.star_rating)}-star</span>}
+                        {hotel.star_rating != null && <span className="hotel-choice-rating"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z" /></svg>{hotel.star_rating}</span>}
                         <span className="hotel-choice-check" aria-hidden="true">{p.selectedHotelIndex === index && <Icon name="check" size={16} />}</span>
                         <strong>{hotel.hotel_name ?? "Hotel"}</strong>
                         <small><Icon name="pin" size={12} />{hotel.city ?? "Not provided"}{hotel.room_type ? ` · ${hotel.room_type}` : ""}</small>
