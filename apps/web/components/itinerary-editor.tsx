@@ -674,12 +674,12 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
 
 export default function ItineraryEditor({
   pkg,
-  onBack,
+  onEditTripSetup,
   onSessionExpired,
   onContinueToReview,
 }: {
   pkg: CreatorPackageDetail;
-  onBack: () => void;
+  onEditTripSetup: () => void;
   onSessionExpired: () => void;
   onContinueToReview: () => void;
 }) {
@@ -1712,7 +1712,7 @@ export default function ItineraryEditor({
   return (
     <main className="itinerary-editor">
       <header className="editor-topbar">
-        <button className="text-action back-action" disabled={isLocked} onClick={onBack} aria-label="Edit destination, travel style, duration, or season"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg> Edit trip setup</button>
+        <button className="text-action back-action" disabled={isLocked} onClick={onEditTripSetup} aria-label="Edit destination, travel style, duration, or season"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg> Edit trip setup</button>
         <div className="editor-title-block"><span className="editor-kicker">AI itinerary editor</span>{editingTitle ? <input className="package-title-input" value={titleDraft} autoFocus maxLength={200} aria-label="Package title" onChange={(event) => setTitleDraft(event.target.value)} onBlur={savePackageTitle} onKeyDown={(event) => { if (event.key === "Enter") savePackageTitle(); if (event.key === "Escape") { setTitleDraft(packageTitle); setEditingTitle(false); } }} /> : <button className="package-title-button" disabled={isLocked} onClick={() => { setTitleDraft(packageTitle); setEditingTitle(true); }} aria-label={`Edit package title, currently ${packageTitle}`} title="Edit package title"><h1>{packageTitle}</h1></button>}</div>
         <div className="editor-actions">
           <button className="quiet-button" disabled={saving || submitting || uploadingCount > 0 || isLocked} onClick={() => { void saveDraft(); }}>{uploadingCount > 0 ? `Uploading ${uploadingCount}…` : saving ? "Saving…" : saved ? "Saved" : "Save Draft"}</button>

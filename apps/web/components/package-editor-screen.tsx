@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import ItineraryEditor from "./itinerary-editor";
 import { fetchOwnPackage, type CreatorPackageDetail } from "../lib/creator-api";
 import { supabase } from "../lib/supabase/client";
+import { APP_ROUTES } from "../lib/routes";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -41,7 +42,7 @@ export default function PackageEditorScreen({ packageId }: { packageId: string }
   return (
     <ItineraryEditor
       pkg={pkg}
-      onBack={() => router.push("/dashboard")}
+      onEditTripSetup={() => router.push(`${APP_ROUTES.wizard}?edit=${encodeURIComponent(packageId)}`)}
       onSessionExpired={() => router.replace("/login")}
       onContinueToReview={() => router.push(`/packages/editor/${encodeURIComponent(packageId)}/review`)}
     />
