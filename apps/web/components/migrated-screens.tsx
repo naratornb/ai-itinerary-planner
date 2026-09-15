@@ -1393,7 +1393,7 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
               >
                 {/* Package name */}
                 <div style={{ minWidth: 0 }}>
-                  <Link className="dashboard-package-link" href={packageHref}>
+                  <Link className="dashboard-package-link" href={packageHref} title={pkg.name}>
                     <span>{pkg.name}</span>
                     <svg
                       width="14" height="14" viewBox="0 0 24 24" fill="none"
