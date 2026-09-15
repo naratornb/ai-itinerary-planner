@@ -632,7 +632,7 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
                             : <button type="button" className="set-cover-btn" onClick={() => p.setCreatorPhotos([photo, ...p.creatorPhotos.filter((_, i) => i !== index)])}>Set as cover</button>}
                           <button type="button" className="remove-photo-btn" aria-label="Remove photo" onClick={() => p.removeCreatorPhoto(photo)}><Icon name="plus" size={10} /></button>
                         </figure>)}
-                        {p.creatorPhotos.length < MAX_ITEM_PHOTOS && <label><input type="file" accept="image/png,image/jpeg" multiple onChange={(event) => { const files = Array.from(event.target.files ?? []).slice(0, MAX_ITEM_PHOTOS - p.creatorPhotos.length); event.target.value = ""; if (files.length) void p.trackUpload(p.addCreatorPhotos(files)); }} /><Icon name="plus" size={18} />Add photo</label>}
+                        {p.creatorPhotos.length < MAX_ITEM_PHOTOS && <label><input type="file" accept="image/png,image/jpeg" multiple onChange={(event) => { const files = Array.from(event.target.files ?? []).slice(0, MAX_ITEM_PHOTOS - p.creatorPhotos.length); event.target.value = ""; if (files.length) void p.trackUpload(p.addCreatorPhotos(files)); }} /><span className="edit-photo-add-icon"><Icon name="plus" size={16} /></span><span className="edit-photo-add-label">Add photo</span></label>}
                       </div>
                     </div>
                     <div className="activity-form-actions"><button className="publish-button" disabled={!p.creatorDraft.title.trim()} onClick={p.createCreatorPick}>Add creator pick</button></div>
@@ -2010,7 +2010,7 @@ export default function ItineraryEditor({
                           : <button type="button" className="set-cover-btn" onClick={() => setEditingItem({ ...editingItem, photos: [photo, ...editingItem.photos.filter((_, i) => i !== index)] })}>Set as cover</button>}
                         <button type="button" className="remove-photo-btn" aria-label="Remove photo" onClick={() => removeItemPhoto(photo)}><Icon name="plus" size={10} /></button>
                       </figure>)}
-                      {editingItem.photos.length < MAX_ITEM_PHOTOS && <label><input type="file" accept="image/png,image/jpeg" multiple onChange={(event) => { const files = Array.from(event.target.files ?? []).slice(0, MAX_ITEM_PHOTOS - editingItem.photos.length); event.target.value = ""; if (files.length) void trackUpload(addItemPhotos(files)); }} /><Icon name="plus" size={18} />Add photo</label>}
+                      {editingItem.photos.length < MAX_ITEM_PHOTOS && <label><input type="file" accept="image/png,image/jpeg" multiple onChange={(event) => { const files = Array.from(event.target.files ?? []).slice(0, MAX_ITEM_PHOTOS - editingItem.photos.length); event.target.value = ""; if (files.length) void trackUpload(addItemPhotos(files)); }} /><span className="edit-photo-add-icon"><Icon name="plus" size={16} /></span><span className="edit-photo-add-label">Add photo</span></label>}
                     </div>
                   </div>
                   <div className="inline-edit-actions"><button className="quiet-button" onClick={() => setEditingItem(null)}>Cancel</button><button className="publish-button" disabled={!editingItem.title.trim()} onClick={saveEditedItem}>Save changes</button></div>

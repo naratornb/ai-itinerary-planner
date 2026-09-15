@@ -493,7 +493,7 @@ button:focus-visible, textarea:focus-visible { outline: 3px solid var(--fc-focus
 .inline-edit-grid input,.inline-edit-grid select,.inline-edit-grid textarea { width: 100%; min-height: 44px; padding: 0 12px; border: 1px solid var(--fc-border); border-radius: 8px; background-color: #fff; color: var(--fc-ink); font-size: 14px; outline: 0; }
 .inline-edit-grid textarea { min-height: 88px; padding: 12px; resize: vertical; }.inline-edit-grid input[readonly] { background: var(--fc-surface-subtle); color: var(--fc-secondary); }
 .inline-edit-grid input:focus,.inline-edit-grid select:focus,.inline-edit-grid textarea:focus { border-color: var(--fc-blue); box-shadow: 0 0 0 3px var(--fc-focus-ring); }
-.edit-photo { margin-top: 18px; padding-top: 18px; display: grid; gap: 9px; border-top: 1px solid var(--fc-border); }
+.edit-photo { margin-top: 18px; display: grid; gap: 9px; }
 .edit-photo > div { display: flex; flex-wrap: wrap; gap: 10px; }
 .edit-photo figure { width: 120px; height: 104px; margin: 0; position: relative; overflow: hidden; border-radius: 8px; }.edit-photo figure img { width: 100%; height: 100%; object-fit: cover; }.edit-photo figure b { position: absolute; top: 6px; left: 6px; display: inline-flex; align-items: center; gap: 3px; padding: 2px 6px; border-radius: 4px; background: #fff; color: var(--fc-warning); font-size: 10px; line-height: 14px; text-transform: uppercase; }
 .edit-photo figure b svg { fill: currentColor; }
@@ -505,7 +505,11 @@ figure .remove-photo-btn svg { width: 10px; height: 10px; transform: rotate(45de
 .day-photo-single .change-photo-btn input { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; }
 figure .remove-photo-btn:hover { background: rgba(15,23,42,.8); }
 figure .remove-photo-btn:focus-visible { outline: 2px solid var(--fc-focus-ring); outline-offset: 1px; }
-.edit-photo label { width: 132px; height: 104px; display: grid; place-content: center; justify-items: center; gap: 4px; border: 1px dashed #bdbdbd; border-radius: 8px; color: var(--fc-secondary); font-size: 12px; cursor: pointer; }.edit-photo label:hover { border-color: var(--fc-blue); color: var(--fc-blue); }.edit-photo label input { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
+.edit-photo label { width: 132px; height: 104px; display: grid; place-content: center; justify-items: center; gap: 6px; border: 1px dashed #bdbdbd; border-radius: 8px; background: #fff; color: var(--fc-secondary); font-size: 12px; cursor: pointer; transition: border-color 140ms ease-out, background 140ms ease-out; }.edit-photo label:hover { border-color: var(--fc-blue); background: var(--fc-info-subtle); color: var(--fc-blue); }.edit-photo label input { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
+.edit-photo-add-icon { width: 28px; height: 28px; display: grid; place-items: center; border: 1px solid var(--fc-border); border-radius: 50%; color: inherit; }
+.edit-photo-add-label { color: var(--fc-ink); font-size: 13px; font-weight: 600; }
+.edit-photo label:hover .edit-photo-add-icon { border-color: var(--fc-blue); }
+.edit-photo label:hover .edit-photo-add-label { color: var(--fc-blue); }
 .inline-edit-actions { margin-top: 16px; display: flex; justify-content: flex-end; gap: 8px; }
 .inline-edit-actions .publish-button:disabled { border-color: var(--fc-disabled); background: var(--fc-disabled); cursor: not-allowed; }
 .detail-card { padding: 0; }
@@ -562,9 +566,9 @@ figure .remove-photo-btn:focus-visible { outline: 2px solid var(--fc-focus-ring)
 .activity-card-notes-field textarea { width: 100%; min-height: 48px; padding: 14px 16px 32px; border: 1px solid var(--fc-border); border-radius: 8px; background: #fff; color: var(--fc-ink); font-size: 14px; line-height: 21px; outline: 0; resize: none; overflow: hidden; }
 .activity-card-notes-field textarea:focus { border-color: var(--fc-blue); box-shadow: 0 0 0 3px var(--fc-focus-ring); }
 .activity-card-notes-field small { position: absolute; right: 14px; bottom: 12px; color: var(--fc-disabled); font-size: 11px; line-height: 14px; pointer-events: none; }
-.edit-photo-head { display: flex; align-items: baseline; gap: 6px; }
-.edit-photo-head span { color: var(--fc-ink); font-size: 15px; font-weight: 700; }
-.edit-photo-head small { color: var(--fc-secondary); font-size: 13px; font-variant-numeric: tabular-nums; }
+.edit-photo-head { display: flex; align-items: baseline; gap: 8px; }
+.edit-photo-head span { color: var(--fc-secondary); font-size: 12px; line-height: 16px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+.edit-photo-head small { color: var(--fc-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
 .inline-edit-compact .edit-photo { margin-top: 24px; padding-top: 0; border-top: 0; }
 .inline-edit-compact .edit-photo figure,
 .inline-edit-compact .edit-photo label { width: 104px; height: 104px; }
