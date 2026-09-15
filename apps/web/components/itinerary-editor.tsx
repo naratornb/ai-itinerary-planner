@@ -560,22 +560,24 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
                   {p.addFlow === "hotel" && <>
                     <div className="inline-add-head"><button className="inline-back" onClick={() => p.setAddFlow("type")} aria-label="Back to item types">‹</button><h4>Add hotel</h4><button onClick={() => p.setAddingAfter(null)}>Cancel</button></div>
                     <p className="database-note">Hotels are supplied by Travel Marketplace and cannot be edited here.</p>
-                    <div className="hotel-choice-grid" role="radiogroup" aria-label="Available hotels">
-                      {p.availableHotels.map((hotel, index) => (index < 3 || p.moreHotelsOpen) && <button key={hotel.hotel_id ?? hotel.hotel_name ?? index} type="button" role="radio" aria-checked={p.selectedHotelIndex === index} title={hotel.star_rating != null ? formatHotelStarRating(hotel.star_rating) : undefined} className={`hotel-choice-card${p.selectedHotelIndex === index ? " selected" : ""}`} onClick={() => p.setSelectedHotelIndex(index)}>
-                        {hotel.star_rating != null && <span className="hotel-choice-rating"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z" /></svg>{hotel.star_rating}</span>}
-                        <span className="hotel-choice-check" aria-hidden="true">{p.selectedHotelIndex === index && <Icon name="check" size={16} />}</span>
-                        <strong>{hotel.hotel_name ?? "Hotel"}</strong>
-                        <small><Icon name="pin" size={12} />{hotel.city ?? "Not provided"}{hotel.room_type ? ` · ${hotel.room_type}` : ""}</small>
-                        <span className="hotel-choice-from"><small>FROM</small><b>{hotel.price_per_night_aud != null ? `$${hotel.price_per_night_aud.toLocaleString("en-US")}/night` : "Price not provided"}</b></span>
-                      </button>)}
-                      {p.availableHotels.length === 0 && <p>No hotels found for this destination.</p>}
-                    </div>
-                    {p.availableHotels.length > 3 && (
-                      <button className="activity-more-toggle" onClick={() => p.setMoreHotelsOpen((open) => !open)} aria-expanded={p.moreHotelsOpen}>
-                        <span className="status-chevron"><Icon name="chevron" size={14} /></span>
-                        {p.moreHotelsOpen ? "Show fewer hotels" : `See ${p.availableHotels.length - 3} more`}
-                      </button>
-                    )}
+                    {!p.selectedHotelOption && <>
+                      <div className="hotel-choice-grid" role="radiogroup" aria-label="Available hotels">
+                        {p.availableHotels.map((hotel, index) => (index < 3 || p.moreHotelsOpen) && <button key={hotel.hotel_id ?? hotel.hotel_name ?? index} type="button" role="radio" aria-checked={p.selectedHotelIndex === index} title={hotel.star_rating != null ? formatHotelStarRating(hotel.star_rating) : undefined} className={`hotel-choice-card${p.selectedHotelIndex === index ? " selected" : ""}`} onClick={() => p.setSelectedHotelIndex(index)}>
+                          {hotel.star_rating != null && <span className="hotel-choice-rating"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z" /></svg>{hotel.star_rating}</span>}
+                          <span className="hotel-choice-check" aria-hidden="true">{p.selectedHotelIndex === index && <Icon name="check" size={16} />}</span>
+                          <strong>{hotel.hotel_name ?? "Hotel"}</strong>
+                          <small><Icon name="pin" size={12} />{hotel.city ?? "Not provided"}{hotel.room_type ? ` · ${hotel.room_type}` : ""}</small>
+                          <span className="hotel-choice-from"><small>FROM</small><b>{hotel.price_per_night_aud != null ? `$${hotel.price_per_night_aud.toLocaleString("en-US")}/night` : "Price not provided"}</b></span>
+                        </button>)}
+                        {p.availableHotels.length === 0 && <p>No hotels found for this destination.</p>}
+                      </div>
+                      {p.availableHotels.length > 3 && (
+                        <button className="activity-more-toggle" onClick={() => p.setMoreHotelsOpen((open) => !open)} aria-expanded={p.moreHotelsOpen}>
+                          <span className="status-chevron"><Icon name="chevron" size={14} /></span>
+                          {p.moreHotelsOpen ? "Show fewer hotels" : `See ${p.availableHotels.length - 3} more`}
+                        </button>
+                      )}
+                    </>}
                     {p.selectedHotelOption && <>
                       <div className="hotel-confirm-card">
                         <div className="hotel-confirm-top">
@@ -584,6 +586,7 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
                             <strong>{p.selectedHotelOption.hotel_name ?? "Hotel"}</strong>
                             {p.selectedHotelOption.room_type && <span>{p.selectedHotelOption.room_type}</span>}
                           </span>
+                          <button type="button" className="hotel-confirm-change" onClick={() => p.setSelectedHotelIndex(null)}>Change hotel</button>
                           {p.selectedHotelOption.star_rating != null && <span className="hotel-confirm-rating">
                             <Icon name="star" size={16} />
                             <b>{p.selectedHotelOption.star_rating}</b><span>/ 5</span>
@@ -757,6 +760,8 @@ export default function ItineraryEditor({
   const [selectedFlightIndex, setSelectedFlightIndex] = useState<number | null>(null);
   const [selectedHotelIndex, setSelectedHotelIndex] = useState<number | null>(null);
   const [moreHotelsOpen, setMoreHotelsOpen] = useState(false);
+  const [hotelSearch, setHotelSearch] = useState("");
+  const [hotelSort, setHotelSort] = useState<"rating" | "price_asc" | "price_desc">("rating");
   const [hotelNotes, setHotelNotes] = useState("");
   const [hotelCheckInDayId, setHotelCheckInDayId] = useState<string | null>(null);
   const [hotelCheckOutDayId, setHotelCheckOutDayId] = useState<string | null>(null);

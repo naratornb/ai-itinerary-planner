@@ -659,6 +659,8 @@ figure .remove-photo-btn:focus-visible { outline: 2px solid var(--fc-focus-ring)
 .hotel-confirm-heading small { color: var(--fc-secondary); font-size: 12px; line-height: 16px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
 .hotel-confirm-heading strong { display: block; overflow: hidden; font-size: 18px; line-height: 24px; text-overflow: ellipsis; white-space: nowrap; }
 .hotel-confirm-heading > span { color: var(--fc-secondary); font-size: 14px; line-height: 20px; }
+.hotel-confirm-change { flex: 0 0 auto; align-self: center; min-height: 32px; padding: 0 10px; border: 0; background: transparent; color: var(--fc-blue); font-size: 13px; font-weight: 600; cursor: pointer; }
+.hotel-confirm-change:hover { text-decoration: underline; }
 .hotel-confirm-rating { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; padding: 8px 12px; border: 1px solid var(--fc-border); border-radius: 999px; color: var(--fc-warning); }
 .hotel-confirm-rating svg { fill: currentColor; }
 .hotel-confirm-rating b { color: var(--fc-ink); font-size: 15px; }
