@@ -840,7 +840,8 @@ figure .remove-photo-btn:focus-visible { outline: 2px solid var(--fc-focus-ring)
 .trip-params-row:last-child { border-bottom: 0; }
 .trip-params-row-label { color: var(--fc-secondary); font-size: 14px; }
 .trip-params-row strong { color: var(--fc-ink); font-size: 14px; font-weight: 600; text-align: right; }
-.trip-params-row .select-field { width: 150px; }
+.trip-params-row .select-field { width: 130px; }
+.trip-params-row .select-field-trigger { min-height: 32px; padding: 0 8px; font-size: 13px; }
 .trip-params-vibe-edit { margin: 12px 0 0; }
 .pricing-columns { display: grid; grid-template-columns: 1fr 1fr; }
 .pricing-columns > div:last-child { padding-left: 16px; border-left: 1px solid var(--fc-border); }
