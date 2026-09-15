@@ -871,9 +871,9 @@ figure .remove-photo-btn:focus-visible { outline: 2px solid var(--fc-focus-ring)
 .dashboard-package-link:hover, .dashboard-package-link:focus-visible { color: var(--fc-blue); text-decoration: underline; text-underline-offset: 3px; }
 .dashboard-package-link:hover svg, .dashboard-package-link:focus-visible svg { opacity: 1; transform: translateX(0); }
 .dashboard-package-link:focus-visible { border-radius: 4px; outline: 3px solid var(--fc-focus-ring); outline-offset: 3px; }
-.dashboard-row-action { width: 38px; min-height: 38px; padding: 0; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--fc-border); border-radius: 6px; background: transparent; color: var(--fc-ink); text-decoration: none; cursor: pointer; transition: border-color 140ms ease-out, background 140ms ease-out; }
+.dashboard-row-action { width: 38px; min-height: 38px; padding: 0; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 6px; background: transparent; color: var(--fc-ink); text-decoration: none; cursor: pointer; transition: background 140ms ease-out; }
 .dashboard-row-action svg { flex: 0 0 auto; }
-.dashboard-row-action:hover { border-color: #9e9e9e; background: var(--fc-surface-subtle); }
+.dashboard-row-action:hover { background: var(--fc-surface-subtle); }
 .dashboard-row-action:focus-visible { outline: 3px solid var(--fc-focus-ring); outline-offset: 2px; }
 .dashboard-row-action-delete { color: var(--fc-red); }
 .dashboard-row-action-delete:hover { border-color: var(--fc-red); background: #fff5f6; }
