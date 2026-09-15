@@ -448,7 +448,6 @@ function SelectField({ value, onChange, options, ariaLabel, className = "", plac
         <div className="select-field-dropdown" role="listbox" aria-label={ariaLabel}>
           {normalized.map((option) => (
             <button type="button" key={option.value} role="option" aria-selected={option.value === value} className={`select-field-option${option.value === value ? " selected" : ""}`} onClick={() => { onChange(option.value); setOpen(false); }}>
-              <span className="select-field-check">{option.value === value && <Icon name="check" size={13} />}</span>
               {option.label}
             </button>
           ))}
