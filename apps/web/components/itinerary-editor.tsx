@@ -990,7 +990,10 @@ export default function ItineraryEditor({
         .select("activity_name,city,category,duration_hours,price_aud,rating,suitable_for")
         .order("rating", { ascending: false })
         .limit(24);
-      if (activeDayCity) query = query.eq("city", activeDayCity);
+      // The destination catalog lets creators pick a country-level entry
+      // (e.g. "Iceland") as well as cities, and that value ends up here as
+      // activeDayCity — so match it against either column, not just city.
+      if (activeDayCity) query = query.or(`city.eq.${activeDayCity},country.eq.${activeDayCity}`);
       const search = activitySearch.trim();
       if (search) query = query.ilike("activity_name", `%${search}%`);
       const { data, error } = await query;
