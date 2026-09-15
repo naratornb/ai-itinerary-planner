@@ -469,6 +469,19 @@ function SelectField({ value, onChange, options, ariaLabel, className = "", plac
 // suitable-for — the two catalog fields that don't fit on the card face —
 // without an extra click. The "+" stays a separate button, so a tap that
 // only opens the popover never also adds the stop.
+// The catalog's category text is free-form, but this app's seed data sticks
+// to a handful of values — map the ones we know, fall back to the neutral
+// (green) variant for anything else rather than leaving it unstyled.
+const ACTIVITY_CATEGORY_PILL_CLASS: Record<string, string> = {
+  "Day Trip": "item-type-pill-danger",
+  "Adventure": "item-type-pill-ai",
+  "Class": "item-type-pill-flight",
+  "Nightlife & Dining": "item-type-pill-hotel",
+};
+function activityCategoryPillClass(category: string): string {
+  return ACTIVITY_CATEGORY_PILL_CLASS[category] ?? "item-type-pill";
+}
+
 function ActivityDetailPopover({ activity }: { activity: { title: string; rating: number | null; suitableFor: string | null } }) {
   if (activity.rating == null && !activity.suitableFor) return null;
   return <div className="activity-detail-popover">
@@ -518,7 +531,7 @@ type AddStopFlowProps = {
   createCreatorPick: () => void;
   activitySearch: string;
   setActivitySearch: Dispatch<SetStateAction<string>>;
-  recommendedActivities: { title: string; meta: string; price: string; rating: number | null; suitableFor: string | null }[];
+  recommendedActivities: { title: string; category: string | null; meta: string; price: string; rating: number | null; suitableFor: string | null }[];
   addRecommendedActivity: (title: string, meta: string, price: string) => void;
   moreActivitiesOpen: boolean;
   setMoreActivitiesOpen: Dispatch<SetStateAction<boolean>>;
@@ -678,10 +691,13 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
                     <h5>Recommended for {p.activeDayCity ?? "this trip"}</h5>
                     <div className="activity-results">
                       {p.recommendedActivities.slice(0, 3).map((activity) => <div key={activity.title} className="activity-card">
-                        <button className="activity-add-btn" aria-label={`Add ${activity.title}`} onClick={() => p.addRecommendedActivity(activity.title, activity.meta, activity.price)}><Icon name="plus" size={16} /></button>
+                        {activity.category && <span className={`item-type-pill ${activityCategoryPillClass(activity.category)}`}>{activity.category}</span>}
                         <strong>{activity.title}</strong>
-                        <small>{activity.meta}</small>
-                        <b>{activity.price}</b>
+                        <small><Icon name="clock" size={12} />{activity.meta}</small>
+                        <div className="activity-card-footer">
+                          <span className="activity-card-from"><small>FROM</small><b>{activity.price}</b></span>
+                          <button type="button" className="activity-add-btn" aria-label={`Add ${activity.title}`} onClick={() => p.addRecommendedActivity(activity.title, activity.meta, activity.price)}><Icon name="plus" size={14} />Add</button>
+                        </div>
                         <ActivityDetailPopover activity={activity} />
                       </div>)}
                       {p.recommendedActivities.length === 0 && <p>No activities found. Try another search or create your own.</p>}
@@ -693,10 +709,13 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
                       </button>
                       {p.moreActivitiesOpen && <div className="activity-results activity-results-more">
                         {p.recommendedActivities.slice(3).map((activity) => <div key={activity.title} className="activity-card">
-                          <button className="activity-add-btn" aria-label={`Add ${activity.title}`} onClick={() => p.addRecommendedActivity(activity.title, activity.meta, activity.price)}><Icon name="plus" size={16} /></button>
+                          {activity.category && <span className={`item-type-pill ${activityCategoryPillClass(activity.category)}`}>{activity.category}</span>}
                           <strong>{activity.title}</strong>
-                          <small>{activity.meta}</small>
-                          <b>{activity.price}</b>
+                          <small><Icon name="clock" size={12} />{activity.meta}</small>
+                          <div className="activity-card-footer">
+                            <span className="activity-card-from"><small>FROM</small><b>{activity.price}</b></span>
+                            <button type="button" className="activity-add-btn" aria-label={`Add ${activity.title}`} onClick={() => p.addRecommendedActivity(activity.title, activity.meta, activity.price)}><Icon name="plus" size={14} />Add</button>
+                          </div>
                           <ActivityDetailPopover activity={activity} />
                         </div>)}
                       </div>}
@@ -771,7 +790,7 @@ export default function ItineraryEditor({
   const [expandedFeasibility, setExpandedFeasibility] = useState<"critical" | "suggestions" | "passed" | null>(null);
   const [addFlow, setAddFlow] = useState<AddFlowStep>("type");
   const [activitySearch, setActivitySearch] = useState("");
-  const [recommendedActivities, setRecommendedActivities] = useState<{ title: string; meta: string; price: string; rating: number | null; suitableFor: string | null }[]>([]);
+  const [recommendedActivities, setRecommendedActivities] = useState<{ title: string; category: string | null; meta: string; price: string; rating: number | null; suitableFor: string | null }[]>([]);
   const [moreActivitiesOpen, setMoreActivitiesOpen] = useState(false);
   const [catalogHotels, setCatalogHotels] = useState<CreatorHotelDetail[] | null>(null);
   const [flightSearch, setFlightSearch] = useState("");
@@ -1039,7 +1058,8 @@ export default function ItineraryEditor({
       });
       setRecommendedActivities(deduped.map((row) => ({
         title: row.activity_name,
-        meta: [row.category, row.duration_hours ? `${Math.round(row.duration_hours * 60)} min` : null, row.city].filter(Boolean).join(" · "),
+        category: row.category,
+        meta: [row.duration_hours ? `${Math.round(row.duration_hours * 60)} min` : null, row.city].filter(Boolean).join(" · "),
         price: row.price_aud ? `$${row.price_aud}` : "Free",
         rating: row.rating,
         suitableFor: row.suitable_for,

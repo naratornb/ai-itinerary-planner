@@ -427,6 +427,8 @@ button:focus-visible, textarea:focus-visible { outline: 3px solid var(--fc-focus
 .item-type-pill { padding: 3px 9px; border-radius: 999px; border: 1px solid var(--fc-success-border); background: var(--fc-success-subtle); color: var(--fc-success); font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
 .item-type-pill-flight { border-color: var(--fc-info-border); background: var(--fc-info-subtle); color: var(--fc-blue); }
 .item-type-pill-hotel { border-color: var(--fc-warning-border); background: var(--fc-warning-subtle); color: var(--fc-warning); }
+.item-type-pill-danger { border-color: var(--fc-danger-border); background: var(--fc-danger-subtle); color: var(--fc-red); }
+.item-type-pill-ai { border-color: var(--fc-ai-border); background: var(--fc-ai-subtle); color: var(--fc-ai); }
 .item-copy-meta-item { display: inline-flex; align-items: center; gap: 4px; color: var(--fc-secondary); font-size: 12px; line-height: 16px; }
 .item-copy-meta-item svg { flex: 0 0 auto; }
 .item-actions { align-self: stretch; display: flex; align-items: center; justify-content: center; gap: 4px; background: #fff; }
@@ -611,12 +613,17 @@ figure .remove-photo-btn:focus-visible { outline: 2px solid var(--fc-focus-ring)
 .flight-results > p { margin: 0; padding: 28px; color: var(--fc-secondary); text-align: center; border: 1px dashed var(--fc-border); border-radius: 10px; }
 .inline-add h5 { margin: 20px 0 10px; color: var(--fc-secondary); font-size: 12px; line-height: 16px; letter-spacing: .06em; text-transform: uppercase; }
 .activity-results { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; }
-.activity-card { position: relative; border: 1px solid var(--fc-border); border-radius: 10px; background: #fff; }
-.activity-results > .activity-card { min-height: 112px; padding: 14px; display: grid; align-content: end; gap: 2px; }
+.activity-card { position: relative; min-height: 132px; padding: 14px; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; border: 1px solid var(--fc-border); border-radius: 10px; background: #fff; }
 .activity-card:hover, .activity-card:focus-within { border-color: var(--fc-blue); }
-.activity-results strong { font-size: 14px; line-height: 20px; }.activity-results small { color: var(--fc-secondary); font-size: 12px; line-height: 16px; }.activity-results b { font-size: 12px; line-height: 16px; }
-.activity-add-btn { position: absolute; top: 6px; right: 6px; width: 28px; height: 28px; display: grid; place-items: center; border: 0; border-radius: 6px; background: transparent; color: var(--fc-blue); cursor: pointer; }
-.activity-add-btn:hover { background: var(--fc-surface-subtle); }
+.activity-card > strong { max-width: 100%; overflow: hidden; font-size: 14px; line-height: 20px; text-overflow: ellipsis; white-space: nowrap; }
+.activity-card > small { display: flex; align-items: center; gap: 4px; color: var(--fc-secondary); font-size: 12px; line-height: 16px; }
+.activity-card > small svg { flex: 0 0 auto; }
+.activity-card-footer { margin-top: auto; padding-top: 8px; width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.activity-card-from { display: flex; align-items: baseline; gap: 5px; }
+.activity-card-from small { color: var(--fc-secondary); font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.activity-card-from b { color: var(--fc-ink); font-size: 13px; font-weight: 700; }
+.activity-add-btn { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px; min-height: 30px; padding: 0 10px; border: 1px solid var(--fc-info-border); border-radius: 999px; background: var(--fc-info-subtle); color: var(--fc-blue); font-size: 12px; font-weight: 700; cursor: pointer; transition: background 140ms ease-out; }
+.activity-add-btn:hover { background: #dcebff; }
 .activity-detail-popover { position: absolute; left: 0; right: 0; top: 100%; z-index: 5; margin-top: 4px; padding: 10px 12px; display: none; flex-direction: column; gap: 4px; border: 1px solid var(--fc-border); border-radius: 8px; background: #fff; box-shadow: 0 8px 24px rgba(0,0,0,.12); color: var(--fc-secondary); font-size: 12px; line-height: 16px; }
 .activity-card:hover .activity-detail-popover, .activity-card:focus-within .activity-detail-popover { display: flex; }
 .activity-detail-rating { display: flex; align-items: center; gap: 4px; color: var(--fc-ink); font-weight: 600; }
