@@ -37,6 +37,7 @@ import {
 } from "../lib/creator-api";
 import { itinerarySnapshotStorageKey, parseWizardVibesDraft, wizardVibesStorageKey } from "../lib/review-draft";
 import { APP_ROUTES } from "../lib/routes";
+import { iataOf } from "../lib/ai/itinerary";
 import { supabase } from "../lib/supabase/client";
 import Icon from "./icon";
 
@@ -793,6 +794,7 @@ export default function ItineraryEditor({
   const [recommendedActivities, setRecommendedActivities] = useState<{ title: string; category: string | null; meta: string; price: string; rating: number | null; suitableFor: string | null }[]>([]);
   const [moreActivitiesOpen, setMoreActivitiesOpen] = useState(false);
   const [catalogHotels, setCatalogHotels] = useState<CreatorHotelDetail[] | null>(null);
+  const [catalogFlights, setCatalogFlights] = useState<CreatorFlightDetail[] | null>(null);
   const [flightSearch, setFlightSearch] = useState("");
   const [selectedFlightIndex, setSelectedFlightIndex] = useState<number | null>(null);
   const [selectedHotelIndex, setSelectedHotelIndex] = useState<number | null>(null);
@@ -1094,6 +1096,38 @@ export default function ItineraryEditor({
     }, 250);
     return () => window.clearTimeout(timer);
   }, [addFlow, activeDayCity, hotelSearch, hotelSort]);
+
+  // Reference flights, same gap as hotels had: the package only carries
+  // whichever flights the AI happened to attach at creation, not the full
+  // catalog. These are examples arriving at the destination — origin is up
+  // to the traveller, so only destination is filtered here.
+  useEffect(() => {
+    if (addFlow !== "flight") return;
+    const timer = window.setTimeout(async () => {
+      let query = supabase
+        .from("flights")
+        .select("flight_id,airline,flight_number,origin,destination,departure_datetime,arrival_datetime,cabin_class,price_aud")
+        .order("departure_datetime", { ascending: true })
+        .limit(24);
+      // Unlike activities/hotels' plain city columns, flights.destination is
+      // stored as "City (CODE)" (e.g. "Kyoto (UKY)") — an exact match against
+      // a bare city name never hits, so this needs ilike instead.
+      if (activeDayCity) query = query.or(`destination.ilike.%${activeDayCity}%,destination_country.ilike.%${activeDayCity}%`);
+      const { data, error } = await query;
+      setCatalogFlights(error || !data ? [] : data.map((row) => ({
+        flight_id: row.flight_id,
+        airline: row.airline,
+        flight_number: row.flight_number,
+        origin_iata: iataOf(row.origin),
+        destination_iata: iataOf(row.destination),
+        departure_datetime: row.departure_datetime,
+        arrival_datetime: row.arrival_datetime,
+        cabin_class: row.cabin_class,
+        price_aud: row.price_aud,
+      })));
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [addFlow, activeDayCity]);
 
   const showNotice = (message: string) => {
     setNotice(message);
@@ -1511,7 +1545,7 @@ export default function ItineraryEditor({
     setSelectedFlightIndex(null);
   };
 
-  const matchingFlights = flights.filter((flight) =>
+  const matchingFlights = (catalogFlights ?? flights).filter((flight) =>
     [flight.airline, flight.flight_number, flight.origin_iata, flight.destination_iata].join(" ").toLowerCase().includes(flightSearch.trim().toLowerCase()),
   );
   const selectedHotelOption = selectedHotelIndex !== null ? (catalogHotels ?? hotels)[selectedHotelIndex] : undefined;
