@@ -208,11 +208,51 @@ export function moveItemInDay(
   });
 }
 
+/**
+ * A hotel stay's rows carry a baked-in "(Night 2 of 3)" / "(Check-out)" title
+ * and a stayMarker set once at creation — removing a day changes how many
+ * nights the remaining rows actually span, but nothing else re-derives them,
+ * so a stay missing its original check-in day keeps stale night counts (and
+ * no row left marked "check-in") forever. Re-derives both from each stay
+ * group's current position in `days`, in day order.
+ */
+export function recomputeHotelStayLabels(days: BuilderDay[]): BuilderDay[] {
+  const positions = new Map<string, { dayIndex: number; itemIndex: number }[]>();
+  days.forEach((day, dayIndex) => {
+    day.items.forEach((item, itemIndex) => {
+      if (item.type !== "HOTEL" || !item.stayGroupId) return;
+      const list = positions.get(item.stayGroupId) ?? [];
+      list.push({ dayIndex, itemIndex });
+      positions.set(item.stayGroupId, list);
+    });
+  });
+  let next = days;
+  for (const list of positions.values()) {
+    const nights = list.length - 1;
+    list.forEach(({ dayIndex, itemIndex }, offset) => {
+      const item = next[dayIndex].items[itemIndex];
+      const hotelName = item.hotelName ?? item.title.replace(STAY_LABEL_SUFFIX, "").trim();
+      const isCheckOut = offset === list.length - 1;
+      const title = isCheckOut
+        ? `${hotelName} (Check-out)`
+        : nights > 1 ? `${hotelName} (Night ${offset + 1} of ${nights})` : hotelName;
+      const stayMarker: TimelineItem["stayMarker"] = offset === 0 ? "check-in" : isCheckOut ? "check-out" : undefined;
+      if (item.title === title && item.stayMarker === stayMarker) return;
+      next = next.map((day, di) => di !== dayIndex ? day : {
+        ...day,
+        items: day.items.map((it, ii) => ii !== itemIndex ? it : { ...it, title, stayMarker }),
+      });
+    });
+  }
+  return next;
+}
+
 export function removeDay(days: BuilderDay[], dayId: string) {
   if (days.length === 1) return days;
-  return days
+  const remaining = days
     .filter((day) => day.id !== dayId)
     .map((day, index) => ({ ...day, day: index + 1 }));
+  return recomputeHotelStayLabels(remaining);
 }
 
 /** "150" -> "2h 30m", "120" -> "2h", "45" -> "45m", "0" -> "0m". */

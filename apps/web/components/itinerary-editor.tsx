@@ -2102,11 +2102,15 @@ export default function ItineraryEditor({
                     {isStayHead && item.stayGroupId && <button type="button" className="stat-edit-btn" aria-label="Edit stay dates" onClick={startEditingStay}><Icon name="pencil" size={13} /></button>}
                   </dd>}
                 </div>;
+                // stayDays reflects the current client-side day layout; `nights`
+                // (from the package's persisted check_in/check_out_date) doesn't
+                // change when a day is added or removed, so it goes stale first.
+                const effectiveNights = stayDays.length > 0 ? stayNightsFromDays : nights;
                 const hotelTitle = hotel?.hotel_name && isStayHead
-                  ? `${hotel.hotel_name}${nights ? ` (${nights} night${nights === 1 ? "" : "s"})` : ""}`
+                  ? `${hotel.hotel_name}${effectiveNights ? ` (${effectiveNights} night${effectiveNights === 1 ? "" : "s"})` : ""}`
                   : item.title;
-                const hotelTotal = isStayHead && nights && hotel?.price_per_night_aud !== null && hotel?.price_per_night_aud !== undefined
-                  ? `$${(hotel.price_per_night_aud * nights).toLocaleString("en-AU")}`
+                const hotelTotal = isStayHead && effectiveNights && hotel?.price_per_night_aud !== null && hotel?.price_per_night_aud !== undefined
+                  ? `$${(hotel.price_per_night_aud * effectiveNights).toLocaleString("en-AU")}`
                   : item.price;
                 const itemPrice = flight?.price_aud !== null && flight?.price_aud !== undefined
                   ? `$${flight.price_aud.toLocaleString("en-AU")}`
