@@ -209,12 +209,13 @@ export function moveItemInDay(
 }
 
 /**
- * A hotel stay's rows carry a baked-in "(Night 2 of 3)" / "(Check-out)" title
- * and a stayMarker set once at creation — removing a day changes how many
- * nights the remaining rows actually span, but nothing else re-derives them,
- * so a stay missing its original check-in day keeps stale night counts (and
- * no row left marked "check-in") forever. Re-derives both from each stay
- * group's current position in `days`, in day order.
+ * A hotel stay's rows carry a baked-in "(Night 2 of 3)" / "(Check-out)" title,
+ * a stayMarker, and a "Check-in"/"Check-out"/"Overnight stay" time label set
+ * once at creation — removing a day changes how many nights the remaining
+ * rows actually span, but nothing else re-derives them, so a stay missing its
+ * original check-in day keeps stale night counts (and no row left marked
+ * "check-in") forever. Re-derives all three from each stay group's current
+ * position in `days`, in day order.
  */
 export function recomputeHotelStayLabels(days: BuilderDay[]): BuilderDay[] {
   const positions = new Map<string, { dayIndex: number; itemIndex: number }[]>();
@@ -237,10 +238,11 @@ export function recomputeHotelStayLabels(days: BuilderDay[]): BuilderDay[] {
         ? `${hotelName} (Check-out)`
         : nights > 1 ? `${hotelName} (Night ${offset + 1} of ${nights})` : hotelName;
       const stayMarker: TimelineItem["stayMarker"] = offset === 0 ? "check-in" : isCheckOut ? "check-out" : undefined;
-      if (item.title === title && item.stayMarker === stayMarker) return;
+      const time = offset === 0 ? "Check-in" : isCheckOut ? "Check-out" : "Overnight stay";
+      if (item.title === title && item.stayMarker === stayMarker && item.time === time) return;
       next = next.map((day, di) => di !== dayIndex ? day : {
         ...day,
-        items: day.items.map((it, ii) => ii !== itemIndex ? it : { ...it, title, stayMarker }),
+        items: day.items.map((it, ii) => ii !== itemIndex ? it : { ...it, title, stayMarker, time }),
       });
     });
   }

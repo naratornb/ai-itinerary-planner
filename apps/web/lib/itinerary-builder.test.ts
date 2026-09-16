@@ -460,10 +460,10 @@ test("removeDay recomputes a hotel stay's night counts and check-in marker after
   // over 3 days, so the remaining rows must be relabeled "Night 1 of 2" /
   // "Night 2 of 2" / "(Check-out)" and day-2 must pick up the check-in marker.
   const days: BuilderDay[] = [
-    { id: "day-1", day: 1, title: "In", meta: "", items: [stayRow(1, "check-in")], story: "", photos: [] },
-    { id: "day-2", day: 2, title: "Stay", meta: "", items: [{ ...stayRow(2), title: "Shibuya Inn (Night 1 of 3)" }], story: "", photos: [] },
-    { id: "day-3", day: 3, title: "Stay", meta: "", items: [{ ...stayRow(3), title: "Shibuya Inn (Night 2 of 3)" }], story: "", photos: [] },
-    { id: "day-4", day: 4, title: "Out", meta: "", items: [{ ...stayRow(4, "check-out"), title: "Shibuya Inn (Check-out)" }], story: "", photos: [] },
+    { id: "day-1", day: 1, title: "In", meta: "", items: [{ ...stayRow(1, "check-in"), time: "Check-in" }], story: "", photos: [] },
+    { id: "day-2", day: 2, title: "Stay", meta: "", items: [{ ...stayRow(2), title: "Shibuya Inn (Night 1 of 3)", time: "Overnight stay" }], story: "", photos: [] },
+    { id: "day-3", day: 3, title: "Stay", meta: "", items: [{ ...stayRow(3), title: "Shibuya Inn (Night 2 of 3)", time: "Overnight stay" }], story: "", photos: [] },
+    { id: "day-4", day: 4, title: "Out", meta: "", items: [{ ...stayRow(4, "check-out"), title: "Shibuya Inn (Check-out)", time: "Check-out" }], story: "", photos: [] },
   ];
 
   const result = removeDay(days, "day-1");
@@ -471,10 +471,13 @@ test("removeDay recomputes a hotel stay's night counts and check-in marker after
   assert.equal(result.length, 3);
   assert.equal(result[0].items[0].stayMarker, "check-in");
   assert.equal(result[0].items[0].title, "Shibuya Inn (Night 1 of 2)");
+  assert.equal(result[0].items[0].time, "Check-in");
   assert.equal(result[1].items[0].stayMarker, undefined);
   assert.equal(result[1].items[0].title, "Shibuya Inn (Night 2 of 2)");
+  assert.equal(result[1].items[0].time, "Overnight stay");
   assert.equal(result[2].items[0].stayMarker, "check-out");
   assert.equal(result[2].items[0].title, "Shibuya Inn (Check-out)");
+  assert.equal(result[2].items[0].time, "Check-out");
 });
 
 test("recomputeHotelStayLabels collapses a 2-night stay to a single night when a middle day is deleted", () => {
