@@ -75,12 +75,14 @@ export type DayPhoto = { src: string; alt: string; media_id?: string };
 /**
  * A multi-night stay renders one row per night *plus* a check-out row, and
  * every row carries the same per-night price — so the check-out row would
- * bill an extra night it never covers.
+ * bill an extra night it never covers. Creator picks are a free personal
+ * recommendation, not a bookable package inclusion, so their price never
+ * counts toward what the traveller pays or the creator earns.
  */
 export function computePackagePrice(days: BuilderDay[]): number {
   return days
     .flatMap((day) => day.items)
-    .filter((item) => item.stayMarker !== "check-out")
+    .filter((item) => item.stayMarker !== "check-out" && item.type !== "CREATOR PICK")
     .reduce((sum, item) => sum + (Number(item.price.replace(/[^0-9.]/g, "")) || 0), 0);
 }
 
@@ -327,6 +329,33 @@ export function extractClockTimeInZone(dateStr: string | null, timeZone: string)
   const hour = parts.find((part) => part.type === "hour")?.value ?? "00";
   const minute = parts.find((part) => part.type === "minute")?.value ?? "00";
   return `${hour}:${minute}`;
+}
+
+/** Calendar date (in the given zone) as "YYYY-MM-DD", or null if unparseable. */
+function dateKeyInZone(dateStr: string | null | undefined, timeZone: string): string | null {
+  if (!dateStr) return null;
+  const date = new Date(dateStr);
+  if (Number.isNaN(date.getTime())) return null;
+  return new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
+}
+
+/**
+ * How many local calendar days later the flight lands than it departs —
+ * comparing each end's own clock, the way airlines show a "+1" on an
+ * overnight flight, not elapsed duration. Null when either time is missing.
+ */
+export function flightArrivalDayOffset(
+  departureDatetime: string | null | undefined,
+  originTimeZone: string,
+  arrivalDatetime: string | null | undefined,
+  destinationTimeZone: string,
+): number | null {
+  const departureKey = dateKeyInZone(departureDatetime, originTimeZone);
+  const arrivalKey = dateKeyInZone(arrivalDatetime, destinationTimeZone);
+  if (!departureKey || !arrivalKey) return null;
+  const departureDate = Date.parse(`${departureKey}T00:00:00Z`);
+  const arrivalDate = Date.parse(`${arrivalKey}T00:00:00Z`);
+  return Math.round((arrivalDate - departureDate) / 86_400_000);
 }
 
 /** Builds the editor from relative package days, with dated rows as a legacy fallback. */

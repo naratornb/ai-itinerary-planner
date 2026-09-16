@@ -9,6 +9,7 @@ import {
   copilotSuggestionToTimelineItem,
   daySubtitle,
   extractClockTimeInZone,
+  flightArrivalDayOffset,
   flightDurationMinutes,
   formatMinutes,
   getEndTime,
@@ -217,6 +218,20 @@ test("extractClockTimeInZone renders a flight's real instant in the given zone, 
 
   assert.equal(extractClockTimeInZone(instant, "Australia/Sydney"), "05:00");
   assert.equal(extractClockTimeInZone(instant, "Asia/Tokyo"), "03:00");
+});
+
+test("flightArrivalDayOffset flags an overnight flight that lands the next local day", () => {
+  // Departs London 21:15 local (UTC), lands Reykjavik 00:30 local the same
+  // UTC clock hour range next day — one calendar day later in both zones.
+  const departure = "2026-04-01T21:15:00Z";
+  const arrival = "2026-04-02T00:30:00Z";
+  assert.equal(flightArrivalDayOffset(departure, "Europe/London", arrival, "Atlantic/Reykjavik"), 1);
+});
+
+test("flightArrivalDayOffset is 0 for a same-day flight and null when a time is missing", () => {
+  // Well clear of Sydney's UTC+10/+11 midnight crossing either way.
+  assert.equal(flightArrivalDayOffset("2026-04-01T01:00:00Z", "Australia/Sydney", "2026-04-01T05:00:00Z", "Australia/Sydney"), 0);
+  assert.equal(flightArrivalDayOffset(null, "Australia/Sydney", "2026-04-01T13:00:00Z", "Australia/Sydney"), null);
 });
 
 test("the AI day summary loads into the story textarea, not the day meta", () => {
@@ -473,6 +488,25 @@ test("computePackagePrice parses a plain dollar price and treats Free/blank as 0
 
 test("computePackagePrice of no days is 0", () => {
   assert.equal(computePackagePrice([]), 0);
+});
+
+test("a creator pick's price never counts toward the package total", () => {
+  const days: BuilderDay[] = [
+    {
+      id: "day-1",
+      day: 1,
+      title: "Mixed",
+      meta: "",
+      items: [
+        { ...firstItem, id: 1, price: "$50" },
+        { ...firstItem, id: 2, type: "CREATOR PICK", price: "$999" },
+      ],
+      story: "",
+      photos: [],
+    },
+  ];
+
+  assert.equal(computePackagePrice(days), 50);
 });
 
 test("timezoneForIata knows Sydney and Tokyo, and falls back to Sydney for an unknown code", () => {
