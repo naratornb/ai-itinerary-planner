@@ -947,3 +947,10 @@ figure .remove-photo-btn:focus-visible { outline: 2px solid var(--fc-focus-ring)
   .copilot-form { margin: 0 22px; padding: 18px 0 max(28px, env(safe-area-inset-bottom)); }
   .copilot-form textarea { height: 48px; padding: 12px 68px 12px 14px; font-size: 16px; }
 }
+
+/* Marketplace trip card — whole card is the link, no nested button */
+.trip-card { transition: transform 160ms ease-out, box-shadow 200ms ease-out; }
+.trip-card:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(33,33,33,0.12); }
+.trip-card:focus-visible { outline: 3px solid var(--fc-focus-ring); outline-offset: 2px; }
+.trip-card-img { transition: transform 400ms ease-out; }
+.trip-card:hover .trip-card-img { transform: scale(1.04); }

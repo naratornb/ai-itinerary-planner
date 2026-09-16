@@ -389,7 +389,9 @@ export function buildDaysFromPackage(pkg: CreatorPackageDetail): BuilderDay[] {
       : dayIndexFor(activity.activity_date ?? null);
     days[dayIndex].items.push({
       id: nextId,
-      time: activity.start_time || "09:00",
+      // No start_time stays empty here — the ordering pass below slots it
+      // after the previous activity instead of faking a shared 09:00.
+      time: activity.start_time || "",
       type: "ACTIVITY",
       title: activity.activity_name || "Activity",
       price: `$${activity.price_aud ?? 0}`,
@@ -495,12 +497,32 @@ export function buildDaysFromPackage(pkg: CreatorPackageDetail): BuilderDay[] {
     }
   }
 
-  for (const day of days) day.items.sort((a, b) => {
-    if (a.sequenceOrder !== undefined || b.sequenceOrder !== undefined) {
+  // Check-out leads the day and the stay closes it; flights and activities
+  // order chronologically in between. The old sequence_order sort interleaved
+  // every component at sequence 1, dropping the hotel row mid-day — and every
+  // activity lacking a start_time collapsed onto "09:00", so they all
+  // overlapped. Missing activity times chain off the previous activity's end.
+  const dayBand = (item: TimelineItem) =>
+    item.type === "HOTEL" ? (item.stayMarker === "check-out" ? 0 : 3) : item.type === "FLIGHT" ? 1 : 2;
+  for (const day of days) {
+    day.items.sort((a, b) => {
+      const band = dayBand(a) - dayBand(b);
+      if (band !== 0) return band;
+      if (REAL_TIME.test(a.time) && REAL_TIME.test(b.time)) return a.time.localeCompare(b.time);
       return (a.sequenceOrder ?? Number.MAX_SAFE_INTEGER) - (b.sequenceOrder ?? Number.MAX_SAFE_INTEGER);
+    });
+    let cursor = "09:00";
+    for (const item of day.items) {
+      if (item.type !== "ACTIVITY") continue;
+      if (REAL_TIME.test(item.time)) {
+        const end = getEndTime(item.time, item.duration ?? "0");
+        if (end > cursor) cursor = end;
+      } else {
+        item.time = cursor;
+        cursor = getEndTime(cursor, item.duration ?? "60");
+      }
     }
-    return a.time.localeCompare(b.time);
-  });
+  }
   return days;
 }
 

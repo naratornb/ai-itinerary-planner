@@ -119,6 +119,9 @@ export type CreatorPackageDetail = {
   // apps/api/app/packages/schemas.py) but unused until now, so left untyped.
   description?: string | null;
   max_group_size?: number | null;
+  // Not yet in the API response — renders when the backend ships these columns.
+  season?: string | null;
+  suitable_for?: string | null;
   tags?: string[];
   status?: string;
   flights: CreatorFlightDetail[];
@@ -358,6 +361,9 @@ export type CreatePackageInput = {
   duration_days: number;
   base_price_aud: number;
   max_group_size?: number | null;
+  // Accepted by POST /packages (TravelPackageCreate.tags) — the wizard sends
+  // the picked vibe ids so the package keeps them past session storage.
+  tags?: string[];
   flights?: FlightInput[];
   hotels?: HotelInput[];
   activities?: ActivityInput[];
