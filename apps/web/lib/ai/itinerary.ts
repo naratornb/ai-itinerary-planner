@@ -148,10 +148,7 @@ function iataOf(place: string | undefined): string | null {
   return /^[A-Z]{3}$/.test(value) ? value : null;
 }
 
-const clockOf = (value: string | undefined): string | null => {
-  const match = /T(\d{2}:\d{2})/.exec(value ?? "");
-  return match?.[1] ?? null;
-};
+
 
 function relativeDayOf(value: string | undefined, tripStart: string | undefined, fallback: number): number {
   const day = Date.parse((value ?? "").slice(0, 10));
@@ -160,12 +157,7 @@ function relativeDayOf(value: string | undefined, tripStart: string | undefined,
   return Math.max(1, Math.round((day - start) / 86_400_000) + 1);
 }
 
-function durationMinutesBetween(start: string | undefined, end: string | undefined): number | null {
-  const startTime = Date.parse(start ?? "");
-  const endTime = Date.parse(end ?? "");
-  if (!Number.isFinite(startTime) || !Number.isFinite(endTime) || endTime <= startTime) return null;
-  return Math.round((endTime - startTime) / 60_000);
-}
+
 
 const roundOrNull = (n: number | undefined) =>
   typeof n === "number" && Number.isFinite(n) ? Math.round(n) : null;
@@ -204,9 +196,8 @@ export function itineraryToPackageInput(
       origin_iata: origin,
       destination_iata: destination,
       airline: flight.airline,
-      departure_time: clockOf(flight.departure_datetime),
-      arrival_time: clockOf(flight.arrival_datetime),
-      duration_minutes: durationMinutesBetween(flight.departure_datetime, flight.arrival_datetime),
+      departure_datetime: flight.departure_datetime,
+      arrival_datetime: flight.arrival_datetime,
       cabin_class: flight.cabin_class ?? null,
       price_aud: roundOrNull(flight.price_aud),
       day_number: isReturn ? duration : 1,
