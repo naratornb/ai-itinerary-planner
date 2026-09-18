@@ -209,6 +209,59 @@ test("a flight lands on its arrival day, at its arrival time in the destination'
   assert.equal(flightItem?.time, "14:00");
 });
 
+test("items in the same day are ordered by their real clock time, not a stale sequence_order", () => {
+  // Regression: a return flight departing 20:06 with sequence_order=1 (an early DB
+  // position, e.g. left over from before its local time was corrected) was sorting
+  // BEFORE a 09:00 activity that has no sequence_order at all — because the old
+  // comparator used sequenceOrder for the whole pair whenever EITHER side had one,
+  // ignoring that both items actually had a real, comparable clock time. That broke
+  // every adjacency-based conflict check downstream (findTimeConflict/annotateItems),
+  // which assume array order matches chronological order.
+  const pkg: CreatorPackageDetail = {
+    package_id: "pkg-3",
+    title: "Bali Getaway",
+    duration_days: 1,
+    days: [],
+    hotels: [],
+    activities: [
+      {
+        activity_id: "act-1",
+        sequence_order: null,
+        activity_name: "Denpasar Language & Culture Crash Course",
+        activity_date: null,
+        city: "Denpasar",
+        duration_hours: 2.9,
+        price_aud: 496,
+        description: null,
+        booking_required: null,
+        day_number: 1,
+        start_time: "09:00",
+      },
+    ],
+    flights: [
+      {
+        flight_id: "fl-1",
+        day_number: 1,
+        sequence_order: 1,
+        airline: "Jetstar",
+        flight_number: "JQ36",
+        origin_iata: "DPS",
+        destination_iata: "SYD",
+        departure_time: "20:06",
+        cabin_class: "economy",
+        price_aud: 510,
+      },
+    ],
+  };
+
+  const [day] = buildDaysFromPackage(pkg);
+
+  assert.deepEqual(day.items.map((item) => item.title), [
+    "Denpasar Language & Culture Crash Course",
+    "DPS to SYD",
+  ]);
+});
+
 test("extractClockTimeInZone renders a flight's real instant in the given zone, not a raw ISO substring", () => {
   // Stored with a +14:00 offset: the digits right after "T" ("08:00") match
   // neither Sydney's nor Tokyo's clock — only a real zone-aware conversion
