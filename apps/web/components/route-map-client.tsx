@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
 import { importLibrary, setOptions } from "@googlemaps/js-api-loader";
 
 export type RouteStop = { label: string; time?: string; coordinate: [number, number] };
@@ -20,7 +20,7 @@ function toLatLng(coordinate: [number, number]): google.maps.LatLngLiteral {
   return { lat: coordinate[0], lng: coordinate[1] };
 }
 
-export default function RouteMap({ stops }: { stops: RouteStop[] }) {
+function RouteMap({ stops }: { stops: RouteStop[] }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<google.maps.Map | null>(null);
 
@@ -88,8 +88,15 @@ export default function RouteMap({ stops }: { stops: RouteStop[] }) {
       };
       fit();
 
-      resizeObserver = new ResizeObserver(() => {
-        google.maps.event.trigger(map, "resize");
+      // Maps JS handles container resizes itself; we only refit when the box
+      // genuinely changes size. Refitting on every callback loops: fitBounds
+      // relayouts the canvas, which fires the observer again.
+      let lastSize = "";
+      resizeObserver = new ResizeObserver(([entry]) => {
+        const { width, height } = entry.contentRect;
+        const size = `${Math.round(width)}x${Math.round(height)}`;
+        if (!width || !height || size === lastSize) return;
+        lastSize = size;
         fit();
       });
       resizeObserver.observe(containerRef.current);
@@ -118,3 +125,12 @@ export default function RouteMap({ stops }: { stops: RouteStop[] }) {
     </div>
   );
 }
+
+// Editor state changes recreate the array even when the route is unchanged.
+export default memo(RouteMap, (previous, next) =>
+  previous.stops.length === next.stops.length && previous.stops.every((stop, index) => {
+    const other = next.stops[index];
+    return stop.label === other.label && stop.time === other.time
+      && stop.coordinate[0] === other.coordinate[0] && stop.coordinate[1] === other.coordinate[1];
+  }),
+);
