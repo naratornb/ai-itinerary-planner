@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { useRouter } from "next/navigation";
 import CopilotPanel from "./copilot/copilot-panel";
 import { HotelChoiceCard } from "./hotel-choice-card";
 import RouteMap, { type RouteStop } from "./route-map";
@@ -12,6 +13,7 @@ import {
   computePackagePrice,
   copilotSuggestionToTimelineItem,
   extractClockTimeInZone,
+  flightArrivalDayOffset,
   flightDurationMinutes,
   getEndTime,
   insertItemInDay,
@@ -35,7 +37,9 @@ import {
   type CreatorHotelDetail,
   type CreatorPackageDetail,
 } from "../lib/creator-api";
-import { itinerarySnapshotStorageKey } from "../lib/review-draft";
+import { itinerarySnapshotStorageKey, parseWizardVibesDraft, wizardVibesStorageKey } from "../lib/review-draft";
+import { APP_ROUTES } from "../lib/routes";
+import { iataOf } from "../lib/ai/itinerary";
 import { supabase } from "../lib/supabase/client";
 import Icon from "./icon";
 
@@ -109,7 +113,13 @@ export function deriveFlightType(
 }
 
 const ACTIVITY_CATEGORIES = ["Activity", "Restaurant", "Shopping", "Attraction", "Other"];
-const DURATION_OPTIONS = ["30", "60", "90", "120", "180"];
+const DURATION_OPTIONS = ["30", "60", "90", "120", "150", "180", "210", "240"];
+// Labels, not ids — the wizard's sessionStorage stash stores vibes by label.
+const TRIP_VIBE_OPTIONS = ["Chill", "Adventure", "Luxury", "Local Experience", "Foodie", "Scenic"];
+const TRIP_SEASON_OPTIONS = ["spring", "summer", "autumn", "winter"];
+const MAX_TRIP_VIBES = 3;
+// Matches the wizard's longest duration bucket (9-14 days).
+const MAX_TRIP_DAYS = 14;
 const MAX_ITEM_PHOTOS = 6;
 // The detail page only renders one hero image per day (assignDayImages maps
 // one media item per day slot) — a second upload here would never be shown.
@@ -397,10 +407,119 @@ function Panel({ title, icon, badge, children, className = "" }: { title: string
   return <section className={`editor-panel ${className}`}><div className="editor-panel-header"><h2>{icon}{title}</h2>{badge}</div>{children}</section>;
 }
 
+const TIME_FIELD_HOURS = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, "0"));
+const TIME_FIELD_MINUTES = Array.from({ length: 60 }, (_, i) => String(i).padStart(2, "0"));
+
+// A "HH:MM" input that still accepts direct keyboard typing (the real
+// <input type="time"> underneath), plus a styled dropdown — opened by our
+// own chevron, never the browser's native picker — for click-to-pick.
+function TimeField({ value, onChange, ariaLabel, className = "" }: { value: string; onChange: (value: string) => void; ariaLabel: string; className?: string }) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [hh, mm] = value.split(":");
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocMouseDown = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onDocMouseDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onDocMouseDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  return (
+    <div className={`time-field ${className}`} ref={containerRef}>
+      <input type="time" className="time-field-input" aria-label={ariaLabel} value={value} onChange={(event) => onChange(event.target.value)} />
+      <button type="button" className="time-field-toggle" aria-label={`${open ? "Close" : "Open"} time picker`} aria-expanded={open} onClick={() => setOpen((current) => !current)}>
+        <Icon name="chevron" size={13} />
+      </button>
+      {open && (
+        <div className="time-field-dropdown" role="presentation">
+          <div className="time-field-col" role="listbox" aria-label="Hour">
+            {TIME_FIELD_HOURS.map((h) => (
+              <button type="button" key={h} role="option" aria-selected={h === hh} className={`time-field-option${h === hh ? " selected" : ""}`} onClick={() => onChange(`${h}:${mm}`)}>{h}</button>
+            ))}
+          </div>
+          <div className="time-field-col" role="listbox" aria-label="Minute">
+            {TIME_FIELD_MINUTES.map((m) => (
+              <button type="button" key={m} role="option" aria-selected={m === mm} className={`time-field-option${m === mm ? " selected" : ""}`} onClick={() => { onChange(`${hh}:${m}`); setOpen(false); }}>{m}</button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+type SelectFieldOption = { value: string; label: string };
+
+// A styled stand-in for a native <select> of a short fixed option list
+// (durations, categories, day pickers, …) — no native dropdown to restyle,
+// so this is a plain button + custom list instead of an <input> like
+// TimeField. String options are shorthand for { value, label } pairs where
+// the two are the same (durations, categories); day pickers need distinct
+// value (the day id) and label (the display text) so pass objects there.
+function SelectField({ value, onChange, options, ariaLabel, className = "", placeholder }: { value: string; onChange: (value: string) => void; options: (string | SelectFieldOption)[]; ariaLabel: string; className?: string; placeholder?: string }) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const normalized = options.map((option) => (typeof option === "string" ? { value: option, label: option } : option));
+  const selectedLabel = normalized.find((option) => option.value === value)?.label ?? placeholder ?? value;
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocMouseDown = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onDocMouseDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onDocMouseDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  return (
+    <div className={`select-field ${className}`} ref={containerRef}>
+      <button type="button" className="select-field-trigger" aria-label={ariaLabel} aria-haspopup="listbox" aria-expanded={open} onClick={() => setOpen((current) => !current)}>
+        <span>{selectedLabel}</span>
+        <Icon name="chevron" size={13} />
+      </button>
+      {open && (
+        <div className="select-field-dropdown" role="listbox" aria-label={ariaLabel}>
+          {normalized.map((option) => (
+            <button type="button" key={option.value} role="option" aria-selected={option.value === value} className={`select-field-option${option.value === value ? " selected" : ""}`} onClick={() => { onChange(option.value); setOpen(false); }}>
+              {option.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Hover (desktop) or tab-focus (keyboard/touch) reveals rating and
 // suitable-for — the two catalog fields that don't fit on the card face —
 // without an extra click. The "+" stays a separate button, so a tap that
 // only opens the popover never also adds the stop.
+// The catalog's category text is free-form, but this app's seed data sticks
+// to a handful of values — map the ones we know, fall back to the neutral
+// (green) variant for anything else rather than leaving it unstyled.
+const ACTIVITY_CATEGORY_PILL_CLASS: Record<string, string> = {
+  "Day Trip": "item-type-pill-danger",
+  "Adventure": "item-type-pill-ai",
+  "Class": "item-type-pill-flight",
+  "Nightlife & Dining": "item-type-pill-hotel",
+};
+function activityCategoryPillClass(category: string): string {
+  return ACTIVITY_CATEGORY_PILL_CLASS[category] ?? "item-type-pill";
+}
+
 function ActivityDetailPopover({ activity }: { activity: { title: string; rating: number | null; suitableFor: string | null } }) {
   if (activity.rating == null && !activity.suitableFor) return null;
   return <div className="activity-detail-popover">
@@ -416,6 +535,11 @@ type AddStopFlowProps = {
   setAddFlow: Dispatch<SetStateAction<AddFlowStep>>;
   flightSearch: string;
   setFlightSearch: Dispatch<SetStateAction<string>>;
+  flightSort: "arrival" | "price_asc" | "price_desc";
+  setFlightSort: Dispatch<SetStateAction<"arrival" | "price_asc" | "price_desc">>;
+  flightAirlineFilter: string;
+  setFlightAirlineFilter: Dispatch<SetStateAction<string>>;
+  flightAirlineOptions: string[];
   matchingFlights: CreatorFlightDetail[];
   selectedFlightIndex: number | null;
   setSelectedFlightIndex: Dispatch<SetStateAction<number | null>>;
@@ -423,6 +547,12 @@ type AddStopFlowProps = {
   availableHotels: CreatorHotelDetail[];
   selectedHotelIndex: number | null;
   setSelectedHotelIndex: Dispatch<SetStateAction<number | null>>;
+  moreHotelsOpen: boolean;
+  setMoreHotelsOpen: Dispatch<SetStateAction<boolean>>;
+  hotelSearch: string;
+  setHotelSearch: Dispatch<SetStateAction<string>>;
+  hotelSort: "rating" | "price_asc" | "price_desc";
+  setHotelSort: Dispatch<SetStateAction<"rating" | "price_asc" | "price_desc">>;
   selectedHotelOption: CreatorHotelDetail | undefined;
   hotelCheckInDayId: string | null;
   setHotelCheckInDayId: Dispatch<SetStateAction<string | null>>;
@@ -444,7 +574,7 @@ type AddStopFlowProps = {
   createCreatorPick: () => void;
   activitySearch: string;
   setActivitySearch: Dispatch<SetStateAction<string>>;
-  recommendedActivities: { title: string; meta: string; price: string; rating: number | null; suitableFor: string | null }[];
+  recommendedActivities: { title: string; category: string | null; meta: string; price: string; rating: number | null; suitableFor: string | null }[];
   addRecommendedActivity: (title: string, meta: string, price: string) => void;
   moreActivitiesOpen: boolean;
   setMoreActivitiesOpen: Dispatch<SetStateAction<boolean>>;
@@ -467,17 +597,42 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
 
                   {p.addFlow === "flight" && <>
                     <div className="inline-add-head"><button className="inline-back" onClick={() => p.setAddFlow("type")} aria-label="Back to item types">‹</button><h4>Choose a reference flight</h4><button onClick={() => p.setAddingAfter(null)}>Cancel</button></div>
-                    <label className="activity-search"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input value={p.flightSearch} onChange={(event) => p.setFlightSearch(event.target.value)} placeholder="Search by airport, airline, or flight number" /></label>
+                    <div className="hotel-filter-row">
+                      <label className="activity-search"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input value={p.flightSearch} onChange={(event) => p.setFlightSearch(event.target.value)} placeholder="Search by airport, airline, or flight number" /></label>
+                      {p.flightAirlineOptions.length > 1 && (
+                        <SelectField
+                          value={p.flightAirlineFilter}
+                          onChange={p.setFlightAirlineFilter}
+                          options={[{ value: "", label: "All airlines" }, ...p.flightAirlineOptions.map((airline) => ({ value: airline, label: airline }))]}
+                          ariaLabel="Filter by airline"
+                          className="hotel-sort-field"
+                        />
+                      )}
+                      <SelectField
+                        value={p.flightSort}
+                        onChange={(value) => p.setFlightSort(value as "arrival" | "price_asc" | "price_desc")}
+                        options={[
+                          { value: "arrival", label: "Earliest arrival" },
+                          { value: "price_asc", label: "Price: low to high" },
+                          { value: "price_desc", label: "Price: high to low" },
+                        ]}
+                        ariaLabel="Sort flights"
+                        className="hotel-sort-field"
+                      />
+                    </div>
                     <p className="database-note">Choose an example for the itinerary. Travellers will see similar flights after selecting their dates and departure airport.</p>
                     <div className="flight-results" role="radiogroup" aria-label="Available flights">
                       {p.matchingFlights.map((flight, index) => {
-                        const departureTime = extractClockTimeInZone(flight.departure_datetime, timezoneForIata(flight.origin_iata)) ?? "--:--";
-                        const arrivalTime = extractClockTimeInZone(flight.arrival_datetime, timezoneForIata(flight.destination_iata)) ?? "--:--";
+                        const originTimeZone = timezoneForIata(flight.origin_iata);
+                        const destinationTimeZone = timezoneForIata(flight.destination_iata);
+                        const departureTime = extractClockTimeInZone(flight.departure_datetime, originTimeZone) ?? "--:--";
+                        const arrivalTime = extractClockTimeInZone(flight.arrival_datetime, destinationTimeZone) ?? "--:--";
+                        const dayOffset = flightArrivalDayOffset(flight.departure_datetime, originTimeZone, flight.arrival_datetime, destinationTimeZone);
                         return <button key={flight.flight_id ?? index} type="button" role="radio" aria-checked={p.selectedFlightIndex === index} className={p.selectedFlightIndex === index ? "selected" : ""} onClick={() => p.setSelectedFlightIndex(index)}>
                           <span className="flight-brand"><strong>{flight.airline ?? "Airline not provided"}</strong><small>{flight.flight_number ?? ""}</small></span>
                           <span className="flight-route"><strong>{departureTime}</strong><small>{flight.origin_iata ?? "Not provided"}</small></span>
                           <span className="flight-duration"><i aria-hidden="true"><Icon name="plane" size={20} /></i></span>
-                          <span className="flight-route"><strong>{arrivalTime}</strong><small>{flight.destination_iata ?? "Not provided"}</small></span>
+                          <span className="flight-route"><strong>{arrivalTime}{dayOffset ? <sup className="flight-day-offset" title={`Arrives ${dayOffset} day${dayOffset === 1 ? "" : "s"} later`}>+{dayOffset}</sup> : null}</strong><small>{flight.destination_iata ?? "Not provided"}</small></span>
                           <span className="flight-fare"><small>Estimated</small><strong>{flight.price_aud != null ? `$${flight.price_aud.toLocaleString("en-US")}` : "Not provided"}</strong></span>
                           <span className="flight-select" aria-hidden="true">{p.selectedFlightIndex === index ? <Icon name="check" size={18} /> : ""}</span>
                         </button>;
@@ -490,10 +645,32 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
                   {p.addFlow === "hotel" && <>
                     <div className="inline-add-head"><button className="inline-back" onClick={() => p.setAddFlow("type")} aria-label="Back to item types">‹</button><h4>Add hotel</h4><button onClick={() => p.setAddingAfter(null)}>Cancel</button></div>
                     <p className="database-note">Hotels are supplied by Travel Marketplace and cannot be edited here.</p>
-                    <div className="hotel-choice-grid" role="radiogroup" aria-label="Available hotels">
-                      {p.availableHotels.map((hotel, index) => <HotelChoiceCard key={hotel.hotel_id ?? hotel.hotel_name ?? index} hotel={hotel} selected={p.selectedHotelIndex === index} onSelect={() => p.setSelectedHotelIndex(index)} />)}
-                      {p.availableHotels.length === 0 && <p>No hotels found for this package.</p>}
-                    </div>
+                    {!p.selectedHotelOption && <>
+                      <div className="hotel-filter-row">
+                        <label className="activity-search"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" /></svg><input value={p.hotelSearch} onChange={(event) => p.setHotelSearch(event.target.value)} placeholder="Search hotels by name" /></label>
+                        <SelectField
+                          value={p.hotelSort}
+                          onChange={(value) => p.setHotelSort(value as "rating" | "price_asc" | "price_desc")}
+                          options={[
+                            { value: "rating", label: "Top rated" },
+                            { value: "price_asc", label: "Price: low to high" },
+                            { value: "price_desc", label: "Price: high to low" },
+                          ]}
+                          ariaLabel="Sort hotels"
+                          className="hotel-sort-field"
+                        />
+                      </div>
+                      <div className="hotel-choice-grid" role="radiogroup" aria-label="Available hotels">
+                        {p.availableHotels.map((hotel, index) => (index < 3 || p.moreHotelsOpen) && <HotelChoiceCard key={hotel.hotel_id ?? hotel.hotel_name ?? index} hotel={hotel} selected={p.selectedHotelIndex === index} onSelect={() => p.setSelectedHotelIndex(index)} />)}
+                        {p.availableHotels.length === 0 && <p>No hotels found for this destination.</p>}
+                      </div>
+                      {p.availableHotels.length > 3 && (
+                        <button className="activity-more-toggle" onClick={() => p.setMoreHotelsOpen((open) => !open)} aria-expanded={p.moreHotelsOpen}>
+                          <span className="status-chevron"><Icon name="chevron" size={14} /></span>
+                          {p.moreHotelsOpen ? "Show fewer hotels" : `See ${p.availableHotels.length - 3} more`}
+                        </button>
+                      )}
+                    </>}
                     {p.selectedHotelOption && <>
                       <div className="hotel-confirm-card">
                         <div className="hotel-confirm-top">
@@ -502,6 +679,7 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
                             <strong>{p.selectedHotelOption.hotel_name ?? "Hotel"}</strong>
                             {p.selectedHotelOption.room_type && <span>{p.selectedHotelOption.room_type}</span>}
                           </span>
+                          <button type="button" className="hotel-confirm-change" onClick={() => p.setSelectedHotelIndex(null)}>Change hotel</button>
                           {p.selectedHotelOption.star_rating != null && <span className="hotel-confirm-rating">
                             <Icon name="star" size={16} />
                             <b>{p.selectedHotelOption.star_rating}</b><span>/ 5</span>
@@ -514,15 +692,26 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
                       </div>
                       <div className="activity-form hotel-fixed-details">
                         <label><span>Check-in day</span>
-                          <select value={p.hotelCheckInDayId ?? ""} onChange={(event) => p.setHotelCheckInDayId(event.target.value)}>
-                            {p.days.map((day) => <option key={day.id} value={day.id}>{`Day ${day.day}: ${day.title}`}</option>)}
-                            <option value={NEW_DAY_OPTION_ID}>{`Day ${p.days.length + 1} (new day)`}</option>
-                          </select>
+                          <SelectField
+                            value={p.hotelCheckInDayId ?? ""}
+                            onChange={p.setHotelCheckInDayId}
+                            ariaLabel="Check-in day"
+                            options={[
+                              ...p.days.map((day) => ({ value: day.id, label: `Day ${day.day}: ${day.title}` })),
+                              { value: NEW_DAY_OPTION_ID, label: `Day ${p.days.length + 1} (new day)` },
+                            ]}
+                          />
                         </label>
                         <label><span>Checkout day</span>
-                          <select value={p.selectedHotelCheckOutDayOption.id} onChange={(event) => p.setHotelCheckOutDayId(event.target.value)}>
-                            {p.hotelCheckOutDayOptions.map((option) => <option key={option.id} value={option.id}>{option.id === NEW_DAY_OPTION_ID ? `Day ${option.index + 1} (new day)` : `Day ${option.index + 1}: ${option.title}`}</option>)}
-                          </select>
+                          <SelectField
+                            value={p.selectedHotelCheckOutDayOption.id}
+                            onChange={p.setHotelCheckOutDayId}
+                            ariaLabel="Checkout day"
+                            options={p.hotelCheckOutDayOptions.map((option) => ({
+                              value: option.id,
+                              label: option.id === NEW_DAY_OPTION_ID ? `Day ${option.index + 1} (new day)` : `Day ${option.index + 1}: ${option.title}`,
+                            }))}
+                          />
                         </label>
                         <label className="full"><span>Notes</span><textarea value={p.hotelNotes} onChange={(event) => p.setHotelNotes(event.target.value)} placeholder="Add check-in or booking details" /></label>
                       </div>
@@ -534,10 +723,11 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
                     <div className="inline-add-head"><button className="inline-back" onClick={() => p.setAddFlow("type")} aria-label="Back to item types">‹</button><h4>Add creator pick</h4><button onClick={() => p.setAddingAfter(null)}>Cancel</button></div>
                     <div className="activity-form">
                       <label className="full"><span>Title</span><input value={p.creatorDraft.title} onChange={(event) => p.setCreatorDraft({ ...p.creatorDraft, title: event.target.value })} placeholder="Your recommendation" /></label>
-                      <label><span>Category</span><select value={p.creatorDraft.category} onChange={(event) => p.setCreatorDraft({ ...p.creatorDraft, category: event.target.value })}>{ACTIVITY_CATEGORIES.map((category) => <option key={category}>{category}</option>)}</select></label>
-                      <label><span>Start time</span><input type="time" value={p.creatorDraft.time} onChange={(event) => p.setCreatorDraft({ ...p.creatorDraft, time: event.target.value })} /></label>
-                      <label><span>Duration (min)</span><select value={p.creatorDraft.duration} onChange={(event) => p.setCreatorDraft({ ...p.creatorDraft, duration: event.target.value })}>{DURATION_OPTIONS.map((duration) => <option key={duration}>{duration}</option>)}</select></label>
-                      <label className="full"><span>Address</span><input value={p.creatorDraft.address} onChange={(event) => p.setCreatorDraft({ ...p.creatorDraft, address: event.target.value })} /></label>
+                      <label><span>Category</span><SelectField value={p.creatorDraft.category} onChange={(category) => p.setCreatorDraft({ ...p.creatorDraft, category })} options={ACTIVITY_CATEGORIES} ariaLabel="Category" /></label>
+                      <label><span>Start time</span><TimeField value={p.creatorDraft.time} onChange={(time) => p.setCreatorDraft({ ...p.creatorDraft, time })} ariaLabel="Start time" /></label>
+                      <label><span>Duration (min)</span><SelectField value={p.creatorDraft.duration} onChange={(duration) => p.setCreatorDraft({ ...p.creatorDraft, duration })} options={DURATION_OPTIONS} ariaLabel="Duration (min)" /></label>
+                      <label><span>Ends at</span><input value={getEndTime(p.creatorDraft.time, p.creatorDraft.duration)} readOnly /></label>
+                      <label className="three-quarter"><span>Address</span><input value={p.creatorDraft.address} onChange={(event) => p.setCreatorDraft({ ...p.creatorDraft, address: event.target.value })} /></label>
                       <label><span>Price</span><div className="price-input"><b>$</b><input inputMode="decimal" value={p.creatorDraft.price} onChange={(event) => p.setCreatorDraft({ ...p.creatorDraft, price: event.target.value.replace(/[^0-9.]/g, "") })} /></div></label>
                       <label className="full"><span>Why you recommend it</span><textarea value={p.creatorDraft.reason} onChange={(event) => p.setCreatorDraft({ ...p.creatorDraft, reason: event.target.value })} placeholder="Share the detail travellers should know" /></label>
                     </div>
@@ -551,7 +741,7 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
                             : <button type="button" className="set-cover-btn" onClick={() => p.setCreatorPhotos([photo, ...p.creatorPhotos.filter((_, i) => i !== index)])}>Set as cover</button>}
                           <button type="button" className="remove-photo-btn" aria-label="Remove photo" onClick={() => p.removeCreatorPhoto(photo)}><Icon name="plus" size={10} /></button>
                         </figure>)}
-                        {p.creatorPhotos.length < MAX_ITEM_PHOTOS && <label><input type="file" accept="image/png,image/jpeg" multiple onChange={(event) => { const files = Array.from(event.target.files ?? []).slice(0, MAX_ITEM_PHOTOS - p.creatorPhotos.length); event.target.value = ""; if (files.length) void p.trackUpload(p.addCreatorPhotos(files)); }} /><Icon name="plus" size={18} />Add photo</label>}
+                        {p.creatorPhotos.length < MAX_ITEM_PHOTOS && <label><input type="file" accept="image/png,image/jpeg" multiple onChange={(event) => { const files = Array.from(event.target.files ?? []).slice(0, MAX_ITEM_PHOTOS - p.creatorPhotos.length); event.target.value = ""; if (files.length) void p.trackUpload(p.addCreatorPhotos(files)); }} /><span className="edit-photo-add-icon"><Icon name="plus" size={16} /></span><span className="edit-photo-add-label">Add photo</span></label>}
                       </div>
                     </div>
                     <div className="activity-form-actions"><button className="publish-button" disabled={!p.creatorDraft.title.trim()} onClick={p.createCreatorPick}>Add creator pick</button></div>
@@ -563,10 +753,13 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
                     <h5>Recommended for {p.activeDayCity ?? "this trip"}</h5>
                     <div className="activity-results">
                       {p.recommendedActivities.slice(0, 3).map((activity) => <div key={activity.title} className="activity-card">
-                        <button className="activity-add-btn" aria-label={`Add ${activity.title}`} onClick={() => p.addRecommendedActivity(activity.title, activity.meta, activity.price)}><Icon name="plus" size={16} /></button>
+                        {activity.category && <span className={`item-type-pill ${activityCategoryPillClass(activity.category)}`}>{activity.category}</span>}
                         <strong>{activity.title}</strong>
-                        <small>{activity.meta}</small>
-                        <b>{activity.price}</b>
+                        <small><Icon name="clock" size={12} />{activity.meta}</small>
+                        <div className="activity-card-footer">
+                          <span className="activity-card-from"><small>FROM</small><b>{activity.price}</b></span>
+                          <button type="button" className="activity-add-btn" aria-label={`Add ${activity.title}`} onClick={() => p.addRecommendedActivity(activity.title, activity.meta, activity.price)}><Icon name="plus" size={14} />Add</button>
+                        </div>
                         <ActivityDetailPopover activity={activity} />
                       </div>)}
                       {p.recommendedActivities.length === 0 && <p>No activities found. Try another search or create your own.</p>}
@@ -578,10 +771,13 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
                       </button>
                       {p.moreActivitiesOpen && <div className="activity-results activity-results-more">
                         {p.recommendedActivities.slice(3).map((activity) => <div key={activity.title} className="activity-card">
-                          <button className="activity-add-btn" aria-label={`Add ${activity.title}`} onClick={() => p.addRecommendedActivity(activity.title, activity.meta, activity.price)}><Icon name="plus" size={16} /></button>
+                          {activity.category && <span className={`item-type-pill ${activityCategoryPillClass(activity.category)}`}>{activity.category}</span>}
                           <strong>{activity.title}</strong>
-                          <small>{activity.meta}</small>
-                          <b>{activity.price}</b>
+                          <small><Icon name="clock" size={12} />{activity.meta}</small>
+                          <div className="activity-card-footer">
+                            <span className="activity-card-from"><small>FROM</small><b>{activity.price}</b></span>
+                            <button type="button" className="activity-add-btn" aria-label={`Add ${activity.title}`} onClick={() => p.addRecommendedActivity(activity.title, activity.meta, activity.price)}><Icon name="plus" size={14} />Add</button>
+                          </div>
                           <ActivityDetailPopover activity={activity} />
                         </div>)}
                       </div>}
@@ -593,15 +789,15 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
 
 export default function ItineraryEditor({
   pkg,
-  onBack,
   onSessionExpired,
   onContinueToReview,
 }: {
   pkg: CreatorPackageDetail;
-  onBack: () => void;
   onSessionExpired: () => void;
   onContinueToReview: () => void;
 }) {
+  const router = useRouter();
+  const [pendingLeaveConfirm, setPendingLeaveConfirm] = useState(false);
   const [packageDetail, setPackageDetail] = useState(pkg);
   const { flights, hotels } = packageDetail;
   const copilotClient = useMemo(
@@ -656,11 +852,18 @@ export default function ItineraryEditor({
   const [expandedFeasibility, setExpandedFeasibility] = useState<"critical" | "suggestions" | "passed" | null>(null);
   const [addFlow, setAddFlow] = useState<AddFlowStep>("type");
   const [activitySearch, setActivitySearch] = useState("");
-  const [recommendedActivities, setRecommendedActivities] = useState<{ title: string; meta: string; price: string; rating: number | null; suitableFor: string | null }[]>([]);
+  const [recommendedActivities, setRecommendedActivities] = useState<{ title: string; category: string | null; meta: string; price: string; rating: number | null; suitableFor: string | null }[]>([]);
   const [moreActivitiesOpen, setMoreActivitiesOpen] = useState(false);
+  const [catalogHotels, setCatalogHotels] = useState<CreatorHotelDetail[] | null>(null);
+  const [catalogFlights, setCatalogFlights] = useState<CreatorFlightDetail[] | null>(null);
   const [flightSearch, setFlightSearch] = useState("");
+  const [flightSort, setFlightSort] = useState<"arrival" | "price_asc" | "price_desc">("arrival");
+  const [flightAirlineFilter, setFlightAirlineFilter] = useState("");
   const [selectedFlightIndex, setSelectedFlightIndex] = useState<number | null>(null);
   const [selectedHotelIndex, setSelectedHotelIndex] = useState<number | null>(null);
+  const [moreHotelsOpen, setMoreHotelsOpen] = useState(false);
+  const [hotelSearch, setHotelSearch] = useState("");
+  const [hotelSort, setHotelSort] = useState<"rating" | "price_asc" | "price_desc">("rating");
   const [hotelNotes, setHotelNotes] = useState("");
   const [hotelCheckInDayId, setHotelCheckInDayId] = useState<string | null>(null);
   const [hotelCheckOutDayId, setHotelCheckOutDayId] = useState<string | null>(null);
@@ -687,6 +890,30 @@ export default function ItineraryEditor({
   // hotels sometimes carry a full street address instead, so activities are
   // the more reliable signal for "what city is this day actually in."
   const activeDayCity = pkg.destination_city ?? null;
+  const tripDestination = [pkg.destination_city, pkg.destination_country].filter(Boolean).join(", ");
+  // Vibes/season have no backend field (see the wizard's create flow) — this
+  // is a best-effort read of the sessionStorage stash written at creation,
+  // so it only shows up in the browser tab that made or last edited the trip.
+  // Editing here re-writes the same stash so the display updates immediately.
+  const [tripVibesDraft, setTripVibesDraft] = useState(() => (
+    typeof window === "undefined" ? null : parseWizardVibesDraft(window.sessionStorage.getItem(wizardVibesStorageKey(pkg.package_id)))
+  ));
+  const [editingTripParams, setEditingTripParams] = useState(false);
+  const [tripParamsDraft, setTripParamsDraft] = useState<{ vibes: string[]; season: string | null }>({ vibes: [], season: null });
+  const startEditingTripParams = () => {
+    setTripParamsDraft({ vibes: tripVibesDraft?.vibes ?? [], season: tripVibesDraft?.season ?? null });
+    setEditingTripParams(true);
+  };
+  const saveTripParams = () => {
+    const next = { vibes: tripParamsDraft.vibes, season: tripParamsDraft.season };
+    try {
+      window.sessionStorage.setItem(wizardVibesStorageKey(pkg.package_id), JSON.stringify(next));
+    } catch {
+      // best-effort only
+    }
+    setTripVibesDraft(next);
+    setEditingTripParams(false);
+  };
   // buildDaysFromPackage stamps every row of a stay with `hotel-<id|name>`,
   // so the API hotel is looked up by that key rather than by counting rows —
   // the item list here is one day's worth, not the whole trip.
@@ -902,7 +1129,10 @@ export default function ItineraryEditor({
         .select("activity_name,city,category,duration_hours,price_aud,rating,suitable_for")
         .order("rating", { ascending: false })
         .limit(24);
-      if (activeDayCity) query = query.eq("city", activeDayCity);
+      // The destination catalog lets creators pick a country-level entry
+      // (e.g. "Iceland") as well as cities, and that value ends up here as
+      // activeDayCity — so match it against either column, not just city.
+      if (activeDayCity) query = query.or(`city.eq.${activeDayCity},country.eq.${activeDayCity}`);
       const search = activitySearch.trim();
       if (search) query = query.ilike("activity_name", `%${search}%`);
       const { data, error } = await query;
@@ -918,7 +1148,8 @@ export default function ItineraryEditor({
       });
       setRecommendedActivities(deduped.map((row) => ({
         title: row.activity_name,
-        meta: [row.category, row.duration_hours ? `${Math.round(row.duration_hours * 60)} min` : null, row.city].filter(Boolean).join(" · "),
+        category: row.category,
+        meta: [row.duration_hours ? `${Math.round(row.duration_hours * 60)} min` : null, row.city].filter(Boolean).join(" · "),
         price: row.price_aud ? `$${row.price_aud}` : "Free",
         rating: row.rating,
         suitableFor: row.suitable_for,
@@ -926,6 +1157,118 @@ export default function ItineraryEditor({
     }, 250);
     return () => window.clearTimeout(timer);
   }, [addFlow, activeDayCity, activitySearch]);
+
+  useEffect(() => {
+    if (addFlow !== "hotel") return;
+    setMoreHotelsOpen(false);
+    setHotelSearch("");
+    setHotelSort("rating");
+  }, [addFlow]);
+
+  // Hotels are "supplied by Travel Marketplace" per the note in the add-hotel
+  // flow — the full catalog for this destination, not just whatever the AI
+  // happened to attach to the package at creation time.
+  useEffect(() => {
+    if (addFlow !== "hotel") return;
+    const timer = window.setTimeout(async () => {
+      let query = supabase
+        .from("hotels")
+        .select("hotel_id,hotel_name,city,star_rating,room_type,price_per_night_aud")
+        .order(hotelSort === "rating" ? "star_rating" : "price_per_night_aud", { ascending: hotelSort === "price_asc" })
+        .limit(24);
+      if (activeDayCity) query = query.or(`city.eq.${activeDayCity},country.eq.${activeDayCity}`);
+      const search = hotelSearch.trim();
+      if (search) query = query.ilike("hotel_name", `%${search}%`);
+      const { data, error } = await query;
+      if (error || !data) { setCatalogHotels([]); return; }
+      // Same seed-data quirk as activities/flights — the same listing
+      // (name + room type + price) can appear more than once in the
+      // catalog, which reads as confusing near-duplicates.
+      const seen = new Set<string>();
+      const deduped = data.filter((hotel) => {
+        const key = `${hotel.hotel_name}|${hotel.room_type}|${hotel.price_per_night_aud}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      setCatalogHotels(deduped.map((row) => ({ ...row, address: null })));
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [addFlow, activeDayCity, hotelSearch, hotelSort]);
+
+  useEffect(() => {
+    if (addFlow !== "flight") return;
+    setFlightSort("arrival");
+    setFlightAirlineFilter("");
+  }, [addFlow]);
+
+  // Reference flights, same gap as hotels had: the package only carries
+  // whichever flights the AI happened to attach at creation, not the full
+  // catalog. These are examples arriving at the destination — origin is up
+  // to the traveller, so only destination is filtered here.
+  useEffect(() => {
+    if (addFlow !== "flight") return;
+    const timer = window.setTimeout(async () => {
+      // flights.destination_country is only populated for some routes, so a
+      // country-level destination (e.g. "Iceland", picked from the wizard's
+      // destination catalog) can't always be matched directly. activities
+      // and hotels both carry a reliable city+country pair, so resolve the
+      // real city through them first — a live lookup against the actual
+      // catalog beats a hand-maintained country→city table.
+      let destinationCity = activeDayCity;
+      if (activeDayCity) {
+        const { data: cityLookup } = await supabase
+          .from("activities")
+          .select("city")
+          .or(`city.eq.${activeDayCity},country.eq.${activeDayCity}`)
+          .limit(1);
+        if (cityLookup?.[0]?.city) destinationCity = cityLookup[0].city;
+      }
+      let query = supabase
+        .from("flights")
+        .select("flight_id,airline,flight_number,origin,destination,departure_datetime,arrival_datetime,cabin_class,price_aud")
+        .order(flightSort === "arrival" ? "arrival_datetime" : "price_aud", { ascending: flightSort !== "price_desc" })
+        .limit(24);
+      // Unlike activities/hotels' plain city columns, flights.destination is
+      // stored as "City (CODE)" (e.g. "Kyoto (UKY)") — an exact match against
+      // a bare city name never hits, so this needs ilike instead.
+      if (destinationCity) query = query.or(`destination.ilike.%${destinationCity}%,destination_country.ilike.%${destinationCity}%`);
+      const { data, error } = await query;
+      if (error || !data) { setCatalogFlights([]); return; }
+      const mapped = data.map((row) => {
+        const originIata = iataOf(row.origin);
+        const destinationIata = iataOf(row.destination);
+        return {
+          flight_id: row.flight_id,
+          airline: row.airline,
+          flight_number: row.flight_number,
+          origin_iata: originIata,
+          destination_iata: destinationIata,
+          departure_datetime: row.departure_datetime,
+          arrival_datetime: row.arrival_datetime,
+          cabin_class: row.cabin_class,
+          price_aud: row.price_aud,
+          departureClock: extractClockTimeInZone(row.departure_datetime, timezoneForIata(originIata)),
+          arrivalClock: extractClockTimeInZone(row.arrival_datetime, timezoneForIata(destinationIata)),
+        };
+      });
+      // These are illustrative examples, not real bookings — the catalog
+      // seeds the "same" flight (route, airline, time of day) on several
+      // unrelated calendar dates, which otherwise shows as confusing
+      // near-duplicates and makes a time-of-day sort look broken. Treat
+      // same route + airline + local departure clock time as one flight.
+      const seen = new Set<string>();
+      const deduped = mapped.filter((flight) => {
+        const key = `${flight.airline}|${flight.origin_iata}|${flight.destination_iata}|${flight.departureClock}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      if (flightSort === "arrival") deduped.sort((a, b) => (a.arrivalClock ?? "").localeCompare(b.arrivalClock ?? ""));
+      setCatalogFlights(deduped.map(({ departureClock: _departureClock, arrivalClock: _arrivalClock, ...flight }) => flight));
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [addFlow, activeDayCity, flightSort]);
 
   const showNotice = (message: string) => {
     setNotice(message);
@@ -1343,10 +1686,12 @@ export default function ItineraryEditor({
     setSelectedFlightIndex(null);
   };
 
-  const matchingFlights = flights.filter((flight) =>
-    [flight.airline, flight.flight_number, flight.origin_iata, flight.destination_iata].join(" ").toLowerCase().includes(flightSearch.trim().toLowerCase()),
+  const flightAirlineOptions = [...new Set((catalogFlights ?? flights).flatMap((flight) => flight.airline ? [flight.airline] : []))].sort();
+  const matchingFlights = (catalogFlights ?? flights).filter((flight) =>
+    [flight.airline, flight.flight_number, flight.origin_iata, flight.destination_iata].join(" ").toLowerCase().includes(flightSearch.trim().toLowerCase())
+    && (!flightAirlineFilter || flight.airline === flightAirlineFilter),
   );
-  const selectedHotelOption = selectedHotelIndex !== null ? hotels[selectedHotelIndex] : undefined;
+  const selectedHotelOption = selectedHotelIndex !== null ? (catalogHotels ?? hotels)[selectedHotelIndex] : undefined;
 
   const hotelCheckInDayIndex = hotelCheckInDayId === NEW_DAY_OPTION_ID
     ? days.length
@@ -1370,6 +1715,7 @@ export default function ItineraryEditor({
       .filter((option) => option.index > editStayCheckInIndex),
     { id: NEW_DAY_OPTION_ID, index: Math.max(days.length, editStayCheckInIndex + 1), title: "New day" },
   ];
+  const selectedEditStayCheckOutDayOption = editStayCheckOutDayOptions.find((option) => option.id === editStayCheckOutDayId) ?? editStayCheckOutDayOptions[0];
 
   const createHotel = () => {
     if (!selectedHotelOption) return;
@@ -1636,11 +1982,17 @@ export default function ItineraryEditor({
     addingAfter, setAddingAfter,
     addFlow, setAddFlow,
     flightSearch, setFlightSearch,
+    flightSort, setFlightSort,
+    flightAirlineFilter, setFlightAirlineFilter,
+    flightAirlineOptions,
     matchingFlights,
     selectedFlightIndex, setSelectedFlightIndex,
     addSelectedFlight,
-    availableHotels: hotels,
+    availableHotels: catalogHotels ?? hotels,
     selectedHotelIndex, setSelectedHotelIndex,
+    moreHotelsOpen, setMoreHotelsOpen,
+    hotelSearch, setHotelSearch,
+    hotelSort, setHotelSort,
     selectedHotelOption,
     hotelCheckInDayId, setHotelCheckInDayId,
     setHotelCheckOutDayId,
@@ -1669,8 +2021,17 @@ export default function ItineraryEditor({
   return (
     <main className="itinerary-editor">
       <header className="editor-topbar">
-        <button className="text-action back-action" disabled={isLocked} onClick={onBack} aria-label="Edit destination, travel style, duration, or season"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg> Edit trip setup</button>
-        <div className="editor-title-block"><span className="editor-kicker">AI itinerary editor</span>{editingTitle ? <input className="package-title-input" value={titleDraft} autoFocus maxLength={200} aria-label="Package title" onChange={(event) => setTitleDraft(event.target.value)} onBlur={savePackageTitle} onKeyDown={(event) => { if (event.key === "Enter") savePackageTitle(); if (event.key === "Escape") { setTitleDraft(packageTitle); setEditingTitle(false); } }} /> : <button className="package-title-button" disabled={isLocked} onClick={() => { setTitleDraft(packageTitle); setEditingTitle(true); }} aria-label={`Edit package title, currently ${packageTitle}`} title="Edit package title"><h1>{packageTitle}</h1></button>}</div>
+        <button
+          type="button"
+          className="text-action back-action"
+          aria-label="Back to dashboard"
+          title="Back to dashboard"
+          onClick={() => { if (saved) router.push(APP_ROUTES.dashboard); else setPendingLeaveConfirm(true); }}
+        ><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg></button>
+        <div className="editor-title-block">
+          <span className="editor-kicker">AI itinerary editor</span>
+          {editingTitle ? <input className="package-title-input" value={titleDraft} autoFocus maxLength={200} aria-label="Package title" onChange={(event) => setTitleDraft(event.target.value)} onBlur={savePackageTitle} onKeyDown={(event) => { if (event.key === "Enter") savePackageTitle(); if (event.key === "Escape") { setTitleDraft(packageTitle); setEditingTitle(false); } }} /> : <button className="package-title-button" disabled={isLocked} onClick={() => { setTitleDraft(packageTitle); setEditingTitle(true); }} aria-label={`Edit package title, currently ${packageTitle}`} title="Edit package title"><h1>{packageTitle}</h1></button>}
+        </div>
         <div className="editor-actions">
           <button className="quiet-button" disabled={saving || submitting || uploadingCount > 0 || isLocked} onClick={() => { void saveDraft(); }}>{uploadingCount > 0 ? `Uploading ${uploadingCount}…` : saving ? "Saving…" : saved ? "Saved" : "Save Draft"}</button>
           <button className="quiet-button" onClick={() => setPreviewOpen(true)}>Preview</button>
@@ -1691,10 +2052,9 @@ export default function ItineraryEditor({
             <button aria-current={activeDay === index ? "page" : undefined} className={`day-tab ${activeDay === index ? "active" : ""}`} onClick={() => setActiveDay(index)}><span>DAY {day.day} <b>{day.items.length}</b></span><strong>{day.title}</strong><span className="day-tab-types">{dayItemTypeCounts(day).map((entry) => <span key={entry.key} className="day-tab-type-badge" aria-label={`${entry.count} ${entry.label}`}><Icon name={entry.icon} size={13} />{entry.count}</span>)}</span></button>
             <button className="delete-day-tab" disabled={days.length === 1 || isLocked} onClick={() => setPendingDeleteDay(index)} aria-label={`Delete Day ${day.day}`}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M6 6l12 12M18 6 6 18" /></svg></button>
           </div>)}
-          <button className="add-day" disabled={isLocked} onClick={() => { const nextDay = days.length + 1; setDays([...days, { id: `day-${Date.now()}`, day: nextDay, title: "Untitled day", meta: "Add your first stop", items: [], story: "", photos: [], date: nextCalendarDate(days[days.length - 1]?.date) }]); setActiveDay(days.length); showNotice("A new day was added"); }}><Icon name="plus" size={24} /><span>Add Day</span></button>
+          <button className="add-day" disabled={isLocked || days.length >= MAX_TRIP_DAYS} title={days.length >= MAX_TRIP_DAYS ? `Trips can have up to ${MAX_TRIP_DAYS} days` : undefined} onClick={() => { const nextDay = days.length + 1; setDays([...days, { id: `day-${Date.now()}`, day: nextDay, title: "Untitled day", meta: "Add your first stop", items: [], story: "", photos: [], date: nextCalendarDate(days[days.length - 1]?.date) }]); setActiveDay(days.length); showNotice("A new day was added"); }}><Icon name="plus" size={24} /><span>Add Day</span></button>
         </div>
         <button type="button" className="day-scroll-btn" disabled={!dayScroll.canRight} onClick={() => scrollDayTabs(1)} aria-label="Scroll days right"><Icon name="chevron" size={18} /></button>
-        <div className="trip-length"><strong>{days.length} days</strong><span>{Math.max(0, days.length - 1)} nights</span></div>
       </nav>
 
       <fieldset className="editor-shell" disabled={isLocked} aria-label={isLocked ? "Read-only itinerary" : "Itinerary editor"}>
@@ -1779,20 +2139,31 @@ export default function ItineraryEditor({
                     <div className="stay-edit-form">
                       <div className="stay-edit-fields">
                         <label><span>Check-in day</span>
-                          <select value={editStayCheckInDayId ?? ""} onChange={(event) => setEditStayCheckInDayId(event.target.value)}>
-                            {days.map((day, i) => <option key={day.id} value={day.id}>{`Day ${i + 1}: ${day.title}`}</option>)}
-                            <option value={NEW_DAY_OPTION_ID}>{`Day ${days.length + 1} (new day)`}</option>
-                          </select>
+                          <SelectField
+                            value={editStayCheckInDayId ?? ""}
+                            onChange={setEditStayCheckInDayId}
+                            ariaLabel="Check-in day"
+                            options={[
+                              ...days.map((day, i) => ({ value: day.id, label: `Day ${i + 1}: ${day.title}` })),
+                              { value: NEW_DAY_OPTION_ID, label: `Day ${days.length + 1} (new day)` },
+                            ]}
+                          />
                         </label>
                         <label><span>Checkout day</span>
-                          <select value={editStayCheckOutDayId ?? ""} onChange={(event) => setEditStayCheckOutDayId(event.target.value)}>
-                            {editStayCheckOutDayOptions.map((option) => <option key={option.id} value={option.id}>{option.id === NEW_DAY_OPTION_ID ? `Day ${option.index + 1} (new day)` : `Day ${option.index + 1}: ${option.title}`}</option>)}
-                          </select>
+                          <SelectField
+                            value={selectedEditStayCheckOutDayOption?.id ?? ""}
+                            onChange={setEditStayCheckOutDayId}
+                            ariaLabel="Checkout day"
+                            options={editStayCheckOutDayOptions.map((option) => ({
+                              value: option.id,
+                              label: option.id === NEW_DAY_OPTION_ID ? `Day ${option.index + 1} (new day)` : `Day ${option.index + 1}: ${option.title}`,
+                            }))}
+                          />
                         </label>
                       </div>
                       <div className="stay-edit-actions">
                         <button type="button" className="stay-edit-cancel" onClick={() => setEditingStayGroupId(null)}>Cancel</button>
-                        <button type="button" className="stay-edit-save" disabled={!editStayCheckInDayId || !editStayCheckOutDayId} onClick={() => updateHotelStayDays(item.stayGroupId!, editStayCheckInDayId!, editStayCheckOutDayId!)}>Save</button>
+                        <button type="button" className="stay-edit-save" disabled={!editStayCheckInDayId || !selectedEditStayCheckOutDayOption} onClick={() => updateHotelStayDays(item.stayGroupId!, editStayCheckInDayId!, selectedEditStayCheckOutDayOption.id)}>Save</button>
                       </div>
                     </div>
                   </dd> : <dd className="stat-with-action">
@@ -1800,11 +2171,15 @@ export default function ItineraryEditor({
                     {isStayHead && item.stayGroupId && <button type="button" className="stat-edit-btn" aria-label="Edit stay dates" onClick={startEditingStay}><Icon name="pencil" size={13} /></button>}
                   </dd>}
                 </div>;
+                // stayDays reflects the current client-side day layout; `nights`
+                // (from the package's persisted check_in/check_out_date) doesn't
+                // change when a day is added or removed, so it goes stale first.
+                const effectiveNights = stayDays.length > 0 ? stayNightsFromDays : nights;
                 const hotelTitle = hotel?.hotel_name && isStayHead
-                  ? `${hotel.hotel_name}${nights ? ` (${nights} night${nights === 1 ? "" : "s"})` : ""}`
+                  ? `${hotel.hotel_name}${effectiveNights ? ` (${effectiveNights} night${effectiveNights === 1 ? "" : "s"})` : ""}`
                   : item.title;
-                const hotelTotal = isStayHead && nights && hotel?.price_per_night_aud !== null && hotel?.price_per_night_aud !== undefined
-                  ? `$${(hotel.price_per_night_aud * nights).toLocaleString("en-AU")}`
+                const hotelTotal = isStayHead && effectiveNights && hotel?.price_per_night_aud !== null && hotel?.price_per_night_aud !== undefined
+                  ? `$${(hotel.price_per_night_aud * effectiveNights).toLocaleString("en-AU")}`
                   : item.price;
                 const itemPrice = flight?.price_aud !== null && flight?.price_aud !== undefined
                   ? `$${flight.price_aud.toLocaleString("en-AU")}`
@@ -1828,8 +2203,8 @@ export default function ItineraryEditor({
                 <article className={`timeline-item ${scheduleConflict ? "critical" : item.status} ${draggedItemId === item.id ? "dragging" : ""} ${canExpand ? "editable" : ""} ${isExpanded ? "expanded" : ""}`} onClick={(event) => { if (!canExpand || (event.target as HTMLElement).closest("button")) return; toggleExpand(); }} onKeyDown={(event) => { if (!canExpand || (event.target as HTMLElement).closest("button")) return; if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggleExpand(); } }} tabIndex={canExpand ? 0 : undefined} role={canExpand ? "button" : undefined} aria-expanded={canExpand ? isExpanded : undefined}>
                   <button className="drag-handle" draggable aria-label={`Move ${hotelTitle}. Use drag and drop, or the up and down arrow keys.`} onDragStart={(event) => { setEditingItem(null); setDraggedItemId(item.id); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", String(item.id)); }} onDragEnd={endDrag} onKeyDown={(event) => { if (event.key === "ArrowUp") { event.preventDefault(); moveItem(index, index - 1); } if (event.key === "ArrowDown") { event.preventDefault(); moveItem(index, index + 1); } }}><span /><span /><span /><span /><span /><span /></button>
                   <div className="item-time">
-                    <div className="item-time-row"><Icon name={item.icon} /><strong className={isTimeValue ? undefined : "item-time-word"}>{item.time}</strong></div>
-                    {isTimeValue && item.type === "FLIGHT" && item.arrivalTime && <span className="item-time-end">to {item.arrivalTime}</span>}
+                    <div className="item-time-row"><Icon name={item.icon} /><strong className={isTimeValue ? undefined : "item-time-word"}>{item.type === "FLIGHT" && item.arrivalTime ? item.arrivalTime : item.time}</strong></div>
+                    {isTimeValue && item.type === "FLIGHT" && item.arrivalTime && <span className="item-time-end">from {item.time}</span>}
                     {isTimeValue && item.type !== "FLIGHT" && item.duration && <span className="item-time-end">to {getEndTime(item.time, item.duration)}</span>}
                   </div>
                   <div className="item-copy">
@@ -1870,7 +2245,7 @@ export default function ItineraryEditor({
                       <div><dt>From</dt><dd>{flight.origin_iata || "Not provided"}</dd></div>
                       <div><dt>To</dt><dd>{flight.destination_iata || "Not provided"}</dd></div>
                       <div><dt>Departure</dt><dd>{extractClockTimeInZone(flight.departure_datetime, timezoneForIata(flight.origin_iata)) ?? "Not provided"}</dd></div>
-                      <div><dt>Arrival</dt><dd>{extractClockTimeInZone(flight.arrival_datetime, timezoneForIata(flight.destination_iata)) ?? "Not provided"}</dd></div>
+                      <div><dt>Arrival</dt><dd>{extractClockTimeInZone(flight.arrival_datetime, timezoneForIata(flight.destination_iata)) ?? "Not provided"}{(() => { const offset = flightArrivalDayOffset(flight.departure_datetime, timezoneForIata(flight.origin_iata), flight.arrival_datetime, timezoneForIata(flight.destination_iata)); return offset ? <sup className="flight-day-offset" title={`Arrives ${offset} day${offset === 1 ? "" : "s"} later`}>+{offset}</sup> : null; })()}</dd></div>
                     </dl>
                   </div>
                 </section>}
@@ -1921,7 +2296,7 @@ export default function ItineraryEditor({
                       <div className="activity-card-stats">
                         <div className="activity-card-stat">
                           <small>Start time</small>
-                          <span className="activity-card-stat-value"><Icon name="clock" size={16} /><div className="activity-card-time-field"><input type="time" className="activity-card-time-input" aria-label="Start time" value={editingItem.time} onChange={(event) => setEditingItem({ ...editingItem, time: event.target.value })} onClick={(event) => { try { event.currentTarget.showPicker(); } catch { /* unsupported browser: native click behavior still works */ } }} /></div></span>
+                          <span className="activity-card-stat-value"><Icon name="clock" size={16} /><TimeField className="activity-card-time-field" value={editingItem.time} onChange={(time) => setEditingItem({ ...editingItem, time })} ariaLabel="Start time" /></span>
                         </div>
                         <div className="activity-card-stat">
                           <small>Duration</small>
@@ -1940,8 +2315,8 @@ export default function ItineraryEditor({
                       <label className="edit-title"><span>Activity</span><input value={editingItem.title} onChange={(event) => setEditingItem({ ...editingItem, title: event.target.value })} autoFocus /></label>
                       <label><span>Price</span><div className="price-input"><b>$</b><input inputMode="decimal" value={editingItem.price} onChange={(event) => setEditingItem({ ...editingItem, price: event.target.value.replace(/[^0-9.]/g, "") })} /></div></label>
                       <label className="edit-address"><span>Address</span><input value={editingItem.address} onChange={(event) => setEditingItem({ ...editingItem, address: event.target.value })} placeholder="Add an address" /></label>
-                      <label><span>Start time</span><input type="time" value={editingItem.time} onChange={(event) => setEditingItem({ ...editingItem, time: event.target.value })} /></label>
-                      <label><span>Duration (min)</span><select value={editingItem.duration} onChange={(event) => setEditingItem({ ...editingItem, duration: event.target.value })}>{DURATION_OPTIONS.map((duration) => <option key={duration}>{duration}</option>)}</select></label>
+                      <label><span>Start time</span><TimeField value={editingItem.time} onChange={(time) => setEditingItem({ ...editingItem, time })} ariaLabel="Start time" /></label>
+                      <label><span>Duration (min)</span><SelectField value={editingItem.duration} onChange={(duration) => setEditingItem({ ...editingItem, duration })} options={DURATION_OPTIONS} ariaLabel="Duration (min)" /></label>
                       <label><span>Ends at</span><input value={getEndTime(editingItem.time, editingItem.duration)} readOnly /></label>
                       <label className="edit-notes"><span>Notes</span><textarea value={editingItem.notes} onChange={(event) => setEditingItem({ ...editingItem, notes: event.target.value })} placeholder="Share why this is worth a stop" /></label>
                     </div>
@@ -1956,7 +2331,7 @@ export default function ItineraryEditor({
                           : <button type="button" className="set-cover-btn" onClick={() => setEditingItem({ ...editingItem, photos: [photo, ...editingItem.photos.filter((_, i) => i !== index)] })}>Set as cover</button>}
                         <button type="button" className="remove-photo-btn" aria-label="Remove photo" onClick={() => removeItemPhoto(photo)}><Icon name="plus" size={10} /></button>
                       </figure>)}
-                      {editingItem.photos.length < MAX_ITEM_PHOTOS && <label><input type="file" accept="image/png,image/jpeg" multiple onChange={(event) => { const files = Array.from(event.target.files ?? []).slice(0, MAX_ITEM_PHOTOS - editingItem.photos.length); event.target.value = ""; if (files.length) void trackUpload(addItemPhotos(files)); }} /><Icon name="plus" size={18} />Add photo</label>}
+                      {editingItem.photos.length < MAX_ITEM_PHOTOS && <label><input type="file" accept="image/png,image/jpeg" multiple onChange={(event) => { const files = Array.from(event.target.files ?? []).slice(0, MAX_ITEM_PHOTOS - editingItem.photos.length); event.target.value = ""; if (files.length) void trackUpload(addItemPhotos(files)); }} /><span className="edit-photo-add-icon"><Icon name="plus" size={16} /></span><span className="edit-photo-add-label">Add photo</span></label>}
                     </div>
                   </div>
                   <div className="inline-edit-actions"><button className="quiet-button" onClick={() => setEditingItem(null)}>Cancel</button><button className="publish-button" disabled={!editingItem.title.trim()} onClick={saveEditedItem}>Save changes</button></div>
@@ -2059,6 +2434,64 @@ export default function ItineraryEditor({
             </ul>}
             <p className="quality-footer">Last update: {feasResult && lastCheckedAt ? formatRelativeTime(lastCheckedAt) : "Not yet checked"}</p>
           </section>
+          <Panel title="Trip details" className="trip-params-panel">
+            <div className="trip-params-rows">
+              <div className="trip-params-row">
+                <span className="trip-params-row-label">Destination</span>
+                <strong>{tripDestination || "Not set"}</strong>
+              </div>
+              <div className="trip-params-row">
+                <span className="trip-params-row-label">Duration</span>
+                <strong>{days.length} day{days.length === 1 ? "" : "s"} ({Math.max(0, days.length - 1)} night{Math.max(0, days.length - 1) === 1 ? "" : "s"})</strong>
+              </div>
+              <div className="trip-params-row">
+                <span className="trip-params-row-label">Target season</span>
+                {editingTripParams
+                  ? <SelectField
+                      value={tripParamsDraft.season ?? ""}
+                      onChange={(season) => setTripParamsDraft((current) => ({ ...current, season }))}
+                      options={TRIP_SEASON_OPTIONS.map((season) => ({ value: season, label: season.charAt(0).toUpperCase() + season.slice(1) }))}
+                      ariaLabel="Target season"
+                      placeholder="Not set"
+                    />
+                  : <strong>{tripVibesDraft?.season ? tripVibesDraft.season.charAt(0).toUpperCase() + tripVibesDraft.season.slice(1) : "Not set"}</strong>}
+              </div>
+              {!editingTripParams && (
+                <div className="trip-params-row">
+                  <span className="trip-params-row-label">Itinerary vibe</span>
+                  <strong>{tripVibesDraft?.vibes.length ? tripVibesDraft.vibes.join(" · ") : "Not set"}</strong>
+                </div>
+              )}
+            </div>
+            {editingTripParams && (
+              <div className="edit-categories trip-params-vibe-edit">
+                <span>Itinerary vibe (up to {MAX_TRIP_VIBES})</span>
+                <div>
+                  {TRIP_VIBE_OPTIONS.map((vibe) => {
+                    const selected = tripParamsDraft.vibes.includes(vibe);
+                    return (
+                      <button
+                        key={vibe}
+                        type="button"
+                        className={selected ? "selected" : ""}
+                        disabled={!selected && tripParamsDraft.vibes.length >= MAX_TRIP_VIBES}
+                        onClick={() => setTripParamsDraft((current) => ({
+                          ...current,
+                          vibes: selected ? current.vibes.filter((v) => v !== vibe) : [...current.vibes, vibe],
+                        }))}
+                      >{vibe}</button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            {editingTripParams
+              ? <div className="trip-params-actions">
+                  <button type="button" className="quiet-button" onClick={() => setEditingTripParams(false)}>Cancel</button>
+                  <button type="button" className="publish-button" onClick={saveTripParams}>Save</button>
+                </div>
+              : <button type="button" className="trip-params-edit-button" disabled={isLocked} onClick={startEditingTripParams}><Icon name="pencil" size={14} />Edit trip details</button>}
+          </Panel>
           <CopilotPanel
             client={copilotClient}
             // The active day's own city, not the package's overall
@@ -2070,6 +2503,7 @@ export default function ItineraryEditor({
             dayLabel={`Day ${activeDay + 1}`}
             onAddSuggestion={addCopilotSuggestion}
           />
+          <Panel title="Route map" className="route-panel"><RouteMap stops={routeStops} /></Panel>
           <Panel
             title="Pricing & earnings"
             className="pricing-panel"
@@ -2080,10 +2514,19 @@ export default function ItineraryEditor({
               <div><span>Your 20% cut</span><strong className="commission">${Math.round(packagePrice * .2).toLocaleString()}</strong></div>
             </div>
           </Panel>
-          <Panel title="Route map" className="route-panel"><RouteMap stops={routeStops} /></Panel>
         </aside>
       </fieldset>
       {notice && <div className="editor-toast" role="status">{notice}</div>}
+      {pendingLeaveConfirm && <div className="delete-day-backdrop" role="presentation" onMouseDown={() => setPendingLeaveConfirm(false)}>
+        <section className="delete-day-dialog" role="dialog" aria-modal="true" aria-labelledby="leave-confirm-title" aria-describedby="leave-confirm-description" onMouseDown={(event) => event.stopPropagation()}>
+          <h2 id="leave-confirm-title">Leave without saving?</h2>
+          <p id="leave-confirm-description">Changes you made since the last save will be lost.</p>
+          <div className="delete-day-actions">
+            <button className="quiet-button" autoFocus onClick={() => setPendingLeaveConfirm(false)}>Cancel</button>
+            <button className="confirm-delete-button" onClick={() => { setPendingLeaveConfirm(false); router.push(APP_ROUTES.dashboard); }}>Leave</button>
+          </div>
+        </section>
+      </div>}
       {pendingDeleteDay !== null && <div className="delete-day-backdrop" role="presentation" onMouseDown={() => setPendingDeleteDay(null)}>
         <section className="delete-day-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-day-title" aria-describedby="delete-day-description" onMouseDown={(event) => event.stopPropagation()}>
           <h2 id="delete-day-title">Delete Day {pendingDeleteDay + 1}?</h2>

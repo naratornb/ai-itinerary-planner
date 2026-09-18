@@ -1467,7 +1467,7 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
               >
                 {/* Package name */}
                 <div style={{ minWidth: 0 }}>
-                  <Link className="dashboard-package-link" href={packageHref}>
+                  <Link className="dashboard-package-link" href={packageHref} title={pkg.name}>
                     <span>{pkg.name}</span>
                     <svg
                       width="14" height="14" viewBox="0 0 24 24" fill="none"
@@ -1503,16 +1503,17 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
 
                 {/* Row action */}
                 <div style={{ textAlign: dashboardActionAlignment.buttons, display: "flex", justifyContent: dashboardActionAlignment.buttons, gap: 8 }}>
-                  <Link className="dashboard-row-action" href={packageHref}>
-                    {pkg.rowAction === "Edit" && <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>}
-                    {pkg.rowAction}
+                  <Link className="dashboard-row-action" href={packageHref} aria-label={`${pkg.rowAction} ${pkg.name}`} title={pkg.rowAction}>
+                    {pkg.rowAction === "Edit"
+                      ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>
+                      : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z" /><circle cx="12" cy="12" r="3" /></svg>}
                   </Link>
                   {pkg.statusKey === "draft" && (
                     <button className="dashboard-row-action dashboard-row-action-delete"
+                      aria-label={`Delete ${pkg.name}`} title="Delete"
                       onClick={() => { setDeleteError(""); setPendingDelete({ id: pkg.id, name: pkg.name }); }}
                     >
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><path d="M19 6l-.867 12.142A2 2 0 0 1 16.138 20H7.862a2 2 0 0 1-1.995-1.858L5 6" /><path d="M10 11v6M14 11v6" /></svg>
-                      Delete
                     </button>
                   )}
                 </div>
@@ -2171,7 +2172,7 @@ function PackageWizardProgress({
                 ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>
                 : <span style={{ fontSize: 12, fontWeight: 700, color: index === step ? C.white : C.secondary }}>{index + 1}</span>}
             </div>
-            {index < step ? (
+            {index !== step && (index < step || summaries[index]) ? (
               <button className="ai-wizard-progress-copy" type="button" onClick={() => onStepSelect(index)} style={{ minHeight: 48, padding: "4px 2px", display: "grid", alignContent: "center", justifyItems: "start", gap: 4, color: C.secondary, background: "transparent", border: 0, cursor: "pointer" }}>
                 <span style={{ fontSize: 13, fontWeight: 500, textDecoration: "underline", textUnderlineOffset: 4 }}>{label}</span>
                 {summaries[index] && <span style={{ maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", fontSize: 11, color: C.disabled }}>{summaries[index]}</span>}

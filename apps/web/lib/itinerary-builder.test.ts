@@ -9,11 +9,13 @@ import {
   copilotSuggestionToTimelineItem,
   daySubtitle,
   extractClockTimeInZone,
+  flightArrivalDayOffset,
   flightDurationMinutes,
   formatMinutes,
   getEndTime,
   insertItemInDay,
   moveItemInDay,
+  recomputeHotelStayLabels,
   removeDay,
   summarizeDay,
   summarizePackageComponents,
@@ -358,6 +360,20 @@ test("extractClockTimeInZone renders a flight's real instant in the given zone, 
   assert.equal(extractClockTimeInZone(instant, "Asia/Tokyo"), "03:00");
 });
 
+test("flightArrivalDayOffset flags an overnight flight that lands the next local day", () => {
+  // Departs London 21:15 local (UTC), lands Reykjavik 00:30 local the same
+  // UTC clock hour range next day — one calendar day later in both zones.
+  const departure = "2026-04-01T21:15:00Z";
+  const arrival = "2026-04-02T00:30:00Z";
+  assert.equal(flightArrivalDayOffset(departure, "Europe/London", arrival, "Atlantic/Reykjavik"), 1);
+});
+
+test("flightArrivalDayOffset is 0 for a same-day flight and null when a time is missing", () => {
+  // Well clear of Sydney's UTC+10/+11 midnight crossing either way.
+  assert.equal(flightArrivalDayOffset("2026-04-01T01:00:00Z", "Australia/Sydney", "2026-04-01T05:00:00Z", "Australia/Sydney"), 0);
+  assert.equal(flightArrivalDayOffset(null, "Australia/Sydney", "2026-04-01T13:00:00Z", "Australia/Sydney"), null);
+});
+
 test("the AI day summary loads into the story textarea, not the day meta", () => {
   const pkg: CreatorPackageDetail = {
     package_id: "pkg-2",
@@ -578,6 +594,49 @@ const stayRow = (id: number, marker?: TimelineItem["stayMarker"]): TimelineItem 
   stayMarker: marker,
 });
 
+test("removeDay recomputes a hotel stay's night counts and check-in marker after the first day is deleted", () => {
+  // A 4-day/3-night stay (day-1..day-4): deleting day-1 leaves a 2-night stay
+  // over 3 days, so the remaining rows must be relabeled "Night 1 of 2" /
+  // "Night 2 of 2" / "(Check-out)" and day-2 must pick up the check-in marker.
+  const days: BuilderDay[] = [
+    { id: "day-1", day: 1, title: "In", meta: "", items: [{ ...stayRow(1, "check-in"), time: "Check-in" }], story: "", photos: [] },
+    { id: "day-2", day: 2, title: "Stay", meta: "", items: [{ ...stayRow(2), title: "Shibuya Inn (Night 1 of 3)", time: "Overnight stay" }], story: "", photos: [] },
+    { id: "day-3", day: 3, title: "Stay", meta: "", items: [{ ...stayRow(3), title: "Shibuya Inn (Night 2 of 3)", time: "Overnight stay" }], story: "", photos: [] },
+    { id: "day-4", day: 4, title: "Out", meta: "", items: [{ ...stayRow(4, "check-out"), title: "Shibuya Inn (Check-out)", time: "Check-out" }], story: "", photos: [] },
+  ];
+
+  const result = removeDay(days, "day-1");
+
+  assert.equal(result.length, 3);
+  assert.equal(result[0].items[0].stayMarker, "check-in");
+  assert.equal(result[0].items[0].title, "Shibuya Inn (Night 1 of 2)");
+  assert.equal(result[0].items[0].time, "Check-in");
+  assert.equal(result[1].items[0].stayMarker, undefined);
+  assert.equal(result[1].items[0].title, "Shibuya Inn (Night 2 of 2)");
+  assert.equal(result[1].items[0].time, "Overnight stay");
+  assert.equal(result[2].items[0].stayMarker, "check-out");
+  assert.equal(result[2].items[0].title, "Shibuya Inn (Check-out)");
+  assert.equal(result[2].items[0].time, "Check-out");
+});
+
+test("recomputeHotelStayLabels collapses a 2-night stay to a single night when a middle day is deleted", () => {
+  const days: BuilderDay[] = [
+    { id: "day-1", day: 1, title: "In", meta: "", items: [stayRow(1, "check-in")], story: "", photos: [] },
+    { id: "day-3", day: 2, title: "Out", meta: "", items: [stayRow(3, "check-out")], story: "", photos: [] },
+  ];
+
+  const result = recomputeHotelStayLabels(days);
+
+  assert.equal(result[0].items[0].title, "Shibuya Inn");
+  assert.equal(result[0].items[0].stayMarker, "check-in");
+  assert.equal(result[1].items[0].title, "Shibuya Inn (Check-out)");
+});
+
+test("recomputeHotelStayLabels leaves non-hotel items and unrelated days untouched", () => {
+  const result = recomputeHotelStayLabels(makeDays());
+  assert.deepEqual(result, makeDays());
+});
+
 test("a 2-night stay costs 2 nights — the check-out row is not billed", () => {
   // buildDaysFromPackage renders nights+1 rows, each carrying the per-night
   // price; summing every row would bill 3 nights for a 2-night stay.
@@ -612,6 +671,25 @@ test("computePackagePrice parses a plain dollar price and treats Free/blank as 0
 
 test("computePackagePrice of no days is 0", () => {
   assert.equal(computePackagePrice([]), 0);
+});
+
+test("a creator pick's price never counts toward the package total", () => {
+  const days: BuilderDay[] = [
+    {
+      id: "day-1",
+      day: 1,
+      title: "Mixed",
+      meta: "",
+      items: [
+        { ...firstItem, id: 1, price: "$50" },
+        { ...firstItem, id: 2, type: "CREATOR PICK", price: "$999" },
+      ],
+      story: "",
+      photos: [],
+    },
+  ];
+
+  assert.equal(computePackagePrice(days), 50);
 });
 
 test("timezoneForIata knows Sydney and Tokyo, and falls back to Sydney for an unknown code", () => {
