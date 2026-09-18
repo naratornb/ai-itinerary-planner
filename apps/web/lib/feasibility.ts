@@ -108,6 +108,21 @@ export function runCodeChecks(days: any[]): { hard: CodeIssue[]; soft: CodeIssue
       });
     }
 
+    // ── R17 – Accommodation: per day, not package-wide — so a creator can jump
+    //     straight to the day that's actually missing a hotel.
+    if (!day.has_accommodation) {
+      hard.push({
+        error_code: "MISSING_ACCOMMODATION",
+        rule: "R17 – Accommodation",
+        severity: "error",
+        field: dayLabel,
+        field_value: "No hotel",
+        affected_item: dayLabel,
+        message: `${dayLabel} has no accommodation attached.`,
+        action: `Add a hotel that covers ${dayLabel}, or remove the day if it doesn't need one.`,
+      });
+    }
+
     // ── Hoist slot totals so both R5 and R7 can share them ──────────────────
     const slotData: Record<string, { names: string[]; hours: number }> = {};
     for (const act of acts) {
@@ -169,10 +184,13 @@ export function runCodeChecks(days: any[]): { hard: CodeIssue[]; soft: CodeIssue
     }
 
     // ── R7 – Time Overlap ────────────────────────────────────────────────────
-    // Flag only when total activity duration in a slot physically exceeds available time.
+    // Flag only when total activity duration in a slot physically exceeds available time,
+    // AND it's a genuine conflict between 2+ activities. A single activity alone exceeding
+    // the slot cap (a day tour, a half-day pass) isn't a scheduling conflict — it's just a
+    // long activity, already caught as a soft warning below (R5c – Schedule Density).
     for (const [slot, { names, hours }] of Object.entries(slotData)) {
       const limit = SLOT_HOURS[slot] ?? 4;
-      if (hours > limit) {
+      if (names.length >= 2 && hours > limit) {
         hard.push({
           error_code: "TIME_OVERLAP",
           rule: "R7 – Time Overlap",
@@ -219,6 +237,23 @@ export function runCodeChecks(days: any[]): { hard: CodeIssue[]; soft: CodeIssue
         });
       }
     }
+
+    // ── R16 – Pricing: every stop needs pricing info, but $0/"Free" is valid —
+    //     only a genuinely blank price field fails this.
+    for (const act of acts) {
+      if (act.price === undefined || act.price === null || !String(act.price).trim()) {
+        hard.push({
+          error_code: "MISSING_PRICE",
+          rule: "R16 – Pricing",
+          severity: "error",
+          field: `${dayLabel} – ${act.slot || ""}`,
+          field_value: act.activity_name,
+          affected_item: act.activity_name,
+          message: `"${act.activity_name}" has no pricing set. Free activities are fine — just set the price to $0.`,
+          action: "Set a price for this stop (enter 0 if it's free).",
+        });
+      }
+    }
   }
 
   // ── R13 – Duplicate Activity: exact-name match, scheduled more than once across the
@@ -253,6 +288,22 @@ export function runCodeChecks(days: any[]): { hard: CodeIssue[]; soft: CodeIssue
   }
 
   return { hard, soft };
+}
+
+// ── R18 – Photos: the package needs at least one photo somewhere across the whole
+//     trip (any day or any item within it) — not per-day, so it's a standalone check.
+export function checkPackagePhotos(pkg: any): CodeIssue | null {
+  if (Number(pkg?.photo_count) > 0) return null;
+  return {
+    error_code: "MISSING_PHOTOS",
+    rule: "R18 – Photos",
+    severity: "error",
+    field: "photo_count",
+    field_value: "0",
+    affected_item: "Entire Package",
+    message: "This package has no photos anywhere in the itinerary. Please add at least 1 picture before publishing.",
+    action: "Add at least one photo to a day or an activity.",
+  };
 }
 
 // ─── AI prompt (R3, R4, R6, R8, R10, R11, R12, R14, R15) ──────────────────────
@@ -330,13 +381,32 @@ Evaluate the package ONLY against the contextual rules listed below.
 Be strict and consistent: the same input must always produce the same output.
 Return empty arrays when no issues are found — never invent problems.
 
+In addition to the numbered rules, re-check the ENTIRE package text (trip name, hotel name,
+activity names, descriptions — every field) for profanity, slurs, drug references, or violent/
+threatening language. This is a second-pass safety net behind a static keyword filter, so focus on
+what a fixed word list would miss: misspellings, leetspeak substitutions (e.g. "b4d", "fvck"),
+spaced-out letters, or other obvious evasions of an obscene/offensive word. Do not flag mild,
+borderline, or merely blunt language (e.g. "kill some time", "killer view") — only genuine
+profanity or offensive content you are confident about.
+
 Do NOT flag the gap between a flight's arrival time and the day's first activity (post-landing
 transfer/immigration/customs time) under any rule, including general or route-efficiency judgment
-calls. That check is already handled deterministically elsewhere with a fixed policy: domestic
-arrivals need at least 1 hour before the first activity, international arrivals need at least 1.5
-hours. Only raise a post-landing transfer concern if you believe the gap is shorter than those
-thresholds, and if you do, phrase the fix using this same policy (1 hour domestic / 1.5 hours
-international) rather than inventing your own numbers.
+calls, EVEN IF that gap looks too short to you. That check is already handled deterministically
+elsewhere with a fixed policy (domestic arrivals need at least 1 hour before the first activity,
+international arrivals need at least 1.5 hours) and always runs whether or not you also flag it —
+so flagging it yourself never catches anything the deterministic check would otherwise miss, it
+only ever produces a duplicate of the same finding. Leave this entirely to that check.
+
+Flights are booked selections from a fixed inventory, not freeform creator input — the creator
+cannot edit a flight's details, only choose which flight to use. Every flight line only ever shows
+one clock time (arrival), by deliberate design, even on a departure day, even for a flight leaving
+the destination. Do NOT flag this as ambiguous, incomplete, a factual error, or any other kind of
+problem — it is not something the creator can act on, and it is not a defect to report.
+
+Only flag something as a hard error (severity "error") if the rule below explicitly says to. For
+every other contextual rule, always use a soft warning (severity "warning") — these are judgment
+calls a creator may reasonably disagree with or intend on purpose, so none of them should block
+publishing on their own.
 
 === CONTEXTUAL RULES ===
 ${rulesText}
@@ -372,8 +442,10 @@ Return ONLY a valid JSON object — no markdown, no explanation:
     "grammar_score": <0.0-1.0, rate quality of activity descriptions>,
     "completeness_score": <0.0-1.0, rate how complete the itinerary feels>,
     "feasibility_score": <0.0-1.0, based only on the contextual rules above>,
-    "illegal_act": <true only if an activity is clearly illegal or unethical, else false>
+    "illegal_act": <true only if an activity is clearly illegal or unethical, else false>,
+    "contains_profanity": <true only if you found profanity/offensive content missed by a static keyword filter, else false>
   },
+  "profanity_evidence": "<short quote of the offending text if contains_profanity is true, else empty string>",
   "summary": "<one sentence overview of the contextual check>"
 }`;
 }
@@ -393,9 +465,19 @@ export function buildUserPrompt(pkg: any, days: any[]): string {
 
   for (const day of days) {
     lines.push(`  Day ${day.day_number}:`);
+    if (day.summary && day.summary.trim()) {
+      lines.push(`    [DAY SUMMARY] ${day.summary}`);
+    }
     for (const flight of day.flights || []) {
       const flightType = flight.flight_type ? ` (${flight.flight_type})` : "";
-      lines.push(`    [FLIGHT ARRIVAL @${flight.arrival_time}] ${flight.title}${flightType}`);
+      // `arrival_time` is always this flight's own landing time, whether it's the
+      // outbound arrival into the destination or the return leg landing back home —
+      // "arrives" trails the route (title is "X to Y") so it's unambiguous WHICH end
+      // the time belongs to. The old "[FLIGHT ARRIVAL @time] X to Y" phrasing put
+      // "ARRIVAL" right next to the day, reading as if the flight arrives INTO that
+      // day's own location even for a return/departure leg — this is what confused
+      // the AI into flagging a real return flight as a "factual error."
+      lines.push(`    [FLIGHT] ${flight.title}${flightType} — arrives ${flight.arrival_time}`);
     }
     for (const act of day.activities || []) {
       const desc = act.description ? ` | desc: ${act.description.slice(0, 60)}` : "";

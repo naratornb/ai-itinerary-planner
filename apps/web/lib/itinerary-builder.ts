@@ -103,7 +103,12 @@ export type DaySummary = {
   hotelName: string | null;
 };
 
-const STAY_LABEL_SUFFIX = /\s*\((Check-in|Check-out|Night \d+ of \d+)\)\s*$/i;
+export const STAY_LABEL_SUFFIX = /\s*\((Check-in|Check-out|Night \d+ of \d+)\)\s*$/i;
+
+// Matches a genuine "HH:MM" clock time, as opposed to a hotel row's booking-only
+// label ("Check-in" / "Overnight stay" / "Check-out"). Mirrors the same pattern used
+// in itinerary-editor.tsx's REAL_TIME_PATTERN.
+const REAL_TIME_PATTERN = /^\d{1,2}:\d{2}/;
 
 /** Collapsed-card rollup for the Finalise & Review page's day timeline. */
 export function summarizeDay(day: BuilderDay): DaySummary {
@@ -497,19 +502,27 @@ export function buildDaysFromPackage(pkg: CreatorPackageDetail): BuilderDay[] {
     }
   }
 
-  // Check-out leads the day and the stay closes it; flights and activities
-  // order chronologically in between. The old sequence_order sort interleaved
-  // every component at sequence 1, dropping the hotel row mid-day — and every
-  // activity lacking a start_time collapsed onto "09:00", so they all
-  // overlapped. Missing activity times chain off the previous activity's end.
+  // sequenceOrder comes from the DB and can go stale relative to `time` (e.g. after a
+  // flight's local time gets corrected without its sequence_order being re-derived) —
+  // so items with a genuine clock time sort chronologically: flight-vs-activity order
+  // drives findTimeConflict/annotateItems downstream. The hotel rows carry no real
+  // clock time, so a band pins check-out to the day's start and the stay row to its
+  // end instead; sequenceOrder is only the tiebreaker for untimed items. Missing
+  // activity times then chain off the previous activity's end rather than all
+  // collapsing onto "09:00".
   const dayBand = (item: TimelineItem) =>
-    item.type === "HOTEL" ? (item.stayMarker === "check-out" ? 0 : 3) : item.type === "FLIGHT" ? 1 : 2;
+    item.type === "HOTEL" ? (item.stayMarker === "check-out" ? 0 : 3) : 1;
   for (const day of days) {
     day.items.sort((a, b) => {
       const band = dayBand(a) - dayBand(b);
       if (band !== 0) return band;
-      if (REAL_TIME.test(a.time) && REAL_TIME.test(b.time)) return a.time.localeCompare(b.time);
-      return (a.sequenceOrder ?? Number.MAX_SAFE_INTEGER) - (b.sequenceOrder ?? Number.MAX_SAFE_INTEGER);
+      const aReal = REAL_TIME_PATTERN.test(a.time);
+      const bReal = REAL_TIME_PATTERN.test(b.time);
+      if (aReal && bReal) return a.time.localeCompare(b.time);
+      if (a.sequenceOrder !== undefined || b.sequenceOrder !== undefined) {
+        return (a.sequenceOrder ?? Number.MAX_SAFE_INTEGER) - (b.sequenceOrder ?? Number.MAX_SAFE_INTEGER);
+      }
+      return a.time.localeCompare(b.time);
     });
     let cursor = "09:00";
     for (const item of day.items) {
