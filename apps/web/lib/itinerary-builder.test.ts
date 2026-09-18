@@ -211,6 +211,92 @@ test("a flight lands on its arrival day, at its arrival time in the destination'
   assert.equal(flightItem?.time, "14:00");
 });
 
+test("day items order check-out → flights → activities → stay, and untimed activities chain instead of sharing 09:00", () => {
+  const pkg: CreatorPackageDetail = {
+    package_id: "pkg-order",
+    title: "Osaka Ten Days",
+    duration_days: 3,
+    days: [],
+    flights: [
+      {
+        flight_id: "fl-out",
+        airline: "Qantas",
+        flight_number: null,
+        origin_iata: "Brisbane (BNE)",
+        destination_iata: "Osaka (KIX)",
+        departure_datetime: "2026-07-12T20:00:00Z",
+        arrival_datetime: "2026-07-13T05:00:00Z",
+        cabin_class: "economy",
+        price_aud: 1022,
+        day_number: 1,
+      },
+      {
+        flight_id: "fl-ret",
+        airline: "JAL",
+        flight_number: null,
+        origin_iata: "Osaka (KIX)",
+        destination_iata: "Brisbane (BNE)",
+        departure_datetime: "2026-07-14T22:00:00Z",
+        arrival_datetime: "2026-07-15T07:00:00Z",
+        cabin_class: "economy",
+        price_aud: 1034,
+        day_number: 3,
+      },
+    ],
+    hotels: [
+      {
+        hotel_id: "HT-1",
+        hotel_name: "Osaka Garden Residence",
+        star_rating: 4.1,
+        city: "Osaka",
+        address: null,
+        check_in_day: 1,
+        check_out_day: 3,
+        price_per_night_aud: 548,
+        room_type: "Standard Double",
+      },
+    ],
+    activities: [
+      {
+        activity_id: "a1",
+        sequence_order: 1,
+        activity_name: "Food Tour",
+        activity_date: null,
+        city: "Osaka",
+        duration_hours: 2,
+        price_aud: 100,
+        description: null,
+        booking_required: null,
+        day_number: 2,
+      },
+      {
+        activity_id: "a2",
+        sequence_order: 2,
+        activity_name: "Canal Cruise",
+        activity_date: null,
+        city: "Osaka",
+        duration_hours: 1,
+        price_aud: 47,
+        description: null,
+        booking_required: null,
+        day_number: 2,
+      },
+    ],
+  };
+
+  const days = buildDaysFromPackage(pkg);
+
+  // Day 1: the outbound flight leads, check-in closes the day.
+  assert.deepEqual(days[0].items.map((item) => item.type), ["FLIGHT", "HOTEL"]);
+  // Day 2: activities keep sequence order and chain times off each other's
+  // duration; the overnight stay row sits at the end, not mid-list.
+  assert.deepEqual(days[1].items.map((item) => item.type), ["ACTIVITY", "ACTIVITY", "HOTEL"]);
+  assert.deepEqual(days[1].items.map((item) => item.time), ["09:00", "11:00", "Overnight stay"]);
+  // Day 3: check-out leads, then the return flight.
+  assert.deepEqual(days[2].items.map((item) => item.type), ["HOTEL", "FLIGHT"]);
+  assert.equal(days[2].items[0].stayMarker, "check-out");
+});
+
 test("items in the same day are ordered by their real clock time, not a stale sequence_order", () => {
   // Regression: a return flight departing 20:06 with sequence_order=1 (an early DB
   // position, e.g. left over from before its local time was corrected) was sorting

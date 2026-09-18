@@ -27,6 +27,7 @@ import {
   type WizardSelection,
 } from "../lib/ai/itinerary";
 import { wizardVibesStorageKey } from "../lib/review-draft";
+import { VIBES } from "../lib/vibes";
 import { supabase } from "../lib/supabase/client";
 import { creatorPackageRoute } from "../lib/routes";
 import { creatorDashboardBackLink, dashboardActionAlignment } from "./navigation-model";
@@ -678,6 +679,12 @@ function marketplacePrice(price: number | null) {
   }).format(price);
 }
 
+function formatFollowerCount(count: number) {
+  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
+  if (count >= 1_000) return `${Math.round(count / 1_000)}K`;
+  return String(count);
+}
+
 export function MarketplaceScreen() {
   const router = useRouter();
   const [search, setSearch] = useState("");
@@ -688,6 +695,9 @@ export function MarketplaceScreen() {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  // Avatar lookup until the list API exposes influencer.avatar_url — keyed by
+  // instagram handle so one batched query covers every card.
+  const [avatars, setAvatars] = useState<Record<string, string>>({});
 
   const loadPackages = async () => {
     setLoading(true);
@@ -719,6 +729,36 @@ export function MarketplaceScreen() {
       });
     return () => { active = false; };
   }, []);
+
+  useEffect(() => {
+    const handles = [
+      ...new Set(
+        packages
+          .filter((card) => !card.influencer?.avatar_url)
+          .map((card) => card.influencer?.instagram_handle)
+          .filter((handle): handle is string => Boolean(handle))
+      ),
+    ];
+    if (!handles.length) return;
+    let active = true;
+    void supabase
+      .from("influencer_profiles")
+      .select("instagram_handle, profiles(avatar_url)")
+      .in("instagram_handle", handles)
+      .then(({ data }) => {
+        if (!active || !data) return;
+        setAvatars((current) => {
+          const next = { ...current };
+          for (const row of data) {
+            const profile = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles;
+            const url = (profile as { avatar_url?: string | null } | null)?.avatar_url;
+            if (url) next[row.instagram_handle] = url;
+          }
+          return next;
+        });
+      });
+    return () => { active = false; };
+  }, [packages]);
 
   useEffect(() => {
     const query = search.trim();
@@ -937,10 +977,13 @@ export function MarketplaceScreen() {
           {packages.map((card) => {
             const destination = [card.destination_city, card.destination_country].filter(Boolean).join(", ");
             const creatorName = card.influencer?.display_name || "Marketplace creator";
+            const creatorAvatar = card.influencer?.avatar_url
+              ?? (card.influencer?.instagram_handle ? avatars[card.influencer.instagram_handle] : undefined);
             const openTrip = () => router.push(`/marketplace/packages/${card.package_id}`);
             return (
             <article
               key={card.package_id}
+              className="trip-card"
               role="link"
               tabIndex={0}
               onClick={openTrip}
@@ -956,18 +999,29 @@ export function MarketplaceScreen() {
             >
               {/* Image */}
               <div style={{ position: "relative", aspectRatio: "3/2", overflow: "hidden" }}>
-                <img src={card.cover_image_url || IMG.hero} alt={card.title} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                <img className="trip-card-img" src={card.cover_image_url || IMG.hero} alt={card.title} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                {card.tags.length > 0 && (
+                  <div style={{ position: "absolute", left: 12, bottom: 12, display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {card.tags.slice(0, 3).map((tag) => (
+                      <span key={tag} style={{
+                        background: "rgba(255,255,255,0.94)", color: C.ink,
+                        fontFamily: "var(--fc-font-body)", fontSize: 12, fontWeight: 600,
+                        lineHeight: "16px", padding: "4px 10px", borderRadius: C.radiusPill,
+                      }}>{tag}</span>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {/* Body */}
-              <div style={{ padding: "18px 18px 20px", flex: 1, display: "flex", flexDirection: "column", gap: 10 }}>
+              <div style={{ padding: "16px 16px 20px", flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
                 <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, color: C.secondary, margin: 0 }}>
                   {card.duration_days ? `${card.duration_days} days` : "Duration on request"} · {destination || "Destination coming soon"}
                 </p>
                 <p style={{
-                  fontFamily: "var(--fc-font-body)", fontSize: 15, fontWeight: 600,
-                  color: C.ink, margin: 0, lineHeight: "22px",
-                  display: "-webkit-box", WebkitLineClamp: 3,
+                  fontFamily: "var(--fc-font-body)", fontSize: 16, fontWeight: 600,
+                  color: C.ink, margin: 0, lineHeight: "22px", minHeight: 44,
+                  display: "-webkit-box", WebkitLineClamp: 2,
                   WebkitBoxOrient: "vertical", overflow: "hidden",
                 }}>
                   {card.title}
@@ -975,25 +1029,46 @@ export function MarketplaceScreen() {
 
                 {/* Creator info */}
                 <div style={{
-                  display: "flex", alignItems: "center", gap: 10,
-                  padding: "12px 0", borderTop: `1px solid ${C.border}`, marginTop: 6,
+                  display: "flex", alignItems: "center", gap: 8,
+                  paddingTop: 10, marginTop: 4, borderTop: `1px solid ${C.border}`,
                 }}>
-                  <span aria-hidden="true" style={{ width: 34, height: 34, borderRadius: "50%", background: C.subtle, display: "grid", placeItems: "center", fontWeight: 700 }}>{creatorName.charAt(0).toUpperCase()}</span>
-                  <div>
-                    <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 600, color: C.ink, margin: 0, lineHeight: "20px" }}>{creatorName}</p>
-                    {card.influencer?.instagram_handle && <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, color: C.secondary, margin: 0, lineHeight: "18px" }}>{card.influencer.instagram_handle}</p>}
-                  </div>
-                  <span style={{
-                    marginLeft: "auto", background: "#EEF5FF", color: C.blue,
-                    fontFamily: "var(--fc-font-body)", fontSize: 12, fontWeight: 700,
-                    padding: "4px 10px", borderRadius: 999, letterSpacing: "0.05em", flexShrink: 0,
-                  }}>CREATOR</span>
+                  {creatorAvatar ? (
+                    <img src={creatorAvatar} alt="" aria-hidden="true" style={{ width: 28, height: 28, borderRadius: "50%", objectFit: "cover", flexShrink: 0, background: C.subtle }} />
+                  ) : (
+                    <span aria-hidden="true" style={{
+                      width: 28, height: 28, borderRadius: "50%", background: C.subtle,
+                      display: "grid", placeItems: "center", fontSize: 13, fontWeight: 700,
+                      color: C.secondary, flexShrink: 0,
+                    }}>{creatorName.charAt(0).toUpperCase()}</span>
+                  )}
+                  <p style={{
+                    fontFamily: "var(--fc-font-body)", fontSize: 14, color: C.secondary,
+                    margin: 0, lineHeight: "20px",
+                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                  }}>
+                    <span style={{ fontWeight: 600, color: C.ink }}>{creatorName}</span>
+                    {card.influencer?.instagram_handle ? ` · ${card.influencer.instagram_handle}` : ""}
+                    {card.influencer?.follower_count ? ` · ${formatFollowerCount(card.influencer.follower_count)} followers` : ""}
+                  </p>
                 </div>
 
-                <div style={{ paddingTop: 6 }}>
-                  <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 12, color: C.secondary, margin: "0 0 3px" }}>From per person</p>
-                  <p style={{ fontFamily: "var(--fc-font-display)", fontSize: 24, fontWeight: 700, color: C.ink, margin: "0 0 14px", letterSpacing: "-0.01em" }}>{marketplacePrice(card.base_price_aud)}</p>
-                  <BtnPrimary full onClick={openTrip}>View trip</BtnPrimary>
+                <div style={{ marginTop: "auto", paddingTop: 14, display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 8 }}>
+                  <p style={{ fontFamily: "var(--fc-font-display)", fontSize: 22, fontWeight: 700, color: C.ink, margin: 0, letterSpacing: "-0.01em", lineHeight: "28px" }}>
+                    <span style={{ fontFamily: "var(--fc-font-body)", fontSize: 13, fontWeight: 400, color: C.secondary, letterSpacing: 0 }}>From </span>
+                    {marketplacePrice(card.base_price_aud)}
+                    {card.base_price_aud !== null && (
+                      <span style={{ fontFamily: "var(--fc-font-body)", fontSize: 13, fontWeight: 400, color: C.secondary, letterSpacing: 0 }}> / person</span>
+                    )}
+                  </p>
+                  <span style={{
+                    fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 600, color: C.blue,
+                    display: "inline-flex", alignItems: "center", gap: 4, flexShrink: 0,
+                  }}>
+                    View trip
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M5 12h14M12 5l7 7-7 7"/>
+                    </svg>
+                  </span>
                 </div>
               </div>
             </article>
@@ -2116,14 +2191,7 @@ function PackageWizardProgress({
   );
 }
 
-const VIBES = [
-  { id: "chill",      label: "Chill",            desc: "Spa days, yoga sessions, and slow-paced downtime",          img: "https://images.unsplash.com/photo-1602002418816-5c0aeef426aa?w=600&h=320&fit=crop" },
-  { id: "adventure",  label: "Adventure",        desc: "Active experiences and outdoor activities",                 img: "https://images.unsplash.com/photo-1533240332313-0db49b459ad6?w=600&h=320&fit=crop" },
-  { id: "luxury",     label: "Luxury",           desc: "Premium stays and high-end, curated experiences",           img: "https://images.unsplash.com/photo-1551918120-9739cb430c6d?w=600&h=320&fit=crop" },
-  { id: "local",      label: "Local Experience", desc: "Walking tours, museums, and hands-on culture classes",      img: "https://images.unsplash.com/photo-1747396108528-682b02327818?w=600&h=320&fit=crop" },
-  { id: "foodie",     label: "Foodie",           desc: "Street food tours, cooking classes, and night markets",     img: "https://images.unsplash.com/photo-1777576506689-d28f3b4cb33a?w=600&h=320&fit=crop" },
-  { id: "scenic",     label: "Scenic",           desc: "Countryside day trips, river cruises, and scenic viewpoints", img: "https://images.unsplash.com/photo-1626948688703-0136bc0a90da?w=600&h=320&fit=crop" },
-];
+
 
 const DURATION_DAYS = { short: 4, mid: 7, long: 12 } as const;
 
@@ -2353,13 +2421,18 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
           season,
         };
         const res = await generateItinerary(selection);
-        const base = wizardDraftToPackageInput({
-          destination: selected ?? dest.trim(),
-          vibes: vibes.map((vibe) => VIBES.find((item) => item.id === vibe)?.label ?? vibe),
-          duration: duration ?? "short",
-          customDurationDays,
-          season: season ?? "",
-        });
+        const base = {
+          ...wizardDraftToPackageInput({
+            destination: selected ?? dest.trim(),
+            vibes: vibes.map((vibe) => VIBES.find((item) => item.id === vibe)?.label ?? vibe),
+            duration: duration ?? "short",
+            customDurationDays,
+            season: season ?? "",
+          }),
+          // Persist the raw vibe ids — tags is the only backend field that
+          // carries them (see lib/vibes.ts for the canonical list).
+          tags: vibes,
+        };
         const { package_id } = await createPackage(
           timeoutFetch,
           BUILDER_API_URL,
@@ -2468,7 +2541,7 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
         season: seasonOverride ?? "",
       });
       const description = `${styleLabels.length ? `A ${styleLabels.join(", ")} trip` : "A custom trip"}${seasonOverride ? `, built for ${seasonOverride}` : ", built from scratch"}.`;
-      const { package_id } = await createPackage(fetch, BUILDER_API_URL, accessToken, { ...base, description });
+      const { package_id } = await createPackage(fetch, BUILDER_API_URL, accessToken, { ...base, description, tags: vibes });
       router.push(`/packages/editor/${encodeURIComponent(package_id)}`);
     } catch (error) {
       setCreateError(error instanceof Error ? error.message : "Unable to create this package.");
