@@ -363,17 +363,6 @@ export function annotateItems(raw: TimelineItem[]): TimelineItem[] {
     // adding it here would double-count the flight (same bug fixed in findTimeConflict).
     const endMin = item.type === "FLIGHT" ? toMinutes(item.time) : toMinutes(item.time) + durationMin;
 
-    // 1. Long single activity — flights routinely run past this on their own, so skip them
-    if (item.type !== "FLIGHT" && durationMin > LONG_ACTIVITY_MIN) {
-      const hrs = (durationMin / 60).toFixed(1);
-      return {
-        ...item,
-        status: "critical" as const,
-        problem: "Activity is unusually long",
-        problemDetail: `${hrs} hrs scheduled — consider splitting into two stops`,
-      };
-    }
-    
     const next = raw[i + 1];
     if (next) {
       const nextStartMin = toMinutes(next.time);
