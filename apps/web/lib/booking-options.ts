@@ -14,6 +14,7 @@ export type CatalogHotel = {
   hotel_name: string | null;
   star_rating: number | null;
   room_type: string | null;
+  city: string | null;
   price_per_night_aud: number | null;
 };
 

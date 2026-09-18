@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { fetchMarketplacePackage, type MarketplacePackageDetail, type MarketplaceReview } from "../lib/marketplace-api";
 import { supabase } from "../lib/supabase/client";
 import { assignDayImages, buildStopImages, formatTripLength, initials } from "../lib/marketplace-detail";
 import { buildDaysFromPackage, type TimelineItem } from "../lib/itinerary-builder";
-import { dateAfter, estimateBookingTotal, flightsOn, iataPattern, type CatalogOptions } from "../lib/booking-options";
+import { dateAfter } from "../lib/booking-options";
 import { vibeLabelsFromTags } from "../lib/vibes";
 import type { CreatorPackageDetail } from "../lib/creator-api";
 
@@ -16,7 +16,7 @@ const fallbackImage = "https://images.unsplash.com/photo-1510391532992-e1b94a277
 
 // Design tokens from apps/web/design/design-tokens.json — keep this page on
 // the same system as the rest of the marketplace rather than one-off values.
-const color = {
+export const color = {
   action: "#0072EA",
   surface: "#FFFFFF",
   surfaceSubtle: "#F5F5F5",
@@ -27,10 +27,10 @@ const color = {
   textDisabled: "#9E9E9E",
   border: "#E0E0E0",
 };
-const radius = { sm: 8, md: 12, lg: 16, pill: 999 };
-const displayFont = "var(--fc-font-display)";
+export const radius = { sm: 8, md: 12, lg: 16, pill: 999 };
+export const displayFont = "var(--fc-font-display)";
 
-const eyebrowStyle: React.CSSProperties = {
+export const eyebrowStyle: React.CSSProperties = {
   margin: 0,
   fontSize: 11,
   fontWeight: 700,
@@ -39,7 +39,7 @@ const eyebrowStyle: React.CSSProperties = {
   color: color.textSecondary,
 };
 
-const fieldStyle: React.CSSProperties = {
+export const fieldStyle: React.CSSProperties = {
   marginTop: 6,
   width: "100%",
   boxSizing: "border-box",
@@ -52,7 +52,7 @@ const fieldStyle: React.CSSProperties = {
   background: color.surface,
 };
 
-function formatDateLabel(iso: string) {
+export function formatDateLabel(iso: string) {
   return new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-AU", {
     day: "numeric", month: "short", year: "numeric", timeZone: "UTC",
   });
@@ -70,7 +70,7 @@ const SEASON_BY_PACKAGE: Record<string, string> = {
   "b0000000-0000-0000-0000-000000000011": "Year-round", // Kuala Lumpur
 };
 
-function detailPrice(price: number | null) {
+export function detailPrice(price: number | null) {
   if (price === null) return "Price on request";
   return new Intl.NumberFormat("en-AU", {
     style: "currency", currency: "AUD", maximumFractionDigits: 0,
@@ -182,9 +182,140 @@ function Chevron({ up }: { up: boolean }) {
   );
 }
 
+// Calendar popover for the departure field — a departure is only valid on a
+// day the outbound route actually flies, so the grid enables catalog dates
+// and disables the rest rather than allowing free input.
+export function DepartureDatePicker({ label, dates, value, onChange }: {
+  label: string;
+  dates: string[]; // sorted YYYY-MM-DD
+  value: string;
+  onChange: (id: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [month, setMonth] = useState(value.slice(0, 7)); // "YYYY-MM"
+  const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const valid = new Set(dates);
+  const [year, mon] = month.split("-").map(Number);
+  const daysInMonth = new Date(Date.UTC(year, mon, 0)).getUTCDate();
+  const firstWeekday = new Date(Date.UTC(year, mon - 1, 1)).getUTCDay();
+  const monthLabel = new Date(Date.UTC(year, mon - 1, 1))
+    .toLocaleDateString("en-AU", { month: "long", year: "numeric", timeZone: "UTC" });
+  const minMonth = dates[0]?.slice(0, 7) ?? month;
+  const maxMonth = dates[dates.length - 1]?.slice(0, 7) ?? month;
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (e: MouseEvent) => {
+      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setOpen(false);
+        triggerRef.current?.focus();
+      }
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  const navButton = (delta: number, disabled: boolean, ariaLabel: string, path: string) => (
+    <button
+      type="button"
+      aria-label={ariaLabel}
+      disabled={disabled}
+      onClick={() => setMonth(new Date(Date.UTC(year, mon - 1 + delta, 1)).toISOString().slice(0, 7))}
+      style={{
+        width: 32, height: 32, display: "grid", placeItems: "center",
+        border: 0, borderRadius: radius.sm, background: "none",
+        color: color.textPrimary, cursor: disabled ? "default" : "pointer",
+        opacity: disabled ? 0.3 : 1, fontFamily: "inherit",
+      }}
+    >
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d={path} /></svg>
+    </button>
+  );
+
+  return (
+    <div ref={rootRef} style={{ position: "relative", marginTop: 6 }}>
+      <button
+        ref={triggerRef}
+        type="button"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-label={label}
+        onClick={() => { setMonth(value.slice(0, 7)); setOpen((o) => !o); }}
+        style={{
+          ...fieldStyle,
+          marginTop: 0,
+          display: "flex", alignItems: "center", gap: 12,
+          padding: "10px 12px", cursor: "pointer", fontFamily: "inherit",
+        }}
+      >
+        <span style={{ flex: 1, minWidth: 0, textAlign: "left" }}>{formatDateLabel(value)}</span>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={color.textSecondary} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+          <rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4M8 2v4M3 10h18" />
+        </svg>
+      </button>
+      {open && (
+        <div
+          role="dialog"
+          aria-label={label}
+          style={{
+            position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, zIndex: 50,
+            minWidth: 300, padding: 12, background: color.surface, border: `1px solid ${color.border}`,
+            borderRadius: radius.md, boxShadow: "var(--fc-shadow-raised)",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", marginBottom: 8 }}>
+            {navButton(-1, month <= minMonth, "Previous month", "m15 6-6 6 6 6")}
+            <span style={{ flex: 1, textAlign: "center", fontSize: 14, fontWeight: 700 }}>{monthLabel}</span>
+            {navButton(1, month >= maxMonth, "Next month", "m9 6 6 6-6 6")}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 2, textAlign: "center" }}>
+            {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((d) => (
+              <span key={d} aria-hidden="true" style={{ padding: "4px 0", fontSize: 11, fontWeight: 700, color: color.textSecondary }}>{d}</span>
+            ))}
+            {Array.from({ length: firstWeekday }, (_, i) => <span key={`blank-${i}`} />)}
+            {Array.from({ length: daysInMonth }, (_, i) => {
+              const id = `${month}-${String(i + 1).padStart(2, "0")}`;
+              const enabled = valid.has(id);
+              const selected = id === value;
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  disabled={!enabled}
+                  aria-label={formatDateLabel(id)}
+                  aria-current={selected ? "date" : undefined}
+                  className="calendar-day"
+                  onClick={() => { onChange(id); setOpen(false); triggerRef.current?.focus(); }}
+                  style={{
+                    minHeight: 36, border: 0, borderRadius: radius.sm,
+                    background: selected ? color.action : "none",
+                    color: selected ? "#fff" : enabled ? color.textPrimary : color.textDisabled,
+                    fontSize: 13, fontWeight: selected ? 700 : 400,
+                    cursor: enabled ? "pointer" : "default", fontFamily: "inherit",
+                  }}
+                >
+                  {i + 1}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Every content section shares one heading pattern: 24px display-font title.
 // Pair with eyebrowStyle for inner labels.
-function SectionTitle({ children }: { children: React.ReactNode }) {
+export function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
     <h2 style={{ margin: 0, fontFamily: displayFont, fontSize: 24, fontWeight: 800, letterSpacing: "-0.01em" }}>
       {children}
@@ -298,7 +429,7 @@ function TipIcon() {
   );
 }
 
-function CheckIcon() {
+export function CheckIcon() {
   return (
     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M20 6 9 17l-5-5" />
@@ -351,6 +482,7 @@ function DayCard({
         type="button"
         onClick={onToggle}
         aria-expanded={expanded}
+        className="day-card-toggle"
         style={{ all: "unset", boxSizing: "border-box", display: "block", position: "relative", width: "100%", height: 340, cursor: "pointer" }}
       >
         <img src={image} alt={label} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
@@ -360,8 +492,17 @@ function DayCard({
           <Chevron up={expanded} />
         </div>
       </button>
-      {expanded && (day.summary || items.length > 0) && (
-        <div style={{ background: color.surface, borderTop: `1px solid ${color.border}` }}>
+      {(day.summary || items.length > 0) && (
+        <div
+          className="day-card-body"
+          aria-hidden={!expanded}
+          style={{
+            gridTemplateRows: expanded ? "1fr" : "0fr",
+            visibility: expanded ? "visible" : "hidden",
+            background: color.surface,
+          }}
+        >
+          <div className="day-card-clip" style={{ borderTop: `1px solid ${color.border}` }}>
           {day.summary && (
             <p style={{ margin: 0, padding: 24, fontSize: 16, lineHeight: 1.5, color: color.textPrimary, borderBottom: items.length > 0 ? `1px solid ${color.border}` : undefined }}>{day.summary}</p>
           )}
@@ -382,6 +523,7 @@ function DayCard({
               </div>
             </div>
           ))}
+          </div>
         </div>
       )}
     </div>
@@ -393,16 +535,15 @@ export function PackageDetailView({
   backLabel,
   onBack,
   previewLabel,
-  catalog,
   reviews,
 }: {
   pkg: DetailPackage;
   backLabel: string;
   onBack: () => void;
   previewLabel?: string;
-  catalog?: CatalogOptions | null;
   reviews?: MarketplaceReview[] | null;
 }) {
+  const router = useRouter();
   const [shareStatus, setShareStatus] = useState("");
   const [expandedDays, setExpandedDays] = useState<Set<string>>(new Set());
   const [lightbox, setLightbox] = useState<{ images: string[]; index: number } | null>(null);
@@ -466,17 +607,6 @@ export function PackageDetailView({
   // audience field ("couples, first-timers"), not a vibe, so it isn't used here.
   const vibeLabel = vibeLabelsFromTags(pkg.tags).join(" & ") || null;
 
-  // Booking-request options — every choice is a real catalog row: departure
-  // dates are days the outbound route actually flies, the flight selects list
-  // same-route alternatives on the chosen dates, and the hotel select lists
-  // other properties in the destination city. The estimate adjusts
-  // base_price × travelers by the chosen rows' real price deltas.
-  const [departure, setDeparture] = useState(outboundFlight?.departure_datetime?.slice(0, 10) ?? "");
-  const [travelers, setTravelers] = useState(2);
-  const [outboundSel, setOutboundSel] = useState(outboundFlight?.flight_id ?? "");
-  const [returnSel, setReturnSel] = useState(returnFlight?.flight_id ?? "");
-  const [hotelSel, setHotelSel] = useState(primaryHotel?.hotel_id ?? "");
-  const maxTravelers = pkg.max_group_size ?? 8;
   // Anchor the return date to the real gap between the seeded flight legs —
   // junction day_number can disagree with the actual departure dates (the
   // Osaka return is slotted day 10 but its flight departs on day 11). Falls
@@ -486,64 +616,7 @@ export function PackageDetailView({
   const returnDayOffset = outDep && retDep
     ? Math.round((Date.parse(`${retDep}T12:00:00Z`) - Date.parse(`${outDep}T12:00:00Z`)) / 86400000)
     : (returnFlight?.day_number ?? pkg.duration_days ?? 1) - 1;
-  const returnDate = dateAfter(departure, returnDayOffset);
-
-  // Compact labels — the card is 360px wide, so options lead with
-  // airline/flight-number + price; cabin sits in the helper under the select.
-  const flightOption = (f: { airline?: string | null; flight_number?: string | null; flight_id?: string | null; cabin_class?: string | null; departure_datetime?: string | null; price_aud?: number | null }) => ({
-    id: f.flight_id ?? "",
-    label: [
-      [f.airline, f.flight_number ?? f.flight_id?.split("-")[0]].filter(Boolean).join(" "),
-      f.price_aud != null ? detailPrice(f.price_aud) : null,
-    ].filter(Boolean).join(" · "),
-    price: f.price_aud ?? 0,
-    cabin: f.cabin_class ?? null,
-  });
-  // Options are the real catalog rows on the chosen date (the package's own
-  // flight is a catalog row too, so it appears through the same filter). When
-  // the catalog is empty/unloaded, the curated flight stays as the fallback.
-  const outOnDate = flightsOn(catalog?.outbound, departure);
-  const outboundOptions = outOnDate.length
-    ? outOnDate.map(flightOption)
-    : outboundFlight ? [flightOption(outboundFlight)] : [];
-  const retOnDate = flightsOn(catalog?.returnLeg, returnDate);
-  const returnOptions = retOnDate.length
-    ? retOnDate.map(flightOption)
-    : returnFlight ? [flightOption(returnFlight)] : [];
-  const hotelOption = (h: { hotel_id?: string | null; hotel_name?: string | null; room_type?: string | null; star_rating?: number | null; price_per_night_aud?: number | null }) => ({
-    id: h.hotel_id ?? "",
-    label: [h.hotel_name, h.price_per_night_aud != null ? detailPrice(h.price_per_night_aud) : null].filter(Boolean).join(" · "),
-    nightly: h.price_per_night_aud ?? 0,
-    meta: [h.room_type, h.star_rating != null ? `${h.star_rating}★` : null].filter(Boolean).join(" · "),
-  });
-  const hotelOptions = [
-    ...(primaryHotel ? [hotelOption(primaryHotel)] : []),
-    ...(catalog?.hotels ?? [])
-      .filter((h) => h.hotel_id !== primaryHotel?.hotel_id)
-      .map(hotelOption),
-  ];
-  const departureDates = [...new Set([departure, ...(catalog?.outbound ?? []).map((f) => f.departure_datetime.slice(0, 10))].filter(Boolean))].sort();
-
-  const changeDeparture = (date: string) => {
-    setDeparture(date);
-    const outs = flightsOn(catalog?.outbound, date);
-    if (outs.length && !outs.some((f) => f.flight_id === outboundSel)) setOutboundSel(outs[0].flight_id);
-    const rets = flightsOn(catalog?.returnLeg, dateAfter(date, returnDayOffset));
-    if (rets.length && !rets.some((f) => f.flight_id === returnSel)) setReturnSel(rets[0].flight_id);
-  };
-
-  const selOutbound = outboundOptions.find((o) => o.id === outboundSel);
-  const selReturn = returnOptions.find((o) => o.id === returnSel);
-  const selHotel = hotelOptions.find((o) => o.id === hotelSel);
-  const flightDelta = (selOutbound?.price ?? outboundFlight?.price_aud ?? 0) - (outboundFlight?.price_aud ?? 0)
-    + (selReturn?.price ?? returnFlight?.price_aud ?? 0) - (returnFlight?.price_aud ?? 0);
-  const estimateTotal = estimateBookingTotal({
-    basePrice: pkg.base_price_aud ?? null,
-    travelers,
-    flightDelta,
-    hotelNightlyDelta: (selHotel?.nightly ?? primaryHotel?.price_per_night_aud ?? 0) - (primaryHotel?.price_per_night_aud ?? 0),
-    nights: hotelNights ?? 1,
-  });
+  const returnDate = dateAfter(outDep, returnDayOffset);
 
   // Conversion signals grounded in real rows: the locked-tip count is the
   // number of components that actually carry creator notes, and the approval
@@ -828,76 +901,24 @@ export function PackageDetailView({
               )}
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, borderTop: `1px solid ${color.border}`, borderBottom: `1px solid ${color.border}`, padding: "24px 0" }}>
-              <div>
-                <p style={eyebrowStyle}>Departure</p>
-                {departureDates.length > 1 ? (
-                  <select value={departure} onChange={(e) => changeDeparture(e.target.value)} style={fieldStyle}>
-                    {departureDates.map((d) => (
-                      <option key={d} value={d}>{formatDateLabel(d)}</option>
-                    ))}
-                  </select>
-                ) : (
-                  <input
-                    type="date"
-                    value={departure}
-                    min={new Date().toISOString().slice(0, 10)}
-                    onChange={(e) => changeDeparture(e.target.value)}
-                    style={fieldStyle}
-                  />
-                )}
-                {returnDate && <p style={{ margin: "6px 0 0", fontSize: 12, color: color.textSecondary }}>Returns {formatDateLabel(returnDate)}</p>}
+            {outDep && (
+              <div style={{ borderTop: `1px solid ${color.border}`, borderBottom: `1px solid ${color.border}`, padding: "24px 0" }}>
+                <p style={eyebrowStyle}>Your trip</p>
+                <p style={{ margin: "8px 0 0", fontSize: 14, fontWeight: 600, color: color.textPrimary }}>
+                  {formatDateLabel(outDep)}{returnDate ? ` – ${formatDateLabel(returnDate)}` : ""}
+                </p>
+                <p style={{ margin: "4px 0 0", fontSize: 12, color: color.textSecondary }}>
+                  {[hotelNights ? `${hotelNights} nights` : null, primaryHotel?.hotel_name].filter(Boolean).join(" · ")}
+                </p>
               </div>
-              <div>
-                <p style={eyebrowStyle}>Travelers</p>
-                <select value={travelers} onChange={(e) => setTravelers(Number(e.target.value))} style={fieldStyle}>
-                  {Array.from({ length: maxTravelers }, (_, i) => i + 1).map((n) => (
-                    <option key={n} value={n}>{n}</option>
-                  ))}
-                </select>
-                <p style={{ margin: "6px 0 0", fontSize: 12, color: color.textSecondary }}>{pkg.max_group_size ? `Max ${pkg.max_group_size}` : "Per booking"}</p>
-              </div>
-              {outboundFlight && outboundOptions.length > 0 && (
-                <div style={{ gridColumn: "1 / -1" }}>
-                  <p style={eyebrowStyle}>Outbound flight</p>
-                  <select value={outboundSel} onChange={(e) => setOutboundSel(e.target.value)} style={fieldStyle}>
-                    {outboundOptions.map((o) => (
-                      <option key={o.id} value={o.id}>{o.label}</option>
-                    ))}
-                  </select>
-                  {selOutbound?.cabin && <p style={{ margin: "6px 0 0", fontSize: 12, color: color.textSecondary }}>{selOutbound.cabin.replace(/_/g, " ")} class</p>}
-                </div>
-              )}
-              {returnFlight && returnOptions.length > 0 && (
-                <div style={{ gridColumn: "1 / -1" }}>
-                  <p style={eyebrowStyle}>Return flight</p>
-                  <select value={returnSel} onChange={(e) => setReturnSel(e.target.value)} style={fieldStyle}>
-                    {returnOptions.map((o) => (
-                      <option key={o.id} value={o.id}>{o.label}</option>
-                    ))}
-                  </select>
-                  {selReturn?.cabin && <p style={{ margin: "6px 0 0", fontSize: 12, color: color.textSecondary }}>{selReturn.cabin.replace(/_/g, " ")} class</p>}
-                </div>
-              )}
-              {primaryHotel && hotelOptions.length > 0 && (
-                <div style={{ gridColumn: "1 / -1" }}>
-                  <p style={eyebrowStyle}>Hotel</p>
-                  <select value={hotelSel} onChange={(e) => setHotelSel(e.target.value)} style={fieldStyle}>
-                    {hotelOptions.map((o) => (
-                      <option key={o.id} value={o.id}>{o.label}</option>
-                    ))}
-                  </select>
-                  {selHotel?.meta && <p style={{ margin: "6px 0 0", fontSize: 12, color: color.textSecondary }}>{selHotel.meta}</p>}
-                </div>
-              )}
-            </div>
+            )}
 
             {tags.length > 0 && (
               <div>
                 <p style={{ ...eyebrowStyle, marginBottom: 12 }}>Themes</p>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                   {tags.map((tag) => (
-                    <span key={tag} style={{ padding: "6px 12px", borderRadius: radius.pill, border: `1px solid ${color.border}`, background: color.surface, fontSize: 13, color: color.textSecondary }}>{tag}</span>
+                    <span key={tag} style={{ padding: "6px 12px", borderRadius: radius.pill, border: `1px solid ${color.border}`, background: color.surface, fontSize: 13, color: color.textSecondary }}>{tag.charAt(0).toUpperCase() + tag.slice(1)}</span>
                   ))}
                 </div>
               </div>
@@ -905,20 +926,13 @@ export function PackageDetailView({
 
             {!previewLabel && (
               <div>
-                {estimateTotal != null && (
-                  <p style={{ margin: "0 0 12px", fontSize: 14, color: color.textSecondary, textAlign: "center" }}>
-                    Estimated total for {travelers} {travelers === 1 ? "traveler" : "travelers"}: <strong style={{ color: color.textPrimary, fontSize: 15 }}>{detailPrice(estimateTotal)}</strong>
-                  </p>
-                )}
                 <button
                   type="button"
-                  disabled
-                  aria-disabled="true"
-                  style={{ width: "100%", padding: "16px 24px", border: "none", borderRadius: radius.md, background: color.action, color: color.surface, fontSize: 15, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", cursor: "not-allowed", opacity: 0.6 }}
+                  onClick={() => router.push(`/marketplace/packages/${pkg.package_id}/book`)}
+                  style={{ width: "100%", padding: "16px 24px", border: "none", borderRadius: radius.md, background: color.action, color: color.surface, fontSize: 15, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", cursor: "pointer" }}
                 >
-                  Request booking
+                  Select options
                 </button>
-                <p style={{ margin: "8px 0 0", fontSize: 11, textAlign: "center", color: color.textDisabled }}>Booking requests aren&apos;t available yet</p>
                 <div style={{ marginTop: 16, borderTop: `1px solid ${color.border}`, paddingTop: 16, display: "flex", flexDirection: "column", gap: 10 }}>
                   {pkg.status === "live" && (
                     <p style={{ margin: 0, fontSize: 12, color: color.textSecondary, display: "flex", alignItems: "center", gap: 8 }}>
@@ -953,7 +967,6 @@ export function PackageDetailView({
 export function MarketplaceDetailScreen({ packageId }: { packageId: string }) {
   const router = useRouter();
   const [pkg, setPackage] = useState<MarketplacePackageDetail | null>(null);
-  const [catalog, setCatalog] = useState<CatalogOptions | null>(null);
   const [reviews, setReviews] = useState<MarketplaceReview[] | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -984,38 +997,6 @@ export function MarketplaceDetailScreen({ packageId }: { packageId: string }) {
       });
     return () => { active = false; };
   }, [packageId]);
-
-  // The booking card's real choices: other dated departures on the package's
-  // flight routes and other hotels in the destination city. Catalog tables
-  // are public-read (RLS) so the anon client can query them directly.
-  useEffect(() => {
-    if (!pkg) return;
-    let active = true;
-    const legs = [...(pkg.flights ?? [])].sort((a, b) => (a.day_number ?? 0) - (b.day_number ?? 0));
-    const out = legs.find((f) => f.day_number === 1) ?? legs[0];
-    const ret = legs.length > 1 ? legs[legs.length - 1] : null;
-    const flightCols = "flight_id,airline,departure_datetime,cabin_class,price_aud";
-    const today = new Date().toISOString();
-    void Promise.all([
-      out?.origin_iata && out?.destination_iata
-        ? supabase.from("flights").select(flightCols).ilike("origin", iataPattern(out.origin_iata)).ilike("destination", iataPattern(out.destination_iata)).gte("departure_datetime", today).order("departure_datetime").limit(200)
-        : Promise.resolve({ data: null }),
-      ret?.origin_iata && ret?.destination_iata
-        ? supabase.from("flights").select(flightCols).ilike("origin", iataPattern(ret.origin_iata)).ilike("destination", iataPattern(ret.destination_iata)).gte("departure_datetime", today).order("departure_datetime").limit(200)
-        : Promise.resolve({ data: null }),
-      pkg.destination_city
-        ? supabase.from("hotels").select("hotel_id,hotel_name,star_rating,room_type,price_per_night_aud").eq("city", pkg.destination_city).order("price_per_night_aud")
-        : Promise.resolve({ data: null }),
-    ]).then(([outRes, retRes, hotelRes]) => {
-      if (!active) return;
-      setCatalog({
-        outbound: outRes.data ?? [],
-        returnLeg: retRes.data ?? [],
-        hotels: hotelRes.data ?? [],
-      });
-    });
-    return () => { active = false; };
-  }, [pkg]);
 
   // Public-read reviews for the social-proof block. `profiles` resolves via
   // the customer_id FK (anon-readable); a missing row falls back to a generic
@@ -1051,5 +1032,5 @@ export function MarketplaceDetailScreen({ packageId }: { packageId: string }) {
   );
   if (!pkg) return null;
 
-  return <PackageDetailView pkg={pkg} catalog={catalog} reviews={reviews} backLabel="Back to marketplace" onBack={() => router.push("/marketplace")} />;
+  return <PackageDetailView pkg={pkg} reviews={reviews} backLabel="Back to marketplace" onBack={() => router.push("/marketplace")} />;
 }

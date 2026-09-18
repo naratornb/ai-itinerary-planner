@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import CopilotPanel from "./copilot/copilot-panel";
-import { formatHotelStarRating } from "./hotel-catalog";
+import { HotelChoiceCard } from "./hotel-choice-card";
 import RouteMap, { type RouteStop } from "./route-map";
 import { createCopilotClient } from "../lib/copilot-client";
 import {
@@ -455,16 +455,7 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
                     <div className="inline-add-head"><button className="inline-back" onClick={() => p.setAddFlow("type")} aria-label="Back to item types">‹</button><h4>Add hotel</h4><button onClick={() => p.setAddingAfter(null)}>Cancel</button></div>
                     <p className="database-note">Hotels are supplied by Travel Marketplace and cannot be edited here.</p>
                     <div className="hotel-choice-grid" role="radiogroup" aria-label="Available hotels">
-                      {p.availableHotels.map((hotel, index) => <button key={hotel.hotel_id ?? hotel.hotel_name ?? index} type="button" role="radio" aria-checked={p.selectedHotelIndex === index} className={`hotel-choice-card${p.selectedHotelIndex === index ? " selected" : ""}`} onClick={() => p.setSelectedHotelIndex(index)}>
-                        <span className="hotel-choice-copy">
-                          <strong>{hotel.hotel_name ?? "Hotel"}</strong>
-                          {hotel.star_rating != null && <span className="hotel-star-rating">{formatHotelStarRating(hotel.star_rating)}</span>}
-                          <small>{hotel.city ?? "Not provided"}</small>
-                          {hotel.room_type && <span>{hotel.room_type}</span>}
-                          <b>{hotel.price_per_night_aud != null ? `$${hotel.price_per_night_aud.toLocaleString("en-US")}/night` : "Price not provided"}</b>
-                        </span>
-                        <span className="hotel-choice-check" aria-hidden="true">{p.selectedHotelIndex === index ? <Icon name="check" size={20} /> : ""}</span>
-                      </button>)}
+                      {p.availableHotels.map((hotel, index) => <HotelChoiceCard key={hotel.hotel_id ?? hotel.hotel_name ?? index} hotel={hotel} selected={p.selectedHotelIndex === index} onSelect={() => p.setSelectedHotelIndex(index)} />)}
                       {p.availableHotels.length === 0 && <p>No hotels found for this package.</p>}
                     </div>
                     {p.selectedHotelOption && <>
