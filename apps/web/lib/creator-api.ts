@@ -294,9 +294,7 @@ export type FlightInput = {
   // relative days and clock times because the traveller chooses the dates.
   departure_datetime?: string | null;
   arrival_datetime?: string | null;
-  departure_time?: string | null;
-  arrival_time?: string | null;
-  duration_minutes?: number | null;
+ 
   cabin_class?: string | null;
   price_aud?: number | null;
   day_number?: number;
@@ -400,7 +398,15 @@ export async function createPackage(
     body: JSON.stringify(input),
   });
   if (response.status === 401) throw new Error("Your session expired. Please sign in again.");
-  if (!response.ok) throw new Error("Unable to create this package. Please try again.");
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error("POST /packages failed:", response.status, errorText);
+    console.error("Payload sent to /packages:", JSON.stringify(input, null, 2));
+  
+    throw new Error(
+      `Unable to create package (${response.status}): ${errorText}`
+    );
+  }
   return response.json() as Promise<CreatorPackageDetail>;
 }
 

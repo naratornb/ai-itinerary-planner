@@ -139,15 +139,27 @@ test("skips a flight whose destination has no IATA code", () => {
   assert.deepEqual(out.flights, []);
 });
 
-test("maps flights to relative days and clock times without calendar dates", () => {
+test("maps flights with the full backend-required datetimes", () => {
   const out = itineraryToPackageInput(base(), response());
+
   assert.equal(out.flights?.[0].price_aud, 851);
   assert.equal(out.flights?.[0].airline, "Test Air");
-  assert.equal(out.flights?.[0].departure_time, "09:00");
-  assert.equal(out.flights?.[0].arrival_time, "18:00");
+
+  assert.equal(
+    out.flights?.[0].departure_datetime,
+    "2026-04-01T09:00:00",
+  );
+
+  assert.equal(
+    out.flights?.[0].arrival_datetime,
+    "2026-04-01T18:00:00",
+  );
+
   assert.equal(out.flights?.[0].day_number, 1);
-  assert.equal("departure_datetime" in out.flights![0], false);
-  assert.equal("arrival_datetime" in out.flights![0], false);
+
+  assert.equal("departure_time" in out.flights![0], false);
+  assert.equal("arrival_time" in out.flights![0], false);
+  assert.equal("duration_minutes" in out.flights![0], false);
 });
 
 // ─── hotels ───────────────────────────────────────────────────────────────────
