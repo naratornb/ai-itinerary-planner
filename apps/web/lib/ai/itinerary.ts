@@ -141,7 +141,7 @@ export function buildItineraryQuery(selection: WizardSelection): string {
 // ─── Engine response → POST /packages body ────────────────────────────────────
 
 /** "Sydney (SYD)" → "SYD"; a bare "SYD" → "SYD"; anything else → null. */
-function iataOf(place: string | undefined): string | null {
+export function iataOf(place: string | undefined): string | null {
   const value = (place ?? "").trim();
   const parenthesised = /\(([A-Z]{3})\)/.exec(value);
   if (parenthesised) return parenthesised[1];
