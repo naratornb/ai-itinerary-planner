@@ -363,6 +363,7 @@ export function annotateItems(raw: TimelineItem[]): TimelineItem[] {
     // adding it here would double-count the flight (same bug fixed in findTimeConflict).
     const endMin = item.type === "FLIGHT" ? toMinutes(item.time) : toMinutes(item.time) + durationMin;
 
+    // 1 & 2. Gap vs next item — the list is a single day's items
     const next = raw[i + 1];
     if (next) {
       const nextStartMin = toMinutes(next.time);
