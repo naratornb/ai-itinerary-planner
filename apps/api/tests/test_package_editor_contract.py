@@ -335,7 +335,7 @@ def test_openapi_operation_ids_are_unique():
 
 def test_openapi_version_bumped_for_this_change():
     spec = _load_openapi()
-    assert spec["info"]["version"] == "2.3.0"
+    assert spec["info"]["version"] == "2.4.0"
 
 
 @pytest.mark.parametrize(

@@ -23,4 +23,12 @@ instead, or to a hand-maintained file below.
 - `flights_extended_v2.csv` — 16,521 extra flight rows used by the AI itinerary
   builder. Same column order as `flights.csv`; flight IDs do not collide with
   the generated set. Not produced by the generator, so it survives a regen.
-- `02_users_packages.sql`
+- `02_users_packages.sql` — demo users (`@seed.local`) and their packages.
+  **Destructive:** each run deletes every `@seed.local` user and every
+  `b0000000-%` package before reinserting. If stakeholders are testing with those
+  accounts, that wipes them — use `03_test_users.sql` instead, and consider
+  making this file additive too.
+- `03_test_users.sql` — six tester accounts (`@test.local`), two each of
+  influencer, admin and customer. Additive only: it deletes nothing and is safe
+  to re-run, so testers' logins survive a reseed of `02_users_packages.sql`.
+  Independent of that file — neither one touches the other's rows.

@@ -28,7 +28,8 @@ _DETAIL_SELECT = (
 
 _SUMMARY_SELECT = (
     "package_id,title,destination_country,destination_city,duration_days,"
-    "base_price_aud,status,creator_id,created_at,submitted_at,published_at"
+    "base_price_aud,status,creator_id,created_at,submitted_at,published_at,"
+    "vibes,season"
 )
 _LIST_SELECT = _SUMMARY_SELECT + ",package_media(url,is_cover)"
 
@@ -382,6 +383,8 @@ def create_package(uid, headers, payload):
         "base_price_aud": payload.base_price_aud,
         "max_group_size": payload.max_group_size,
         "tags": payload.tags,
+        "vibes": payload.vibes,
+        "season": payload.season,
         "flights": [f.model_dump(mode="json") for f in payload.flights],
         "hotels": [h.model_dump(mode="json") for h in payload.hotels],
         "activities": [a.model_dump(mode="json") for a in payload.activities],
