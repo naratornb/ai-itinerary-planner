@@ -698,13 +698,36 @@ figure .remove-photo-btn:focus-visible { outline: 2px solid var(--fc-focus-ring)
 .itinerary-review { min-height: 100vh; background: var(--fc-surface-subtle); }
 .review-shell { max-width: 900px; margin: 0 auto; padding: 32px 24px 80px; display: grid; gap: 20px; }
 .review-panel-body { padding: 18px; }
-.review-panel-body.story-copy { margin-top: 0; }
 .review-package-title { margin: 0; font-family: var(--fc-font-display); font-size: 26px; letter-spacing: -.02em; }
+
+/* Package description — self-contained for the same reason as the cover
+   gallery above: not sharing layout classes with the editor's day-story
+   panel, which is free to change shape independently of this page. */
+.review-description-panel { padding: 18px; display: flex; flex-direction: column; gap: 14px; }
+.review-description-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.review-description-header h3 { margin: 0; color: var(--fc-secondary); font-size: 12px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+.review-description-panel textarea { width: 100%; min-height: 132px; padding: 18px; resize: vertical; border: 1px solid var(--fc-border); border-radius: 10px; background: var(--fc-surface-subtle); color: var(--fc-ink); font-size: 14px; line-height: 1.5; }
+.review-description-panel textarea:focus { background: #fff; outline: 3px solid var(--fc-focus-ring); border-color: var(--fc-blue); }
 .review-photo-hint { margin: 12px 0 0; color: var(--fc-secondary); font-size: 12px; }
-.set-cover-btn { all: unset; display: block; width: 100%; height: 100%; cursor: pointer; }
-.cover-badge { position: absolute; top: 6px; left: 6px; z-index: 1; display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 999px; background: rgba(15,23,42,.85); color: #fff; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
 .review-edit-hint { margin: 0; padding: 0 4px; color: var(--fc-secondary); font-size: 13px; }
 .review-edit-hint .text-action { padding: 0; text-decoration: underline; }
+
+/* Package cover-image gallery — deliberately self-contained (its own
+   class names, not shared with the editor's own photo UI) so a future
+   redesign there can't silently break this section again. */
+.cover-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 14px; }
+.cover-gallery-item { position: relative; margin: 0; aspect-ratio: 1 / 1; border-radius: 10px; overflow: hidden; border: 2px solid transparent; }
+.cover-gallery-item.is-cover { border-color: var(--fc-blue); box-shadow: 0 0 0 2px rgba(0,102,204,.18); }
+.cover-gallery-select { all: unset; display: block; width: 100%; height: 100%; cursor: pointer; }
+.cover-gallery-select img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.cover-gallery-badge { position: absolute; top: 6px; left: 6px; z-index: 1; display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 999px; background: rgba(15,23,42,.85); color: #fff; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; pointer-events: none; }
+.cover-gallery-remove { position: absolute; top: 6px; right: 6px; z-index: 1; width: 22px; height: 22px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 999px; background: rgba(15,23,42,.55); color: #fff; cursor: pointer; }
+.cover-gallery-remove:hover { background: rgba(15,23,42,.8); }
+.cover-gallery-remove:focus-visible { outline: 2px solid var(--fc-focus-ring); outline-offset: 1px; }
+.cover-gallery-add { aspect-ratio: 1 / 1; display: grid; place-content: center; justify-items: center; gap: 6px; background: #fff; color: var(--fc-secondary); border: 1px dashed #bdbdbd; border-radius: 10px; cursor: pointer; transition: border-color 140ms ease-out, background 140ms ease-out; }
+.cover-gallery-add:hover { border-color: var(--fc-blue); background: var(--fc-info-subtle); }
+.cover-gallery-add input { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; }
+.cover-gallery-add small { color: var(--fc-disabled); }
 
 .review-day-list { padding: 18px; display: flex; flex-direction: column; gap: 14px; }
 .review-day-card { border: 1px solid var(--fc-border); border-radius: 10px; overflow: hidden; }
