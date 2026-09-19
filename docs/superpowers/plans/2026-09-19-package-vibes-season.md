@@ -23,7 +23,7 @@
 - **Never run `supabase db push`.** Preview with `supabase db push --dry-run` only; the git pipeline applies migrations after merge.
 - **Ask the human for approval before every `git commit`; never push without approval.** Commit steps below are proposals — stop and ask first.
 - Work on feature branch `feat/package-vibes-season` off `develop`; never commit directly to `develop`.
-- Forbidden terminology (AGENTS.md): never write `Flight Centre`, `QUT`, `Group 51`, `fc-marketplace.com`, or the client's real name anywhere. Say "the Marketplace".
+- Forbidden terminology (AGENTS.md): never write any blocked legacy/client identifiers or contact/domain strings; use "the Marketplace" instead.
 - `apps/api/openapi.yaml` is the API contract — it changes in the same PR as the code, with a semver bump (`2.3.0 → 2.4.0`, minor/additive).
 - Migrations are append-only files in `supabase/migrations/`; every schema change ships in the same PR as the code depending on it.
 - No AI attribution in commit messages (no Co-Authored-By / "Generated with Claude").
@@ -660,8 +660,8 @@ render nothing rather than a placeholder badge.
 
 - [ ] **Step 2: Check forbidden terms**
 
-Run: `git diff --cached --stat; grep -riE "flight ?centre|qut|group 51|fc-marketplace" docs/frontend-vibes-season-handover.md; echo "exit=$?"`
-Expected: grep exits 1 (no matches).
+Run: `git diff --cached --stat; .githooks/pre-commit`
+Expected: the hook exits 0 (no forbidden terminology matches).
 
 - [ ] **Step 3: Propose commit (ask the human first)**
 
