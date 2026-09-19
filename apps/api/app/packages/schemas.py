@@ -1,9 +1,12 @@
 import re
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
+
+Vibe = Literal["chill", "adventure", "luxury", "local", "foodie", "scenic"]
+Season = Literal["spring", "summer", "autumn", "winter"]
 
 # Input models mirror openapi.yaml FlightInput/HotelInput/ActivityInput.
 # Datetimes stay strings: PostgREST round-trips ISO-8601 as-is and we have
@@ -132,6 +135,8 @@ class TravelPackageCreate(BaseModel):
     base_price_aud: int = Field(ge=0)
     max_group_size: int | None = None
     tags: list[str] = []
+    vibes: list[Vibe] = []
+    season: Season | None = None
     flights: list[FlightInput] = []
     hotels: list[HotelInput] = []
     activities: list[ActivityInput] = []
@@ -159,6 +164,8 @@ class TravelPackageUpdate(BaseModel):
     base_price_aud: int | None = Field(default=None, ge=0)
     max_group_size: int | None = None
     tags: list[str] | None = None
+    vibes: list[Vibe] | None = None
+    season: Season | None = None
     flights: list[FlightInput] | None = None
     hotels: list[HotelInput] | None = None
     activities: list[ActivityInput] | None = None
@@ -168,7 +175,7 @@ class TravelPackageUpdate(BaseModel):
     @classmethod
     def _reject_explicit_null_collections(cls, data: Any) -> Any:
         if isinstance(data, dict):
-            for field in ("tags", "flights", "hotels", "activities"):
+            for field in ("tags", "vibes", "flights", "hotels", "activities"):
                 if field in data and data[field] is None:
                     raise ValueError(
                         f"{field} cannot be null; omit to leave unchanged or "
@@ -202,6 +209,8 @@ class TravelPackageSummary(BaseModel):
     submitted_at: str | None = None
     published_at: str | None = None
     cover_image_url: str | None = None
+    vibes: list[str] = []
+    season: str | None = None
 
 
 # Detail outputs deliberately do NOT inherit the *Input models: DB rows are the

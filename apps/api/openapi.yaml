@@ -40,7 +40,7 @@ info:
     Error responses use `ErrorResponse`, except user-management upstream failures, which return an `error` string.
     All monetary values are stored and returned as **whole AUD dollars** (integer), matching the database columns.
 
-  version: "2.3.0"
+  version: "2.4.0"
   license:
     name: Academic Use Only
 
@@ -469,6 +469,19 @@ components:
           items:
             type: string
           example: ["beach", "culture", "food", "surf"]
+        vibes:
+          type: array
+          description: Vibe tags from the creation wizard's fixed vocabulary. Defaults to [].
+          items:
+            type: string
+            enum: [chill, adventure, luxury, local, foodie, scenic]
+          example: ["adventure", "foodie"]
+        season:
+          type: string
+          nullable: true
+          description: Recommended travel season selected at creation. Defaults to null.
+          enum: [spring, summer, autumn, winter]
+          example: "summer"
 
     TravelPackageCreate:
       allOf:
@@ -539,6 +552,15 @@ components:
           format: uri
           nullable: true
           example: "https://storage.supabase.co/object/public/media/pkg-00001/cover.jpg"
+        vibes:
+          type: array
+          items:
+            type: string
+          example: ["adventure", "foodie"]
+        season:
+          type: string
+          nullable: true
+          example: "summer"
 
     TravelPackageDetail:
       allOf:
@@ -629,6 +651,10 @@ components:
       description: |
         All metadata fields are optional; only provided fields are updated.
 
+        `tags` and `vibes` follow replace semantics: omit to leave unchanged,
+        supply an array to replace, or supply `[]` to deliberately clear them.
+        Explicit `null` for either is rejected with `422`.
+
         `flights`, `hotels`, and `activities` follow replace semantics: omit
         the key to leave the stored collection unchanged, supply an array to
         replace it entirely (scoped to this package only), or supply `[]` to
@@ -664,6 +690,17 @@ components:
           type: array
           items:
             type: string
+        vibes:
+          type: array
+          description: Replace semantics like tags — omit to leave unchanged, [] to clear; explicit null is rejected with 422.
+          items:
+            type: string
+            enum: [chill, adventure, luxury, local, foodie, scenic]
+        season:
+          type: string
+          nullable: true
+          description: Omit to leave unchanged; explicit null clears the season.
+          enum: [spring, summer, autumn, winter]
         flights:
           type: array
           items:
@@ -1561,6 +1598,15 @@ components:
           type: array
           items:
             type: string
+        vibes:
+          type: array
+          items:
+            type: string
+          example: ["scenic"]
+        season:
+          type: string
+          nullable: true
+          example: "spring"
         influencer:
           type: object
           properties:

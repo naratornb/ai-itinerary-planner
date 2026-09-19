@@ -919,3 +919,66 @@ def test_submit_ownership_mismatch_returns_404(fake):
     )
     resp = client.post(f"/packages/{PKG}/submit")
     assert resp.status_code == 404
+
+
+def test_create_persists_vibes_and_season(fake):
+    fake.route("POST", "rpc/save_package_details", FakeResp({"outcome": "ok", "package_id": PKG}))
+    row = copy.deepcopy(DETAIL_ROW)
+    row["vibes"] = ["adventure", "foodie"]
+    row["season"] = "summer"
+    fake.route("GET", "travel_packages", FakeResp([row]))
+    resp = client.post("/packages", json={**CREATE_BODY, "vibes": row["vibes"], "season": row["season"]})
+    assert resp.status_code == 201
+    payload = fake.find("POST", "rpc/save_package_details")[0]["json"]["p_payload"]
+    assert payload["vibes"] == ["adventure", "foodie"]
+    assert payload["season"] == "summer"
+    assert resp.json()["vibes"] == ["adventure", "foodie"]
+    assert resp.json()["season"] == "summer"
+
+
+def test_create_rejects_unknown_vibe_and_season(fake):
+    assert client.post("/packages", json={**CREATE_BODY, "vibes": ["party"]}).status_code == 422
+    assert client.post("/packages", json={**CREATE_BODY, "season": "monsoon"}).status_code == 422
+
+
+def test_update_rejects_null_vibes(fake):
+    assert client.put(f"/packages/{PKG}", json={"vibes": None}).status_code == 422
+
+
+def test_update_omits_unsent_vibes_and_season(fake):
+    fake.route("POST", "rpc/save_package_details", FakeResp({"outcome": "ok", "package_id": PKG}))
+    fake.route("GET", "travel_packages", FakeResp([copy.deepcopy(DETAIL_ROW)]))
+    assert client.put(f"/packages/{PKG}", json={"title": "Renamed"}).status_code == 200
+    payload = fake.find("POST", "rpc/save_package_details")[0]["json"]["p_payload"]
+    assert "vibes" not in payload and "season" not in payload
+
+
+def test_update_sends_season_null_to_clear(fake):
+    fake.route("POST", "rpc/save_package_details", FakeResp({"outcome": "ok", "package_id": PKG}))
+    fake.route("GET", "travel_packages", FakeResp([copy.deepcopy(DETAIL_ROW)]))
+    assert client.put(f"/packages/{PKG}", json={"vibes": [], "season": None}).status_code == 200
+    payload = fake.find("POST", "rpc/save_package_details")[0]["json"]["p_payload"]
+    assert payload["vibes"] == [] and payload["season"] is None
+
+
+def test_list_returns_vibes_and_season(fake):
+    row = _summary_row(vibes=["chill"], season="winter")
+    row["package_media"] = []
+    fake.route("GET", "travel_packages", FakeResp([row], headers={"Content-Range": "0-0/1"}))
+    resp = client.get("/packages")
+    assert resp.status_code == 200
+    assert resp.json()["data"][0]["vibes"] == ["chill"]
+    assert resp.json()["data"][0]["season"] == "winter"
+    select = fake.find("GET", "travel_packages")[0]["params"]["select"]
+    assert "vibes" in select and "season" in select
+
+
+def test_detail_returns_vibes_and_season(fake):
+    row = copy.deepcopy(DETAIL_ROW)
+    row["vibes"] = ["luxury"]
+    row["season"] = "autumn"
+    fake.route("GET", "travel_packages", FakeResp([row]))
+    resp = client.get(f"/packages/{PKG}")
+    assert resp.status_code == 200
+    assert resp.json()["vibes"] == ["luxury"]
+    assert resp.json()["season"] == "autumn"
