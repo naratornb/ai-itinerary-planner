@@ -159,8 +159,8 @@ def build(run_dir: Path) -> str:
             f"<td>{e['tokens_in_avg']:,.0f}</td><td>{e['tokens_out_avg']:,.0f}</td>"
             f"<td>{e.get('retries_429', 0)}</td></tr>"
             for e in base["endpoints"])
-        # Our API routes don't surface Gemini's usageMetadata yet, so a real run
-        # records 0/0 tokens — an all-zero chart is every bar at zero width.
+        # Routes surface usageMetadata now, so 0/0 tokens indicates a regression or stub.
+        # An all-zero chart means every bar has zero width.
         chart = ""
         if any(e["tokens_in_avg"] or e["tokens_out_avg"] for e in base["endpoints"]):
             chart = f"""<figure>{token_chart(base['endpoints'])}

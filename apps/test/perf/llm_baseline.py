@@ -86,9 +86,9 @@ def endpoints_for(names, package_id):
 def tokens(body):
     """(prompt, output) token counts from a response body.
 
-    ponytail: our API routes don't pass Gemini's `usageMetadata` through, so
-    this reads 0/0 today — that is the expected value, not a bug. Upgrade path:
-    surface usageMetadata in the route responses and this picks it up unchanged.
+    Routes surface usageMetadata as of this branch, so nonzero token counts
+    are expected on successful LLM-backed responses. A 0/0 reading now indicates
+    either the LLM stub or a passthrough regression.
     """
     try:
         usage = json.loads(body).get("usageMetadata") or {}
