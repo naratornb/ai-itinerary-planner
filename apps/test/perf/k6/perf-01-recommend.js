@@ -8,9 +8,10 @@
 
 import http from 'k6/http';
 import { check } from 'k6';
-import { API_BASE, headers, scenario } from './helpers.js';
+import { API_BASE, headers, scenario, reportHandler } from './helpers.js';
 
 export const options = scenario(10, '2m', 8000);
+export const handleSummary = reportHandler('perf-01');
 
 // Wizard-shaped bodies matching RecommendRequest {query, origin_city}. Shapes are
 // taken from the Bruno smoke collection under apps/test/; the values are invented.

@@ -8,9 +8,10 @@
 
 import http from 'k6/http';
 import { check } from 'k6';
-import { API_BASE, headers, scenario } from './helpers.js';
+import { API_BASE, headers, scenario, reportHandler } from './helpers.js';
 
 export const options = scenario(20, '2m', 1500);
+export const handleSummary = reportHandler('perf-03');
 
 // Browse queries against GET /marketplace/packages.
 const LISTS = [

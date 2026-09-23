@@ -2,6 +2,9 @@
 // docs/testing/performance/test-plan.md). Run with the external k6 binary —
 // nothing here is part of either app's dependency tree.
 
+import { htmlReport } from 'https://raw.githubusercontent.com/benc-uk/k6-reporter/main/dist/bundle.js';
+import { textSummary } from 'https://jslib.k6.io/k6-summary/0.0.2/index.js';
+
 export const API_BASE = __ENV.API_BASE || 'http://localhost:8000';
 export const WEB_BASE = __ENV.WEB_BASE || 'http://localhost:3000';
 
@@ -9,6 +12,15 @@ export function headers() {
   const h = { 'Content-Type': 'application/json', Accept: 'application/json' };
   if (__ENV.TOKEN) h.Authorization = `Bearer ${__ENV.TOKEN}`;
   return h;
+}
+
+// k6-reporter templated HTML report per scenario (out/<name>.html), keeping
+// the usual console summary. Scripts re-export: export const handleSummary = ...
+export function reportHandler(name) {
+  return (data) => ({
+    [`out/${name}.html`]: htmlReport(data),
+    stdout: textSummary(data, { indent: ' ', enableColors: true }),
+  });
 }
 
 // Every scenario is the same shape: constant concurrency for a fixed window,

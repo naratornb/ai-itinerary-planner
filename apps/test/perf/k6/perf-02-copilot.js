@@ -8,9 +8,10 @@
 
 import http from 'k6/http';
 import { check } from 'k6';
-import { API_BASE, headers, scenario } from './helpers.js';
+import { API_BASE, headers, scenario, reportHandler } from './helpers.js';
 
 export const options = scenario(5, '2m', 5000);
+export const handleSummary = reportHandler('perf-02');
 
 // ponytail: the package is created by hand and passed in, not built by a k6
 // setup(). Add a setup()/teardown() pair that POSTs and deletes a draft package

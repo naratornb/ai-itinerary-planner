@@ -76,3 +76,7 @@ logs/
 # ---- AI / agent tool scratch dirs ----
 .somni/
 .superpowers/
+
+# ---- Performance test output (generated per run; see docs/testing/performance/running-guide.md) ----
+/out/
+docs/testing/performance/reports/
