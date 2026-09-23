@@ -1,0 +1,4 @@
+{"total_calls":30,"model":"gemini-3.6-flash","endpoints":[
+{"name":"Itinerary generation","calls":10,"p50_ms":18400,"p95_ms":31200,"tokens_in_avg":9850,"tokens_out_avg":6320,"retries_429":0},
+{"name":"Copilot turn","calls":10,"p50_ms":6100,"p95_ms":9800,"tokens_in_avg":3120,"tokens_out_avg":840,"retries_429":0},
+{"name":"Content generation","calls":10,"p50_ms":4200,"p95_ms":6900,"tokens_in_avg":610,"tokens_out_avg":390,"retries_429":0}]}
