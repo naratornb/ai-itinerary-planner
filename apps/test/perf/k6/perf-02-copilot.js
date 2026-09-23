@@ -8,7 +8,7 @@
 
 import http from 'k6/http';
 import { check } from 'k6';
-import { API_BASE, headers, scenario, reportHandler } from './helpers.js';
+import { API_BASE, headers, scenario, reportHandler, trackFailure } from './helpers.js';
 
 export const options = scenario(5, '2m', 5000);
 export const handleSummary = reportHandler('perf-02');
@@ -41,4 +41,5 @@ export default function () {
   // The route is declared status_code=201 — a 200 here would mean the request
   // did not reach create_turn.
   check(res, { 'status is 201': (r) => r.status === 201 });
+  trackFailure(res);
 }

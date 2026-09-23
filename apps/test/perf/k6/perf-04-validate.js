@@ -12,7 +12,7 @@
 
 import http from 'k6/http';
 import { check } from 'k6';
-import { WEB_BASE, headers, scenario, reportHandler } from './helpers.js';
+import { WEB_BASE, headers, scenario, reportHandler, trackFailure } from './helpers.js';
 
 export const options = scenario(10, '1m', 2000);
 export const handleSummary = reportHandler('perf-04');
@@ -113,4 +113,5 @@ const PAYLOAD = JSON.stringify({
 export default function () {
   const res = http.post(`${WEB_BASE}/api/ai/validate`, PAYLOAD, { headers: headers() });
   check(res, { 'status is 200': (r) => r.status === 200 });
+  trackFailure(res);
 }

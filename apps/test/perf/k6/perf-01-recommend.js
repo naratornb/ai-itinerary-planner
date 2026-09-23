@@ -8,7 +8,7 @@
 
 import http from 'k6/http';
 import { check } from 'k6';
-import { API_BASE, headers, scenario, reportHandler } from './helpers.js';
+import { API_BASE, headers, scenario, reportHandler, trackFailure } from './helpers.js';
 
 export const options = scenario(10, '2m', 8000);
 export const handleSummary = reportHandler('perf-01');
@@ -31,4 +31,5 @@ export default function () {
     timeout: '120s',
   });
   check(res, { 'status is 200': (r) => r.status === 200 });
+  trackFailure(res);
 }
