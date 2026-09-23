@@ -26,6 +26,7 @@ import time
 import logging
 import json
 from dataclasses import dataclass
+from pathlib import Path
 from urllib import request as urlrequest, error as urlerror
 
 # ── Configuration ──────────────────────────────────────────────────────────────
@@ -210,7 +211,33 @@ def call_llm(
     Raises:
       EnvironmentError  — no API key configured
       RuntimeError      — LLM call failed after all retries
+
+    LLM_STUB=1 short-circuits the provider entirely (performance testing only).
     """
+    if os.environ.get("LLM_STUB") == "1":
+        # ponytail: one global stub for every caller and the fixture is re-read
+        # per call. Per-caller fixtures = point LLM_STUB_FIXTURE at a different
+        # file per process; cache the read only if the file IO shows up in a run.
+        raw = os.environ.get("LLM_STUB_DELAY_MS") or "0"
+        try:
+            delay = int(raw) / 1000
+        except ValueError as e:
+            raise ValueError(f"LLM_STUB_DELAY_MS must be an integer, got {raw!r}") from e
+        if deadline is not None:
+            # Same rule as the real path's options() below, so a stubbed run
+            # still exercises deadline propagation instead of always succeeding.
+            remaining = deadline - time.monotonic()
+            if remaining <= 0.05:
+                raise TimeoutError("LLM request budget exhausted")
+            delay = min(delay, remaining)
+        if delay > 0:
+            time.sleep(delay)
+        fixture = os.environ.get("LLM_STUB_FIXTURE", "")
+        return LLMResponse(
+            text=Path(fixture).read_text(encoding="utf-8") if fixture else "{}",
+            provider="stub", model="stub", tokens_in=0, tokens_out=0,
+        )
+
     gemini_key    = os.environ.get("GEMINI_API_KEY",    "")
     anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
 
