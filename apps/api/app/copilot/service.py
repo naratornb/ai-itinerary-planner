@@ -149,6 +149,7 @@ def create_turn(package_id: str, prompt: str, ctx: dict) -> TurnRead:
     retrieval_ms = int((time.monotonic() - ctx["started"]) * 1000)
     warnings = []
     reason = None
+    usage = None
     mode = "clarification" if clarification else "inventory_fallback"
     message = (
         clarification
@@ -184,6 +185,10 @@ def create_turn(package_id: str, prompt: str, ctx: dict) -> TurnRead:
                 max_tokens=3000,
                 deadline=ctx["deadline"] - 2,
             )
+            usage = {
+                "promptTokenCount": response.tokens_in,
+                "candidatesTokenCount": response.tokens_out,
+            }
             if time.monotonic() >= ctx["deadline"] - 2:
                 raise TimeoutError("late provider response")
             output = ModelOutput.model_validate(
@@ -248,6 +253,7 @@ def create_turn(package_id: str, prompt: str, ctx: dict) -> TurnRead:
         "next_action": action,
         "warnings": warnings,
         "generation_mode": mode,
+        "usageMetadata": usage,
     }
     elapsed = int((time.monotonic() - ctx["started"]) * 1000)
     row = _call(

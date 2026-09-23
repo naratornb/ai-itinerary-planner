@@ -53,6 +53,7 @@ class TurnRead(BaseModel):
     warnings: list[Warning]
     suggestions: list[Suggestion]
     generation_mode: Literal["llm", "inventory_fallback", "clarification"]
+    usageMetadata: dict[str, int] | None = None
     response_time_ms: int = Field(ge=0)
 
 

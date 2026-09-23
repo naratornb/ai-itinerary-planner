@@ -319,6 +319,13 @@ components:
           - inventory_fallback
           - clarification
           title: Generation Mode
+        usageMetadata:
+          anyOf:
+          - additionalProperties:
+              type: integer
+            type: object
+          - type: 'null'
+          title: Usagemetadata
         response_time_ms:
           type: integer
           minimum: 0.0
