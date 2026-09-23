@@ -44,6 +44,7 @@ Those are calculated deterministically by this file.
 import json
 import os
 import re
+import threading
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -568,7 +569,32 @@ def _ensure_column(df, column, default):
         df[column] = default
 
 
+_INVENTORY = None
+_INVENTORY_AT = 0.0
+_INVENTORY_LOCK = threading.Lock()
+
+
 def _load_inventory():
+    """Serve the normalized inventory from a per-process TTL cache.
+
+    Fetching is ~8.5s (3 tables, paged); doing it per request collapsed the
+    shared Supabase client under load (PERF-01). TTL via INVENTORY_CACHE_TTL_S
+    seconds (default 300); set 0 to disable caching.
+    """
+    global _INVENTORY, _INVENTORY_AT
+    ttl = float(os.environ.get("INVENTORY_CACHE_TTL_S", "300"))
+    # ponytail: one process-wide lock — cold/expired fetch serialises every
+    # request behind it for ~8.5s once per TTL. Move to a stale-while-refresh
+    # scheme only if that pause shows up in a perf run.
+    with _INVENTORY_LOCK:
+        if _INVENTORY is not None and time.monotonic() - _INVENTORY_AT < ttl:
+            return _INVENTORY
+        _INVENTORY = _fetch_inventory()
+        _INVENTORY_AT = time.monotonic()
+        return _INVENTORY
+
+
+def _fetch_inventory():
     """
     Load and normalize Supabase inventory.
     """
