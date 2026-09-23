@@ -1447,13 +1447,16 @@ def call_llm(
     Call the project's shared LLM provider.
 
     llm_provider.py handles Gemini provider details.
+
+    Returns the provider's `LLMResponse` — callers that only want the body read
+    `.text`; the token counts ride along for `usageMetadata`.
     """
 
     return _llm_call(
         system_prompt,
         user_prompt,
         max_tokens=LLM_MAX_TOKENS,
-    ).text
+    )
 
 
 # ============================================================================
@@ -2759,12 +2762,13 @@ def generate_itinerary(
         try:
 
             attempt_llm_start = time.perf_counter()
-            raw = call_llm(
+            llm_response = call_llm(
                 SYSTEM_PROMPT,
                 user_prompt
                 + parse_guidance,
             )
-             
+            raw = llm_response.text
+
             t_llm = time.perf_counter() - attempt_llm_start
 
 
@@ -2822,6 +2826,12 @@ def generate_itinerary(
             itinerary = _enrich_from_inventory(
                 itinerary, inventory
             )
+
+            # Top-level so llm_baseline.py's tokens() reads it unchanged.
+            itinerary["usageMetadata"] = {
+                "promptTokenCount": llm_response.tokens_in,
+                "candidatesTokenCount": llm_response.tokens_out,
+            }
 
             if verbose:
 
