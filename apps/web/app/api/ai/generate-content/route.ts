@@ -113,7 +113,7 @@ Write the engaging, complete 150-250 word Australian English narrative with a fu
     }
 
     // 4. Return canonical structure expected by Ticket 1 & 2
-    return NextResponse.json({ listing: generatedText });
+    return NextResponse.json({ listing: generatedText, usageMetadata: data.usageMetadata ?? null });
   } catch (error: any) {
     console.error("[generate-content] Internal error:", error);
     return NextResponse.json(
