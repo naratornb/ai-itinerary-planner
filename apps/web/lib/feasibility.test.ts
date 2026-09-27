@@ -21,6 +21,7 @@ function activity(name: string, overrides: Record<string, any> = {}) {
   return {
     activity_name: name,
     slot: "Morning",
+    start_time: "09:00",
     duration_hours: 1,
     description: "desc",
     price: "$0",
@@ -64,13 +65,64 @@ test("no warning when all activity names are distinct", () => {
   assert.ok(soft.every((issue) => issue.error_code !== "DUPLICATE_ACTIVITY"));
 });
 
+test("R19: an activity with a corrupted start time is a hard error", () => {
+  const days = [day(4, [activity("Historic Madrid City Walking Tour", { start_time: "NaN:NaN" })])];
+
+  const { hard } = runCodeChecks(days);
+  const issue = hard.find((i) => i.error_code === "INVALID_START_TIME");
+  assert.ok(issue, "expected an INVALID_START_TIME hard error");
+  assert.equal(issue?.severity, "error");
+  assert.equal(issue?.affected_item, "Historic Madrid City Walking Tour");
+});
+
+test("R19: a missing start time is also a hard error", () => {
+  const days = [day(1, [activity("Prado Museum Visit", { start_time: undefined })])];
+
+  const { hard } = runCodeChecks(days);
+  assert.ok(hard.some((i) => i.error_code === "INVALID_START_TIME"));
+});
+
+test("R19: an out-of-range clock time (e.g. 25:99) is a hard error", () => {
+  const days = [day(1, [activity("Late Night Tapas", { start_time: "25:99" })])];
+
+  const { hard } = runCodeChecks(days);
+  assert.ok(hard.some((i) => i.error_code === "INVALID_START_TIME"));
+});
+
+test("R19: a normal start time is not flagged", () => {
+  const days = [day(1, [activity("Prado Museum Visit", { start_time: "09:30" })])];
+
+  const { hard } = runCodeChecks(days);
+  assert.ok(hard.every((i) => i.error_code !== "INVALID_START_TIME"));
+});
+
 test("R7: a single long activity alone in a slot is not a hard TIME_OVERLAP error", () => {
   // A day tour / gallery pass that alone runs longer than the slot's nominal cap isn't a
   // scheduling conflict — it's just a long activity, already covered by R5c below.
   const days = [day(1, [activity("Denpasar Museum & Gallery Pass", { duration_hours: 4.4 })])];
 
-  const { hard, soft } = runCodeChecks(days);
+  const { hard } = runCodeChecks(days);
   assert.ok(hard.every((issue) => issue.error_code !== "TIME_OVERLAP"));
+});
+
+test("R5c: a long activity is not flagged when it's the day's only activity", () => {
+  // Nothing else scheduled that day for it to crowd out, so the "may tire
+  // travellers" rationale behind LONG_ACTIVITY doesn't apply here.
+  const days = [day(1, [activity("Denpasar Museum & Gallery Pass", { duration_hours: 4.4 })])];
+
+  const { soft } = runCodeChecks(days);
+  assert.ok(soft.every((issue) => issue.error_code !== "LONG_ACTIVITY"));
+});
+
+test("R5c: a long activity alongside another activity the same day is still flagged", () => {
+  const days = [
+    day(1, [
+      activity("Denpasar Museum & Gallery Pass", { duration_hours: 4.4 }),
+      activity("Sunset Beach Walk", { duration_hours: 1 }),
+    ]),
+  ];
+
+  const { soft } = runCodeChecks(days);
   assert.ok(soft.some((issue) => issue.error_code === "LONG_ACTIVITY"));
 });
 
@@ -96,6 +148,56 @@ test("R16: a free stop priced at $0 is NOT flagged — 0 is a valid price", () =
   const days = [day(1, [activity("Free Walking Tour", { price: "$0" })])];
   const { hard } = runCodeChecks(days);
   assert.ok(hard.every((issue) => issue.error_code !== "MISSING_PRICE"));
+});
+
+test("R9: an empty middle day is still a hard error", () => {
+  const days = [
+    day(1, [activity("Arrival Transfer")]),
+    day(2, []),
+    day(3, [activity("Departure Transfer")]),
+  ];
+  const { hard, soft } = runCodeChecks(days);
+  assert.ok(soft.every((i) => i.error_code !== "EMPTY_DAY"));
+  const issue = hard.find((i) => i.error_code === "EMPTY_DAY");
+  assert.ok(issue, "expected a hard EMPTY_DAY error for the empty middle day");
+  assert.equal(issue?.field, "Day 2");
+});
+
+test("R9: an empty first day is a soft warning, not a hard block — arrival days often have no activity", () => {
+  const days = [day(1, []), day(2, [activity("City Walking Tour")])];
+  const { hard, soft } = runCodeChecks(days);
+  assert.ok(hard.every((i) => i.error_code !== "EMPTY_DAY"), "empty first day must not be a hard error");
+  const issue = soft.find((i) => i.error_code === "EMPTY_DAY");
+  assert.ok(issue, "expected an EMPTY_DAY soft warning for the empty first day");
+  assert.equal(issue?.severity, "warning");
+  assert.equal(issue?.field, "Day 1");
+});
+
+test("R9: an empty last day is a soft warning, not a hard block — departure days often have no activity", () => {
+  const days = [day(1, [activity("City Walking Tour")]), day(2, [])];
+  const { hard, soft } = runCodeChecks(days);
+  assert.ok(hard.every((i) => i.error_code !== "EMPTY_DAY"), "empty last day must not be a hard error");
+  const issue = soft.find((i) => i.error_code === "EMPTY_DAY");
+  assert.ok(issue, "expected an EMPTY_DAY soft warning for the empty last day");
+  assert.equal(issue?.severity, "warning");
+  assert.equal(issue?.field, "Day 2");
+});
+
+test("R9: a single-day trip that's empty is still first AND last — stays a soft warning", () => {
+  const days = [day(1, [])];
+  const { hard, soft } = runCodeChecks(days);
+  assert.ok(hard.every((i) => i.error_code !== "EMPTY_DAY"));
+  assert.ok(soft.some((i) => i.error_code === "EMPTY_DAY"));
+});
+
+test("R9: last-day classification is based on day_number vs. day count, so it tracks a renumbered trip after a day is deleted", () => {
+  // Simulates deleting day 2 from a 3-day trip: removeDay() re-numbers the remaining
+  // days 1..N, so what used to be "day 3" is now "day 2" — the new last day — and an
+  // empty day there must be treated as the (soft) empty-last-day case, not a hard error.
+  const days = [day(1, [activity("Arrival Transfer")]), day(2, [])];
+  const { hard, soft } = runCodeChecks(days);
+  assert.ok(hard.every((i) => i.error_code !== "EMPTY_DAY"));
+  assert.ok(soft.some((i) => i.error_code === "EMPTY_DAY" && i.field === "Day 2"));
 });
 
 test("R17: a day with no accommodation is a hard error naming that specific day", () => {

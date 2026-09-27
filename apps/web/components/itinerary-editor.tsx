@@ -35,7 +35,7 @@ import {
   type CreatorHotelDetail,
   type CreatorPackageDetail,
 } from "../lib/creator-api";
-import { itinerarySnapshotStorageKey } from "../lib/review-draft";
+import { itinerarySnapshotStorageKey, parseWizardVibesDraft, wizardVibesStorageKey } from "../lib/review-draft";
 import { supabase } from "../lib/supabase/client";
 import Icon from "./icon";
 
@@ -313,6 +313,12 @@ function toMinutes(time: string): number {
   return (parts[0] ?? 0) * 60 + (parts[1] ?? 0);
 }
 
+// "y" reads as a vowel everywhere except a word's first letter ("countryside", "rhythm"
+// vs. "yellow") — without this, ordinary words trip the consonant-run check below.
+function isVowel(ch: string, index: number): boolean {
+  return "aeiou".includes(ch) || (ch === "y" && index > 0);
+}
+
 /**
  * Returns true when text appears to contain random/gibberish characters.
  * Heuristics (both must be language-agnostic enough to avoid false positives on proper nouns):
@@ -323,16 +329,28 @@ function toMinutes(time: string): number {
 function detectGibberish(text: string): boolean {
   if (!text || text.trim().length < 8) return false;
   const lower = text.toLowerCase();
-  // Immediate fail: any 5-consonant run is a strong gibberish signal
-  if (/[^aeiou\s\d\W]{5,}/.test(lower.replace(/[^a-z]/g, " "))) return true;
-  // Secondary: vowel-ratio check across long words
-  const words = lower.split(/\s+/).map((w) => w.replace(/[^a-z]/g, "")).filter((w) => w.length > 4);
+  const words = lower.split(/\s+/).map((w) => w.replace(/[^a-z]/g, "")).filter(Boolean);
   if (words.length === 0) return false;
-  const suspicious = words.filter((w) => {
-    const vowels = (w.match(/[aeiou]/g) ?? []).length;
+
+  // Immediate fail: any 5-consonant run within a single word is a strong gibberish signal
+  const hasConsonantRun = words.some((w) => {
+    let run = 0;
+    for (let i = 0; i < w.length; i++) {
+      run = isVowel(w[i], i) ? 0 : run + 1;
+      if (run >= 5) return true;
+    }
+    return false;
+  });
+  if (hasConsonantRun) return true;
+
+  // Secondary: vowel-ratio check across long words
+  const longWords = words.filter((w) => w.length > 4);
+  if (longWords.length === 0) return false;
+  const suspicious = longWords.filter((w) => {
+    const vowels = [...w].filter((ch, i) => isVowel(ch, i)).length;
     return vowels / w.length < 0.15;
   });
-  return suspicious.length / words.length > 0.4;
+  return suspicious.length / longWords.length > 0.4;
 }
 
 /**
@@ -761,15 +779,23 @@ export default function ItineraryEditor({
     const hotelItem = days.flatMap((day) => day.items).find((item) => item.type === "HOTEL");
     const hotelName = hotelItem?.hotelName ?? hotelItem?.title.replace(STAY_LABEL_SUFFIX, "") ?? "";
 
+    // Season is set once, in the AI creation wizard, and stashed in sessionStorage
+    // keyed by package_id (no backend field for it yet — see review-draft.ts).
+    // Manually-created packages, or a wizard package opened in a new session,
+    // simply have none stored — travel_season stays undefined rather than guessing.
+    const wizardSeason = typeof window === "undefined"
+      ? null
+      : parseWizardVibesDraft(window.sessionStorage.getItem(wizardVibesStorageKey(pkg.package_id)))?.season;
+    const travelSeason = wizardSeason ? wizardSeason.charAt(0).toUpperCase() + wizardSeason.slice(1) : undefined;
+
     return {
       package_id: pkg.package_id,
       trip_name: packageTitle,
       city: pkg.destination_city,
       country: pkg.destination_country,
-      // ponytail: month/group size have no editor UI yet — wire real inputs when they do
-      travel_month: "April",
+      // group_size has no editor UI yet — omit rather than send a fake number.
+      travel_season: travelSeason,
       total_days: days.length,
-      group_size: 2,
       hotel_name: hotelName,
       hotel_stars: hotelItem?.starRating ?? 4,
       // Total photos across the whole package (every day + every item within it) —

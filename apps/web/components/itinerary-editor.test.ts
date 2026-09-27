@@ -105,6 +105,32 @@ test("annotateItems has the same flight-duration fix — no false 'Overlaps next
   assert.equal(activity.problem, undefined);
 });
 
+test("annotateItems does not flag ordinary words containing 'y' as consonant runs as gibberish", () => {
+  // Regression: "countryside" has "ntrys" — 5 consecutive letters that are all
+  // non-vowels when "y" is (wrongly) never counted as a vowel — which tripped the
+  // 5-consonant-run gibberish heuristic on completely normal, readable text.
+  const items = [
+    item({
+      id: 1,
+      time: "09:00",
+      notes:
+        "Take in breathtaking winter landscapes and charming rural villages. Enjoy a hearty traditional lunch at a countryside tavern.",
+    }),
+  ];
+
+  const [annotated] = annotateItems(items);
+  assert.equal(annotated.status, "pass");
+  assert.equal(annotated.problem, undefined);
+});
+
+test("annotateItems still flags actual gibberish notes", () => {
+  const items = [item({ id: 1, time: "09:00", notes: "xkjqzwv plrmfnbght vwxzklrq" })];
+
+  const [annotated] = annotateItems(items);
+  assert.equal(annotated.status, "critical");
+  assert.equal(annotated.problem, "Description contains unreadable text");
+});
+
 test("a neighbor without a real clock time (an overnight hotel stay) is ignored", () => {
   const items = [
     item({ id: 1, time: "Overnight stay", type: "HOTEL", duration: "0" }),
