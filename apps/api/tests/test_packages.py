@@ -982,3 +982,147 @@ def test_detail_returns_vibes_and_season(fake):
     assert resp.status_code == 200
     assert resp.json()["vibes"] == ["luxury"]
     assert resp.json()["season"] == "autumn"
+
+
+# ─── Relative (date-free) reference flights — issue #75 ──────────────────────
+
+RELATIVE_FLIGHT = {
+    "origin_iata": "SYD",
+    "destination_iata": "NRT",
+    "airline": "JL",
+    "day_number": 1,
+    "departure_time": "21:00",
+    # Next-day local arrival: earlier clock time than departure is valid.
+    "arrival_time": "06:00",
+    "duration_minutes": 585,
+}
+
+
+def _validation_msgs(resp):
+    return " ".join(e["msg"] for e in resp.json()["details"]["errors"])
+
+
+def _relative_body(**flight_over):
+    return {
+        **CREATE_BODY,
+        "duration_days": 4,
+        "flights": [{**RELATIVE_FLIGHT, **flight_over}],
+        "hotels": [
+            {"hotel_name": "Shinjuku Stay", "city": "Tokyo", "check_in_day": 1, "check_out_day": 4}
+        ],
+        "activities": [
+            {"activity_name": "Ramen tour", "city": "Tokyo", "day_number": 2, "start_time": "14:00"}
+        ],
+    }
+
+
+def test_create_accepts_undated_flight_hotel_and_activity(fake):
+    fake.route("POST", "rpc/save_package_details", FakeResp({"outcome": "ok", "package_id": PKG}))
+    fake.route("GET", "travel_packages", FakeResp([copy.deepcopy(DETAIL_ROW)]))
+
+    resp = client.post("/packages", json=_relative_body())
+    assert resp.status_code == 201, resp.json()
+
+    flight = fake.find("POST", "rpc/save_package_details")[0]["json"]["p_payload"]["flights"][0]
+    assert flight["day_number"] == 1
+    assert flight["departure_time"] == "21:00"
+    assert flight["arrival_time"] == "06:00"
+    assert flight["duration_minutes"] == 585
+    # The backend never invents placeholder dates.
+    assert flight["departure_datetime"] is None
+    assert flight["arrival_datetime"] is None
+
+
+def test_update_accepts_undated_flight(fake):
+    fake.route("POST", "rpc/save_package_details", FakeResp({"outcome": "ok", "package_id": PKG}))
+    fake.route("GET", "travel_packages", FakeResp([copy.deepcopy(DETAIL_ROW)]))
+
+    resp = client.put(f"/packages/{PKG}", json={"flights": [RELATIVE_FLIGHT]})
+    assert resp.status_code == 200, resp.json()
+    flight = fake.find("POST", "rpc/save_package_details")[0]["json"]["p_payload"]["flights"][0]
+    assert flight["departure_time"] == "21:00"
+
+
+def test_create_still_accepts_dated_flight(fake):
+    fake.route("POST", "rpc/save_package_details", FakeResp({"outcome": "ok", "package_id": PKG}))
+    fake.route("GET", "travel_packages", FakeResp([copy.deepcopy(DETAIL_ROW)]))
+
+    resp = client.post("/packages", json=CREATE_BODY)
+    assert resp.status_code == 201
+    flight = fake.find("POST", "rpc/save_package_details")[0]["json"]["p_payload"]["flights"][0]
+    assert flight["departure_datetime"] == "2026-03-01T09:00:00+00:00"
+    assert flight["departure_time"] is None
+
+
+@pytest.mark.parametrize("missing", ["day_number", "departure_time"])
+def test_create_rejects_flight_without_dates_or_relative_schedule(fake, missing):
+    flight = {k: v for k, v in RELATIVE_FLIGHT.items() if k != missing}
+    resp = client.post("/packages", json={**CREATE_BODY, "flights": [flight]})
+    assert resp.status_code == 422
+    assert "day_number/departure_time" in _validation_msgs(resp)
+    assert fake.find("POST", "rpc/save_package_details") == []
+
+
+@pytest.mark.parametrize("field", ["departure_datetime", "arrival_datetime"])
+def test_create_rejects_flight_with_only_one_datetime(fake, field):
+    flight = {**RELATIVE_FLIGHT, field: "2026-03-01T09:00:00+00:00"}
+    resp = client.post("/packages", json={**CREATE_BODY, "flights": [flight]})
+    assert resp.status_code == 422
+    assert "both departure_datetime and arrival_datetime" in _validation_msgs(resp)
+    assert fake.find("POST", "rpc/save_package_details") == []
+
+
+def test_create_stores_datetime_pair_and_relative_fields_together(fake):
+    fake.route("POST", "rpc/save_package_details", FakeResp({"outcome": "ok", "package_id": PKG}))
+    fake.route("GET", "travel_packages", FakeResp([copy.deepcopy(DETAIL_ROW)]))
+
+    flight = {**CREATE_BODY["flights"][0], "day_number": 1, "departure_time": "09:00"}
+    resp = client.post("/packages", json={**CREATE_BODY, "flights": [flight]})
+    assert resp.status_code == 201, resp.json()
+    sent = fake.find("POST", "rpc/save_package_details")[0]["json"]["p_payload"]["flights"][0]
+    assert sent["departure_datetime"] == "2026-03-01T09:00:00+00:00"
+    assert sent["departure_time"] == "09:00"
+
+
+@pytest.mark.parametrize(
+    "over", [{"departure_time": "9:00"}, {"departure_time": "25:00"}, {"arrival_time": "6pm"},
+             {"duration_minutes": 0}]
+)
+def test_create_rejects_malformed_relative_flight_fields(fake, over):
+    resp = client.post("/packages", json=_relative_body(**over))
+    assert resp.status_code == 422
+    assert fake.find("POST", "rpc/save_package_details") == []
+
+
+def test_detail_returns_relative_flight_fields(fake):
+    row = copy.deepcopy(DETAIL_ROW)
+    row["package_flights"] = [
+        {
+            "id": "pf-relative",
+            "flight_id": None,
+            "day_number": 1,
+            "sequence_order": 1,
+            "notes": None,
+            "details": {**RELATIVE_FLIGHT, "sequence_order": 1, "media_ids": []},
+            "flights": None,
+        }
+    ]
+    fake.route("GET", "travel_packages", FakeResp([row]))
+
+    resp = client.get(f"/packages/{PKG}")
+    assert resp.status_code == 200
+    flight = resp.json()["flights"][0]
+    assert flight["day_number"] == 1
+    assert flight["departure_time"] == "21:00"
+    assert flight["arrival_time"] == "06:00"
+    assert flight["duration_minutes"] == 585
+    assert flight["departure_datetime"] is None
+
+
+def test_detail_legacy_flight_has_null_relative_fields(fake):
+    fake.route("GET", "travel_packages", FakeResp([copy.deepcopy(DETAIL_ROW)]))
+    flight = client.get(f"/packages/{PKG}").json()["flights"][0]
+    assert flight["departure_datetime"] == "2026-03-01T09:00:00+00:00"
+    assert flight["departure_time"] is None
+    assert flight["arrival_time"] is None
+    assert flight["duration_minutes"] is None

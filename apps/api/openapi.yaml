@@ -40,7 +40,7 @@ info:
     Error responses use `ErrorResponse`, except user-management upstream failures, which return an `error` string.
     All monetary values are stored and returned as **whole AUD dollars** (integer), matching the database columns.
 
-  version: "2.4.0"
+  version: "2.5.0"
   license:
     name: Academic Use Only
 
@@ -747,7 +747,17 @@ components:
 
     FlightInput:
       type: object
-      required: [origin_iata, destination_iata, airline, departure_datetime, arrival_datetime]
+      required: [origin_iata, destination_iata, airline]
+      description: |
+        A package flight is a reference flight: it defines the intended route
+        and itinerary flow, not a seat every buyer takes. Buyers choose real
+        travel dates and departure airport later.
+        Supply either `departure_datetime`/`arrival_datetime` (both together;
+        dated flights), or `day_number` + `departure_time` (relative
+        schedule, no calendar dates). Otherwise 422 "flight requires
+        departure_datetime/arrival_datetime or day_number/departure_time".
+        Sending only one of the datetimes returns 422 "flight requires both
+        departure_datetime and arrival_datetime".
       properties:
         origin_iata:
           type: string
@@ -769,13 +779,33 @@ components:
         departure_datetime:
           type: string
           format: date-time
-          description: Real flight departure timestamp. Flights are not eligible for the undated/relative-day placeholders that hotels and activities support — always required in the existing format.
+          nullable: true
+          description: Dated flights only. Required together with arrival_datetime.
           example: "2025-07-14T06:30:00+10:00"
         arrival_datetime:
           type: string
           format: date-time
-          description: Must be strictly after departure_datetime.
+          nullable: true
+          description: Dated flights only. Must be strictly after departure_datetime.
           example: "2025-07-14T11:45:00+08:00"
+        departure_time:
+          type: string
+          pattern: '^([01]\d|2[0-3]):[0-5]\d$'
+          nullable: true
+          description: Local clock time at the origin (HH:MM). Required with day_number when no datetimes are supplied.
+          example: "21:00"
+        arrival_time:
+          type: string
+          pattern: '^([01]\d|2[0-3]):[0-5]\d$'
+          nullable: true
+          description: Local clock time at the destination (HH:MM). Not compared with departure_time — they are in different time zones.
+          example: "06:00"
+        duration_minutes:
+          type: integer
+          minimum: 1
+          nullable: true
+          description: Elapsed flight time; disambiguates overnight arrivals.
+          example: 585
         cabin_class:
           type: string
           enum: [economy, premium_economy, business, first]
@@ -788,7 +818,7 @@ components:
           type: integer
           minimum: 1
           nullable: true
-          description: Timeline placement (1..duration_days). Independent of departure_datetime's own date.
+          description: Timeline placement (1..duration_days, checked on save → 422 SAVE_PRECONDITION_FAILED). Required with departure_time for relative-schedule flights.
         sequence_order:
           type: integer
           minimum: 1
