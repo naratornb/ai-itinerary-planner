@@ -273,8 +273,14 @@ export function formatMinutes(totalMinutes: number): string {
 }
 
 export function getEndTime(startTime: string, durationMinutes: string) {
+  // A hotel row's time is a booking label ("Check-in" / "Overnight stay" /
+  // "Check-out"), not a clock value — there is no time of day to add a
+  // duration to. Returning it unchanged keeps callers honest instead of
+  // producing the string "NaN:NaN" and rendering that as a real time.
+  if (!REAL_TIME_PATTERN.test(startTime)) return startTime;
+
   const [hours, minutes] = startTime.split(":").map(Number);
-  const totalMinutes = hours * 60 + minutes + Number(durationMinutes);
+  const totalMinutes = hours * 60 + minutes + (Number(durationMinutes) || 0);
   return `${String(Math.floor(totalMinutes / 60) % 24).padStart(2, "0")}:${String(totalMinutes % 60).padStart(2, "0")}`;
 }
 
@@ -285,8 +291,8 @@ const COPILOT_TYPE_ICON: Record<string, IconName> = {
 };
 
 /**
- * Maps a Co-Pilot suggestion onto the editor's TimelineItem shape and
- * appends it after the day's current last item, since suggestions carry no
+ * Maps a Co-Pilot suggestion onto the editor's TimelineItem shape and starts
+ * it when the day's last *timed* stop finishes, since suggestions carry no
  * start time of their own.
  */
 export function copilotSuggestionToTimelineItem(
@@ -295,8 +301,19 @@ export function copilotSuggestionToTimelineItem(
   previousItems: TimelineItem[] = [],
 ): TimelineItem {
   const type = suggestion.item_type.toUpperCase();
-  const previous = previousItems[previousItems.length - 1];
-  const time = previous ? getEndTime(previous.time, previous.duration ?? "0") : "09:00";
+
+  // Anchor on the last item that has a genuine clock time. Hotel rows carry
+  // "Check-in"/"Overnight stay"/"Check-out" and routinely sort last, so
+  // taking previousItems[last] outright gave the suggestion "NaN:NaN".
+  const anchor = [...previousItems].reverse().find((item) => REAL_TIME_PATTERN.test(item.time));
+
+  // A flight's `time` is its arrival; its `duration` is travel time already
+  // spent getting there. Adding it on top would push the suggestion hours
+  // past the moment the traveller actually landed — the same rule
+  // findTimeConflict() applies when it treats a flight's arrival as its end.
+  const time = anchor
+    ? getEndTime(anchor.time, anchor.type === "FLIGHT" ? "0" : anchor.duration ?? "0")
+    : "09:00";
 
   return {
     id,
