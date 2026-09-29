@@ -39,69 +39,13 @@ const BANNED_COMPETITORS = [
   "tripadvisor", "agoda", "hotels.com", "airbnb", "klook", "getyourguide",
 ];
 
-// Fallback war zone list used when the AI fetch fails or is unavailable.
-const FALLBACK_WAR_ZONES = [
+// Fixed list, not fetched from the AI daily: an AI-regenerated list let the same
+// package pass one day and fail the next. The destination picker already keeps these
+// out of new packages; this is the backstop plus the source for text-mention warnings.
+export const CONFLICT_COUNTRIES = [
   "russia", "ukraine", "belarus", "syria", "yemen", "somalia",
   "sudan", "myanmar", "afghanistan", "iran", "north korea",
 ];
-
-// Module-level cache so we hit Gemini at most once per 24 hours per server instance.
-let warZoneCache: { list: string[]; fetchedAt: number } | null = null;
-const WAR_ZONE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
-
-/**
- * Asks Gemini for the current list of active conflict / war-zone countries,
- * caches the result for 24 hours, and falls back to FALLBACK_WAR_ZONES on any error.
- * The actual hard-block check is still deterministic (no AI in the hot path).
- */
-async function getWarZones(): Promise<string[]> {
-  const now = Date.now();
-  if (warZoneCache && now - warZoneCache.fetchedAt < WAR_ZONE_CACHE_TTL_MS) {
-    return warZoneCache.list;
-  }
-
-  try {
-    const res = await fetch(GEMINI_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        system_instruction: {
-          parts: [{
-            text:
-              "You are a geopolitical risk analyst. " +
-              "Return ONLY a valid JSON array of lowercase country name strings (including common aliases, e.g. \"north korea\") " +
-              "for countries currently experiencing active armed conflict, civil war, or where civilian travel is " +
-              "considered extremely dangerous due to ongoing military operations. " +
-              "No markdown, no explanation — just the JSON array.",
-          }],
-        },
-        contents: [{ parts: [{ text: "List all current war zones and active conflict countries." }] }],
-        generationConfig: {
-          responseMimeType: "application/json",
-          temperature: 0,
-          seed: 42,
-        },
-      }),
-    });
-
-    if (res.ok) {
-      const data = await res.json();
-      const raw: string = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "[]";
-      const parsed: unknown = JSON.parse(raw.replace(/```json|```/g, "").trim());
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        const list = (parsed as string[]).map((s) => s.toLowerCase());
-        warZoneCache = { list, fetchedAt: now };
-        return list;
-      }
-    }
-  } catch {
-    // Network or parse error — fall through to fallback
-  }
-
-  // Cache the fallback too so we don't hammer Gemini on every request when it's down.
-  warZoneCache = { list: FALLBACK_WAR_ZONES, fetchedAt: now };
-  return FALLBACK_WAR_ZONES;
-}
 
 // `\bword\b` only matches the exact standalone word — it does NOT match
 // inflected/suffixed forms (e.g. \bfuck\b misses "fucking", "fucked", "fucker").
@@ -118,32 +62,44 @@ export const PROFANITY_WORDS = [
   "cunt", "cunts",
   "bastard", "bastards",
   "dickhead", "dickheads",
-  "prick", "pricks",
   "wanker", "wankers", "wanking",
-  "arsehole", "arseholes", "arse", "arses",
+  "arsehole", "arseholes",
   "twat", "twats",
-  "cock", "pussy", "pussies",
+  "pussy", "pussies",
   "slut", "sluts", "slutty",
   "whore", "whores", "whoring",
   // Slurs (racial / ethnic / identity)
   "nigger", "niggers", "nigga", "niggas",
   "chink", "chinks", "spic", "spics", "kike", "kikes", "gook", "gooks", "wetback", "wetbacks",
-  "cracker", "crackers",
   "faggot", "faggots", "fag", "fags",
   "dyke", "dykes", "tranny", "trannies",
   "retard", "retards", "retarded",
   // Leetspeak / evasion variants
   "b4dw0rd",
   // Drug / illegal references
-  "cocaine", "heroin", "meth", "methamphetamine", "ecstasy", "mdma",
-  "crack", "fentanyl",
+  "cocaine", "heroin", "methamphetamine", "mdma", "fentanyl",
   // Violence / threat language
-  "kill", "kills", "killed", "killing", "killer",
-  "murder", "murders", "murdered", "murdering", "murderer",
   "rape", "raped", "raping", "rapist",
   "pedophile", "pedophiles", "paedophile", "paedophiles",
   "molest", "molested", "molesting", "molester",
 ];
+
+// Words with an everyday travel meaning ("killer whale", "crack of dawn", "prawn
+// crackers", "murder mystery dinner", "cock-a-leekie") — a match only warns, so the
+// creator can check the wording without being blocked.
+export const SENSITIVE_WORDS = [
+  "kill", "kills", "killed", "killing", "killer",
+  "murder", "murders", "murdered", "murdering", "murderer",
+  "crack", "cracker", "crackers",
+  "ecstasy", "meth",
+  "cock", "prick", "pricks", "arse", "arses",
+];
+
+/** Whole-word, case-insensitive match — so "iran" misses "Tirana" and "agoda" misses "Pagoda". */
+function hasWord(text: string, word: string): boolean {
+  const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`\\b${escaped}\\b`, "i").test(text);
+}
 
 // A day's own text — summary plus every activity's name/description — used to
 // localize a profanity or banned-competitor match to a specific day so the UI can
@@ -204,8 +160,10 @@ export function runHardBlockFilters(pkg: any, warZones: string[], days: any[] = 
   const fullText = JSON.stringify(pkg).toLowerCase();
   const country = (pkg.country || "").toLowerCase();
 
+  // Only the destination itself blocks; a mention in the text is a warning
+  // (see findWordingWarnings).
   for (const zone of warZones) {
-    if (country.includes(zone) || fullText.includes(zone)) {
+    if (country.trim() === zone) {
       return {
         blocked: true,
         type: "SafetyStatus",
@@ -219,7 +177,7 @@ export function runHardBlockFilters(pkg: any, warZones: string[], days: any[] = 
   for (const day of days) {
     const dayText = dayTextBlob(day);
     for (const comp of BANNED_COMPETITORS) {
-      if (dayText.includes(comp)) {
+      if (hasWord(dayText, comp)) {
         return {
           blocked: true,
           type: "BrandSafety",
@@ -230,7 +188,7 @@ export function runHardBlockFilters(pkg: any, warZones: string[], days: any[] = 
     }
   }
   for (const comp of BANNED_COMPETITORS) {
-    if (fullText.includes(comp)) {
+    if (hasWord(fullText, comp)) {
       return {
         blocked: true,
         type: "BrandSafety",
@@ -241,7 +199,7 @@ export function runHardBlockFilters(pkg: any, warZones: string[], days: any[] = 
   for (const day of days) {
     const dayText = dayTextBlob(day);
     for (const word of PROFANITY_WORDS) {
-      if (new RegExp(`\\b${word}\\b`, "i").test(dayText)) {
+      if (hasWord(dayText, word)) {
         return {
           blocked: true,
           type: "SafetyStatus",
@@ -252,11 +210,52 @@ export function runHardBlockFilters(pkg: any, warZones: string[], days: any[] = 
     }
   }
   for (const word of PROFANITY_WORDS) {
-    if (new RegExp(`\\b${word}\\b`, "i").test(fullText)) {
+    if (hasWord(fullText, word)) {
       return { blocked: true, type: "SafetyStatus", message: "Profanity detected in package content." };
     }
   }
   return { blocked: false };
+}
+
+/**
+ * Non-blocking warnings for text that needs a second look: a context-dependent word
+ * (SENSITIVE_WORDS) or a conflict country named in the text. One warning per word,
+ * pointing at the first day it appears in when there is one.
+ */
+export function findWordingWarnings(pkg: any, warZones: string[], days: any[] = []): any[] {
+  const fullText = JSON.stringify(pkg).toLowerCase();
+  const warnings: any[] = [];
+  const firstDayWith = (word: string) => days.find((day) => hasWord(dayTextBlob(day), word))?.day_number ?? null;
+
+  for (const zone of warZones) {
+    if (!hasWord(fullText, zone)) continue;
+    const day = firstDayWith(zone);
+    warnings.push({
+      error_code: "CONFLICT_ZONE_MENTION",
+      rule: "SafetyStatus",
+      severity: "warning",
+      field: day !== null ? `Day ${day}` : "package_content",
+      field_value: zone,
+      affected_item: day !== null ? `Day ${day}` : "Entire Package",
+      message: `${day !== null ? `Day ${day}` : "This package"} mentions ${zone}, which is on the restricted travel list.`,
+      action: "Make sure the trip doesn't travel there. A reviewer may ask about it.",
+    });
+  }
+  for (const word of SENSITIVE_WORDS) {
+    if (!hasWord(fullText, word)) continue;
+    const day = firstDayWith(word);
+    warnings.push({
+      error_code: "CHECK_WORDING",
+      rule: "SafetyStatus",
+      severity: "warning",
+      field: day !== null ? `Day ${day}` : "package_content",
+      field_value: word,
+      affected_item: day !== null ? `Day ${day}` : "Entire Package",
+      message: `Check the wording of "${word}"${day !== null ? ` on Day ${day}` : ""}.`,
+      action: "Make sure it reads as intended. A reviewer may ask about it.",
+    });
+  }
+  return warnings;
 }
 
 // ─── Route handler ─────────────────────────────────────────────────────────────
@@ -280,10 +279,9 @@ export async function POST(req: NextRequest) {
       days = [];
     }
 
-    // 1. Text-based hard block filters (competitors, war zones, profanity)
-    //    War zone list is fetched from AI once and cached for 24 hours.
-    const warZones = await getWarZones();
-    const blockCheck = runHardBlockFilters(pkg, warZones, days);
+    // 1. Text-based hard block filters (competitors, conflict destination, profanity)
+    const blockCheck = runHardBlockFilters(pkg, CONFLICT_COUNTRIES, days);
+    const wordingWarnings = findWordingWarnings(pkg, CONFLICT_COUNTRIES, days);
     let brandSafety = 1;
     let safetyStatus = 1;
     let hardBlockError: any = null;
@@ -391,6 +389,7 @@ export async function POST(req: NextRequest) {
     ];
     const mergedSoftWarnings = [
       ...codeResults.soft,
+      ...wordingWarnings,
       ...downgradedAiHardErrors,
       ...(aiResult.soft_warnings || []).filter((issue: any) => !isTransferTimeIssue(issue)),
     ];

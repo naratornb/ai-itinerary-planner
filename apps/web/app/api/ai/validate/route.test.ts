@@ -7,6 +7,8 @@ import {
   isTransferTimeIssue,
   partitionAiHardErrors,
   PROFANITY_WORDS,
+  SENSITIVE_WORDS,
+  findWordingWarnings,
 } from "./route";
 
 const NO_WAR_ZONES: string[] = [];
@@ -67,8 +69,12 @@ test("PROFANITY_WORDS still includes every word from the original list — none 
     "cocaine", "heroin", "meth", "methamphetamine", "ecstasy", "mdma",
     "crack", "fentanyl", "kill", "murder", "rape", "pedophile", "molest",
   ];
+  // Context-dependent words moved to SENSITIVE_WORDS (warn, don't block) — still covered.
   for (const word of originalWords) {
-    assert.ok(PROFANITY_WORDS.includes(word), `expected PROFANITY_WORDS to still include "${word}"`);
+    assert.ok(
+      PROFANITY_WORDS.includes(word) || SENSITIVE_WORDS.includes(word),
+      `expected "${word}" to still be in PROFANITY_WORDS or SENSITIVE_WORDS`,
+    );
   }
 });
 
@@ -154,4 +160,86 @@ test("partitionAiHardErrors keeps only R12 as a real hard error, demoting everyt
   assert.deepEqual(allowed.map((i) => i.error_code), ["SHORT_TRANSFER_ACTIVITY"]);
   assert.deepEqual(downgraded.map((i) => i.error_code), ["AMBIGUOUS_FLIGHT_INFO"]);
   assert.equal(downgraded[0].severity, "warning");
+});
+
+const CONFLICT = ["russia", "iran", "north korea"];
+
+// The route receives days inside the package as days_json, so the whole-package scan
+// sees them too — tests must send them the same way or that scan is never exercised.
+function withDays(days: any[], overrides: Record<string, any> = {}) {
+  return pkg({ ...overrides, days_json: JSON.stringify(days) });
+}
+
+test("place names that merely contain a conflict country's name are not blocked", () => {
+  for (const place of ["Russian Hill cable car ride", "Walking tour of Tirana", "Miranda beach day"]) {
+    const days = [{ day_number: 1, summary: "", activities: [{ activity_name: place }] }];
+    const result = runHardBlockFilters(withDays(days, { country: "United States" }), CONFLICT, days);
+    assert.equal(result.blocked, false, `expected "${place}" not to be blocked`);
+  }
+});
+
+test("a package whose destination is a conflict country is still blocked", () => {
+  const result = runHardBlockFilters(pkg({ country: "Russia" }), CONFLICT, []);
+  assert.equal(result.blocked, true);
+  assert.equal(result.type, "SafetyStatus");
+});
+
+test("a conflict country mentioned in the text warns instead of blocking", () => {
+  const days = [
+    { day_number: 1, summary: "", activities: [] },
+    { day_number: 2, summary: "Views across the border to Russia", activities: [] },
+  ];
+  const p = withDays(days, { country: "Finland" });
+  assert.equal(runHardBlockFilters(p, CONFLICT, days).blocked, false);
+  const warnings = findWordingWarnings(p, CONFLICT, days);
+  assert.equal(warnings.length, 1);
+  assert.equal(warnings[0].severity, "warning");
+  assert.equal(warnings[0].field, "Day 2");
+  assert.match(warnings[0].message, /russia/i);
+});
+
+test("everyday phrases with context-dependent words are not blocked", () => {
+  for (const text of [
+    "Killer whale watching in the bay",
+    "Up at the crack of dawn for sunrise",
+    "Prawn crackers at the night market",
+    "Murder mystery dinner cruise",
+  ]) {
+    const days = [{ day_number: 1, summary: text, activities: [] }];
+    const result = runHardBlockFilters(withDays(days), NO_WAR_ZONES, days);
+    assert.equal(result.blocked, false, `expected "${text}" not to be blocked`);
+  }
+});
+
+test("a context-dependent word warns and names the word and its day", () => {
+  const days = [
+    { day_number: 1, summary: "", activities: [] },
+    { day_number: 3, summary: "", activities: [{ activity_name: "Killer whale watching" }] },
+  ];
+  const warnings = findWordingWarnings(withDays(days), NO_WAR_ZONES, days);
+  assert.equal(warnings.length, 1);
+  assert.equal(warnings[0].field, "Day 3");
+  assert.match(warnings[0].message, /killer/);
+});
+
+test("clean content produces no wording warnings", () => {
+  const days = [{ day_number: 1, summary: "A relaxing cocktail hour", activities: [] }];
+  assert.deepEqual(findWordingWarnings(withDays(days), CONFLICT, days), []);
+});
+
+test("unambiguous slurs and strong swear words still block", () => {
+  for (const text of ["What a fucking view", "This cunt of a hike"]) {
+    const days = [{ day_number: 1, summary: text, activities: [] }];
+    assert.equal(runHardBlockFilters(pkg(), NO_WAR_ZONES, days).blocked, true, `expected "${text}" to block`);
+  }
+});
+
+test("a place name containing a competitor's name is not blocked", () => {
+  const days = [{ day_number: 1, summary: "", activities: [{ activity_name: "Shwedagon Pagoda at sunset" }] }];
+  assert.equal(runHardBlockFilters(withDays(days, { country: "Myanmar" }), NO_WAR_ZONES, days).blocked, false);
+});
+
+test("a competitor with a dot in its name is still matched as a whole name", () => {
+  const days = [{ day_number: 1, summary: "Cheaper on Booking.com", activities: [] }];
+  assert.equal(runHardBlockFilters(pkg(), NO_WAR_ZONES, days).type, "BrandSafety");
 });
