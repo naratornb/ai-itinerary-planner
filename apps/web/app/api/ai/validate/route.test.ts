@@ -7,6 +7,8 @@ import {
   isTransferTimeIssue,
   partitionAiHardErrors,
   PROFANITY_WORDS,
+  buildIllegalActError,
+  checkFailedResult,
 } from "./route";
 
 const NO_WAR_ZONES: string[] = [];
@@ -154,4 +156,41 @@ test("partitionAiHardErrors keeps only R12 as a real hard error, demoting everyt
   assert.deepEqual(allowed.map((i) => i.error_code), ["SHORT_TRANSFER_ACTIVITY"]);
   assert.deepEqual(downgraded.map((i) => i.error_code), ["AMBIGUOUS_FLIGHT_INFO"]);
   assert.equal(downgraded[0].severity, "warning");
+});
+
+test("an AI-suspected illegal activity becomes a blocking error naming the activity and its day", () => {
+  const days = [
+    { day_number: 1, activities: [{ activity_name: "Harbour cruise" }] },
+    { day_number: 2, activities: [{ activity_name: "Ivory market shopping tour" }] },
+  ];
+  const error = buildIllegalActError({ scores: { illegal_act: true }, illegal_evidence: "Ivory market shopping tour" }, days);
+  assert.ok(error, "expected an error when illegal_act is true");
+  assert.equal(error.severity, "error");
+  assert.equal(error.error_code, "POLICY_VIOLATION");
+  assert.equal(error.rule, "SafetyStatus");
+  assert.equal(error.field, "Day 2");
+  assert.match(error.message, /Ivory market shopping tour/);
+  assert.match(error.message, /Day 2/);
+});
+
+test("an illegal-activity flag with no evidence still explains itself instead of a silent 0 score", () => {
+  const error = buildIllegalActError({ scores: { illegal_act: true } }, []);
+  assert.ok(error);
+  assert.equal(error.field, "package_content");
+  assert.ok(error.message.length > 0);
+});
+
+test("no illegal-activity error when the AI doesn't flag one", () => {
+  assert.equal(buildIllegalActError({ scores: { illegal_act: false } }, []), null);
+  assert.equal(buildIllegalActError({}, []), null);
+});
+
+test("a crashed check blocks submission with a retry message instead of passing with a fake score", () => {
+  const result = checkFailedResult();
+  assert.equal(result.is_feasible, false);
+  assert.equal(result.can_publish, false);
+  assert.equal(result.quality_score, undefined, "no made-up score when nothing was actually checked");
+  assert.equal(result.hard_errors.length, 1);
+  assert.equal(result.hard_errors[0].error_code, "CHECK_FAILED");
+  assert.equal(result.hard_errors[0].severity, "error");
 });

@@ -200,6 +200,67 @@ export function partitionAiHardErrors(issues: any[]): { allowed: any[]; downgrad
   return { allowed, downgraded };
 }
 
+/**
+ * The AI's illegal_act flag used to only zero the score, leaving the creator with a
+ * 0/100 and no reason. It's now a blocking error naming the activity (from the AI's
+ * illegal_evidence quote) and its day, so the creator can see what to change.
+ */
+export function buildIllegalActError(aiResult: any, days: any[]): any | null {
+  if (!aiResult?.scores?.illegal_act) return null;
+  const evidence = String(aiResult.illegal_evidence || "").trim();
+  const evidenceDay = findDayContainingText(days, evidence);
+  const where = evidenceDay !== null ? ` on Day ${evidenceDay}` : "";
+  return {
+    error_code: "POLICY_VIOLATION",
+    rule: "SafetyStatus",
+    severity: "error",
+    field: evidenceDay !== null ? `Day ${evidenceDay}` : "package_content",
+    field_value: evidence || "N/A",
+    affected_item: evidence || "Entire Package",
+    message: evidence
+      ? `"${evidence}"${where} may be illegal or unethical (AI-detected).`
+      : "An activity in this package may be illegal or unethical (AI-detected).",
+    action: "Change or remove this activity to continue.",
+  };
+}
+
+const AI_UNAVAILABLE_WARNING = {
+  error_code: "AI_CHECKS_UNAVAILABLE",
+  rule: "System",
+  severity: "warning",
+  field: "package_content",
+  field_value: "N/A",
+  affected_item: "Entire Package",
+  message: "Some AI checks couldn't run this time, so only the standard checks were applied.",
+  action: "Run Check content again for the full set of checks.",
+};
+
+/**
+ * Returned when the check itself fails. It must never pass: a package nobody could
+ * check stays blocked until a check actually succeeds, and carries no made-up score.
+ */
+export function checkFailedResult() {
+  return {
+    package_id: "package",
+    is_feasible: false,
+    has_warnings: false,
+    hard_errors: [{
+      error_code: "CHECK_FAILED",
+      rule: "System",
+      severity: "error",
+      field: "package_content",
+      field_value: "N/A",
+      affected_item: "Entire Package",
+      message: "We couldn't finish checking your package. Please try again.",
+      action: "Run Check content again. If it keeps failing, contact support.",
+    }],
+    soft_warnings: [],
+    summary: "The check couldn't run.",
+    quality_score: undefined,
+    can_publish: false,
+  };
+}
+
 export function runHardBlockFilters(pkg: any, warZones: string[], days: any[] = []) {
   const fullText = JSON.stringify(pkg).toLowerCase();
   const country = (pkg.country || "").toLowerCase();
@@ -315,6 +376,9 @@ export async function POST(req: NextRequest) {
     // 3. AI contextual checks (R3, R4, R6, R8, R10, R11, R12, R14, R15)
     //    temperature: 0 + fixed seed for maximum consistency across repeated calls
     let aiResult: any = { hard_errors: [], soft_warnings: [], scores: {}, summary: "" };
+    // The deterministic checks above still gate when the AI can't run, but that must
+    // show up as a warning rather than a silently thinner check.
+    let aiAvailable = false;
 
     const rules = await fetchActiveRules();
     const systemPrompt = buildSystemPrompt(rules);
@@ -336,15 +400,21 @@ export async function POST(req: NextRequest) {
           seed: 42,
         },
       }),
+    }).catch((err) => {
+      console.warn("Gemini API unreachable — AI checks skipped:", err?.message);
+      return null;
     });
 
-    if (!res.ok) {
+    if (!res) {
+      // Already logged above.
+    } else if (!res.ok) {
       console.warn(`Gemini API returned ${res.status}. Skipping AI contextual checks.`);
     } else {
       try {
         const data = await res.json();
         const raw = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
         aiResult = JSON.parse(raw.replace(/```json|```/g, "").trim());
+        aiAvailable = true;
         console.log("\n========== [AI VALIDATE] GEMINI RESPONSE ==========");
         console.log(JSON.stringify(aiResult, null, 2));
         console.log("===================================================\n");
@@ -374,6 +444,8 @@ export async function POST(req: NextRequest) {
       };
     }
 
+    const illegalActError = buildIllegalActError(aiResult, days);
+
     // 4. Merge: code results + AI contextual results + any policy block error
     //    R2 (post-landing transfer time) is fully owned by the deterministic code
     //    check above — the system prompt tells the AI never to flag it too, but that's
@@ -388,10 +460,12 @@ export async function POST(req: NextRequest) {
       ...allowedAiHardErrors,
       ...(hardBlockError ? [hardBlockError] : []),
       ...(aiProfanityError ? [aiProfanityError] : []),
+      ...(illegalActError ? [illegalActError] : []),
     ];
     const mergedSoftWarnings = [
       ...codeResults.soft,
       ...downgradedAiHardErrors,
+      ...(aiAvailable ? [] : [AI_UNAVAILABLE_WARNING]),
       ...(aiResult.soft_warnings || []).filter((issue: any) => !isTransferTimeIssue(issue)),
     ];
 
@@ -403,7 +477,7 @@ export async function POST(req: NextRequest) {
       scores.feasibility_score ?? (mergedHardErrors.length === 0 ? 0.9 : 0.4)
     );
 
-    if (Boolean(scores.illegal_act)) safetyStatus = 0;
+    if (illegalActError) safetyStatus = 0;
 
     const weighted = grammar * 0.2 + completeness * 0.3 + feasibility * 0.5;
     const qualityScore = Math.round(safetyStatus * brandSafety * weighted * 100);
@@ -424,15 +498,6 @@ export async function POST(req: NextRequest) {
     });
   } catch (err: any) {
     console.warn("Validation handler error:", err.message);
-    return NextResponse.json({
-      package_id: "package",
-      is_feasible: true,
-      has_warnings: false,
-      hard_errors: [],
-      soft_warnings: [],
-      summary: "Validation completed with limited checks.",
-      quality_score: 88,
-      can_publish: true,
-    });
+    return NextResponse.json(checkFailedResult());
   }
 }
