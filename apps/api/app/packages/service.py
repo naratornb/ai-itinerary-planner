@@ -28,7 +28,8 @@ _DETAIL_SELECT = (
 
 _SUMMARY_SELECT = (
     "package_id,title,destination_country,destination_city,duration_days,"
-    "base_price_aud,status,creator_id,created_at,submitted_at,published_at"
+    "base_price_aud,status,creator_id,created_at,submitted_at,published_at,"
+    "vibes,season"
 )
 _LIST_SELECT = _SUMMARY_SELECT + ",package_media(url,is_cover)"
 
@@ -173,6 +174,9 @@ def _flight_from_row(pf):
             "flight_number": details.get("flight_number"),
             "departure_datetime": details.get("departure_datetime"),
             "arrival_datetime": details.get("arrival_datetime"),
+            "departure_time": details.get("departure_time"),
+            "arrival_time": details.get("arrival_time"),
+            "duration_minutes": details.get("duration_minutes"),
             "cabin_class": details.get("cabin_class"),
             "price_aud": details.get("price_aud"),
             "day_number": details.get("day_number"),
@@ -191,6 +195,9 @@ def _flight_from_row(pf):
         "flight_number": catalog.get("flight_number"),
         "departure_datetime": catalog.get("departure_datetime"),
         "arrival_datetime": catalog.get("arrival_datetime"),
+        "departure_time": None,
+        "arrival_time": None,
+        "duration_minutes": None,
         "cabin_class": catalog.get("cabin_class"),
         "price_aud": catalog.get("price_aud"),
         "day_number": pf.get("day_number"),
@@ -382,6 +389,8 @@ def create_package(uid, headers, payload):
         "base_price_aud": payload.base_price_aud,
         "max_group_size": payload.max_group_size,
         "tags": payload.tags,
+        "vibes": payload.vibes,
+        "season": payload.season,
         "flights": [f.model_dump(mode="json") for f in payload.flights],
         "hotels": [h.model_dump(mode="json") for h in payload.hotels],
         "activities": [a.model_dump(mode="json") for a in payload.activities],

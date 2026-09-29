@@ -335,7 +335,7 @@ def test_openapi_operation_ids_are_unique():
 
 def test_openapi_version_bumped_for_this_change():
     spec = _load_openapi()
-    assert spec["info"]["version"] == "2.3.0"
+    assert spec["info"]["version"] == "2.5.0"
 
 
 @pytest.mark.parametrize(
@@ -417,6 +417,30 @@ def test_openapi_day_input_matches_package_day_input_model():
         f"runtime-only={runtime_fields - documented_props}"
     )
     assert documented_required == runtime_required
+
+
+def test_openapi_flight_input_matches_flight_input_model():
+    spec = _load_openapi()
+    schema = spec["components"]["schemas"]["FlightInput"]
+    documented_required = set(schema.get("required", []))
+    documented_props = set(schema.get("properties", {}).keys())
+
+    runtime_fields = set(FlightInput.model_fields.keys())
+    runtime_required = {
+        name
+        for name, field in FlightInput.model_fields.items()
+        if field.is_required()
+    }
+
+    assert documented_props == runtime_fields, (
+        f"FlightInput field mismatch: doc-only={documented_props - runtime_fields}, "
+        f"runtime-only={runtime_fields - documented_props}"
+    )
+    assert documented_required == runtime_required == {
+        "origin_iata",
+        "destination_iata",
+        "airline",
+    }
 
 
 def test_handover_forbids_delete_and_readd_instruction():

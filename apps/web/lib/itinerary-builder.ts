@@ -75,12 +75,14 @@ export type DayPhoto = { src: string; alt: string; media_id?: string };
 /**
  * A multi-night stay renders one row per night *plus* a check-out row, and
  * every row carries the same per-night price — so the check-out row would
- * bill an extra night it never covers.
+ * bill an extra night it never covers. Creator picks are a free personal
+ * recommendation, not a bookable package inclusion, so their price never
+ * counts toward what the traveller pays or the creator earns.
  */
 export function computePackagePrice(days: BuilderDay[]): number {
   return days
     .flatMap((day) => day.items)
-    .filter((item) => item.stayMarker !== "check-out")
+    .filter((item) => item.stayMarker !== "check-out" && item.type !== "CREATOR PICK")
     .reduce((sum, item) => sum + (Number(item.price.replace(/[^0-9.]/g, "")) || 0), 0);
 }
 
@@ -211,11 +213,53 @@ export function moveItemInDay(
   });
 }
 
+/**
+ * A hotel stay's rows carry a baked-in "(Night 2 of 3)" / "(Check-out)" title,
+ * a stayMarker, and a "Check-in"/"Check-out"/"Overnight stay" time label set
+ * once at creation — removing a day changes how many nights the remaining
+ * rows actually span, but nothing else re-derives them, so a stay missing its
+ * original check-in day keeps stale night counts (and no row left marked
+ * "check-in") forever. Re-derives all three from each stay group's current
+ * position in `days`, in day order.
+ */
+export function recomputeHotelStayLabels(days: BuilderDay[]): BuilderDay[] {
+  const positions = new Map<string, { dayIndex: number; itemIndex: number }[]>();
+  days.forEach((day, dayIndex) => {
+    day.items.forEach((item, itemIndex) => {
+      if (item.type !== "HOTEL" || !item.stayGroupId) return;
+      const list = positions.get(item.stayGroupId) ?? [];
+      list.push({ dayIndex, itemIndex });
+      positions.set(item.stayGroupId, list);
+    });
+  });
+  let next = days;
+  for (const list of positions.values()) {
+    const nights = list.length - 1;
+    list.forEach(({ dayIndex, itemIndex }, offset) => {
+      const item = next[dayIndex].items[itemIndex];
+      const hotelName = item.hotelName ?? item.title.replace(STAY_LABEL_SUFFIX, "").trim();
+      const isCheckOut = offset === list.length - 1;
+      const title = isCheckOut
+        ? `${hotelName} (Check-out)`
+        : nights > 1 ? `${hotelName} (Night ${offset + 1} of ${nights})` : hotelName;
+      const stayMarker: TimelineItem["stayMarker"] = offset === 0 ? "check-in" : isCheckOut ? "check-out" : undefined;
+      const time = offset === 0 ? "Check-in" : isCheckOut ? "Check-out" : "Overnight stay";
+      if (item.title === title && item.stayMarker === stayMarker && item.time === time) return;
+      next = next.map((day, di) => di !== dayIndex ? day : {
+        ...day,
+        items: day.items.map((it, ii) => ii !== itemIndex ? it : { ...it, title, stayMarker, time }),
+      });
+    });
+  }
+  return next;
+}
+
 export function removeDay(days: BuilderDay[], dayId: string) {
   if (days.length === 1) return days;
-  return days
+  const remaining = days
     .filter((day) => day.id !== dayId)
     .map((day, index) => ({ ...day, day: index + 1 }));
+  return recomputeHotelStayLabels(remaining);
 }
 
 /** "150" -> "2h 30m", "120" -> "2h", "45" -> "45m", "0" -> "0m". */
@@ -332,6 +376,33 @@ export function extractClockTimeInZone(dateStr: string | null, timeZone: string)
   const hour = parts.find((part) => part.type === "hour")?.value ?? "00";
   const minute = parts.find((part) => part.type === "minute")?.value ?? "00";
   return `${hour}:${minute}`;
+}
+
+/** Calendar date (in the given zone) as "YYYY-MM-DD", or null if unparseable. */
+function dateKeyInZone(dateStr: string | null | undefined, timeZone: string): string | null {
+  if (!dateStr) return null;
+  const date = new Date(dateStr);
+  if (Number.isNaN(date.getTime())) return null;
+  return new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
+}
+
+/**
+ * How many local calendar days later the flight lands than it departs —
+ * comparing each end's own clock, the way airlines show a "+1" on an
+ * overnight flight, not elapsed duration. Null when either time is missing.
+ */
+export function flightArrivalDayOffset(
+  departureDatetime: string | null | undefined,
+  originTimeZone: string,
+  arrivalDatetime: string | null | undefined,
+  destinationTimeZone: string,
+): number | null {
+  const departureKey = dateKeyInZone(departureDatetime, originTimeZone);
+  const arrivalKey = dateKeyInZone(arrivalDatetime, destinationTimeZone);
+  if (!departureKey || !arrivalKey) return null;
+  const departureDate = Date.parse(`${departureKey}T00:00:00Z`);
+  const arrivalDate = Date.parse(`${arrivalKey}T00:00:00Z`);
+  return Math.round((arrivalDate - departureDate) / 86_400_000);
 }
 
 /** Builds the editor from relative package days, with dated rows as a legacy fallback. */

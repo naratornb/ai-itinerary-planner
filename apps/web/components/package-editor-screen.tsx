@@ -41,7 +41,6 @@ export default function PackageEditorScreen({ packageId }: { packageId: string }
   return (
     <ItineraryEditor
       pkg={pkg}
-      onBack={() => router.push("/dashboard")}
       onSessionExpired={() => router.replace("/login")}
       onContinueToReview={() => router.push(`/packages/editor/${encodeURIComponent(packageId)}/review`)}
     />

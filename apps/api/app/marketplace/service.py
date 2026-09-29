@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 _LIST_SELECT = (
     "package_id,title,destination_country,destination_city,duration_days,"
-    "base_price_aud,tags,published_at,"
+    "base_price_aud,tags,vibes,season,published_at,"
     "creator:profiles!creator_id(full_name,"
     "influencer_profiles(instagram_handle,follower_count)),"
     "package_media(url,is_cover,sort_order)"
@@ -75,6 +75,8 @@ def _to_summary(row):
         "base_price_aud": row.get("base_price_aud"),
         "cover_image_url": _cover_url(row.get("package_media") or []),
         "tags": row.get("tags") or [],
+        "vibes": row.get("vibes") or [],
+        "season": row.get("season"),
         "influencer": _influencer(row),
         "published_at": row.get("published_at"),
     }

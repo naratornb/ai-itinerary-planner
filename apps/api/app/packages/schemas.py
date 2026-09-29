@@ -1,9 +1,12 @@
 import re
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
+
+Vibe = Literal["chill", "adventure", "luxury", "local", "foodie", "scenic"]
+Season = Literal["spring", "summer", "autumn", "winter"]
 
 # Input models mirror openapi.yaml FlightInput/HotelInput/ActivityInput.
 # Datetimes stay strings: PostgREST round-trips ISO-8601 as-is and we have
@@ -23,8 +26,14 @@ class FlightInput(BaseModel):
     destination_iata: str = Field(min_length=3, max_length=3)
     airline: str
     flight_number: str | None = None
-    departure_datetime: str
-    arrival_datetime: str
+    # Dated flights send the datetime pair. Reusable packages send a
+    # reference flight on a relative schedule (day_number + local clock
+    # times) instead — buyers pick real dates later (spec 2026-09-26).
+    departure_datetime: str | None = None
+    arrival_datetime: str | None = None
+    departure_time: str | None = Field(default=None, pattern=_TIME_RE.pattern)
+    arrival_time: str | None = Field(default=None, pattern=_TIME_RE.pattern)
+    duration_minutes: int | None = Field(default=None, ge=1)
     cabin_class: str | None = None
     price_aud: int | None = Field(default=None, ge=0)
     day_number: int | None = Field(default=None, ge=1)
@@ -36,6 +45,19 @@ class FlightInput(BaseModel):
     @model_validator(mode="after")
     def _validate(self) -> "FlightInput":
         _reject_duplicate_media_ids(self.media_ids)
+        if self.departure_datetime is None and self.arrival_datetime is None:
+            # No ordering check: departure/arrival clock times are local to
+            # different time zones (SYD 21:00 -> NRT 06:00 is valid).
+            if self.day_number is None or self.departure_time is None:
+                raise ValueError(
+                    "flight requires departure_datetime/arrival_datetime or "
+                    "day_number/departure_time"
+                )
+            return self
+        if self.departure_datetime is None or self.arrival_datetime is None:
+            raise ValueError(
+                "flight requires both departure_datetime and arrival_datetime"
+            )
         try:
             departure = datetime.fromisoformat(self.departure_datetime)
             arrival = datetime.fromisoformat(self.arrival_datetime)
@@ -132,6 +154,8 @@ class TravelPackageCreate(BaseModel):
     base_price_aud: int = Field(ge=0)
     max_group_size: int | None = None
     tags: list[str] = []
+    vibes: list[Vibe] = []
+    season: Season | None = None
     flights: list[FlightInput] = []
     hotels: list[HotelInput] = []
     activities: list[ActivityInput] = []
@@ -159,6 +183,8 @@ class TravelPackageUpdate(BaseModel):
     base_price_aud: int | None = Field(default=None, ge=0)
     max_group_size: int | None = None
     tags: list[str] | None = None
+    vibes: list[Vibe] | None = None
+    season: Season | None = None
     flights: list[FlightInput] | None = None
     hotels: list[HotelInput] | None = None
     activities: list[ActivityInput] | None = None
@@ -168,7 +194,7 @@ class TravelPackageUpdate(BaseModel):
     @classmethod
     def _reject_explicit_null_collections(cls, data: Any) -> Any:
         if isinstance(data, dict):
-            for field in ("tags", "flights", "hotels", "activities"):
+            for field in ("tags", "vibes", "flights", "hotels", "activities"):
                 if field in data and data[field] is None:
                     raise ValueError(
                         f"{field} cannot be null; omit to leave unchanged or "
@@ -202,6 +228,8 @@ class TravelPackageSummary(BaseModel):
     submitted_at: str | None = None
     published_at: str | None = None
     cover_image_url: str | None = None
+    vibes: list[str] = []
+    season: str | None = None
 
 
 # Detail outputs deliberately do NOT inherit the *Input models: DB rows are the
@@ -218,6 +246,9 @@ class FlightDetailOut(BaseModel):
     flight_number: str | None = None
     departure_datetime: str | None = None
     arrival_datetime: str | None = None
+    departure_time: str | None = None
+    arrival_time: str | None = None
+    duration_minutes: int | None = None
     cabin_class: str | None = None
     price_aud: int | None = None
     day_number: int | None = None
