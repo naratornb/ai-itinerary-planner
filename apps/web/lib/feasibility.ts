@@ -494,6 +494,7 @@ Return ONLY a valid JSON object — no markdown, no explanation:
     "contains_profanity": <true only if you found profanity/offensive content missed by a static keyword filter, else false>
   },
   "profanity_evidence": "<short quote of the offending text if contains_profanity is true, else empty string>",
+  "illegal_evidence": "<the exact name of the illegal or unethical activity if illegal_act is true, else empty string>",
   "summary": "<one sentence overview of the contextual check>"
 }`;
 }

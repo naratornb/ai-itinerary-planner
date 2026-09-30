@@ -1086,9 +1086,12 @@ export default function ItineraryEditor({
         // eslint-disable-next-line react-hooks/purity
         setLastCheckedAt(Date.now());
         setResultStale(false);
+      } else {
+        showNotice("Check failed, please try again.");
       }
     } catch (err) {
       console.error("Failed to run feasibility check:", err);
+      showNotice("Check failed, please try again.");
     } finally {
       setFeasLoading(false);
     }
