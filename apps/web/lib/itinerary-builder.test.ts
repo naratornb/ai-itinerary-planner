@@ -9,6 +9,7 @@ import {
   copilotSuggestionToTimelineItem,
   daySubtitle,
   extractClockTimeInZone,
+  findStayConflict,
   flightArrivalDayOffset,
   flightDurationMinutes,
   formatMinutes,
@@ -691,4 +692,58 @@ test("summarizePackageComponents counts a multi-night stay as one hotel, not one
 
 test("summarizePackageComponents of no days is all zero", () => {
   assert.deepEqual(summarizePackageComponents([]), { flightCount: 0, hotelCount: 0, activityCount: 0 });
+});
+
+// A hotel stay as createHotel spreads it: check-in, overnight rows, then a check-out row.
+function stayDays(dayCount: number, stays: { hotel: string; group: string; checkIn: number; nights: number }[]): BuilderDay[] {
+  const days: BuilderDay[] = Array.from({ length: dayCount }, (_, i) => ({
+    id: `day-${i + 1}`, day: i + 1, title: "", meta: "", items: [], story: "", photos: [],
+  }));
+  let id = 0;
+  for (const stay of stays) {
+    for (let offset = 0; offset <= stay.nights; offset += 1) {
+      days[stay.checkIn + offset].items.push({
+        id: ++id, time: "", type: "HOTEL", title: stay.hotel, price: "$723/night", icon: "hotel", status: "pass",
+        hotelName: stay.hotel, stayGroupId: stay.group,
+        stayMarker: offset === 0 ? "check-in" : offset === stay.nights ? "check-out" : undefined,
+      } as TimelineItem);
+    }
+  }
+  return days;
+}
+
+test("adding the same hotel again on a night it already covers is a conflict", () => {
+  // Regression: Hilton Kyoto could be added three times on one day, and every copy
+  // was billed — $723 x 3 for a single night.
+  const days = stayDays(3, [{ hotel: "Hilton Kyoto", group: "a", checkIn: 0, nights: 1 }]);
+  assert.deepEqual(findStayConflict(days, 0, 1), { dayIndex: 0, hotelName: "Hilton Kyoto" });
+});
+
+test("a different hotel on a night that already has one is also a conflict", () => {
+  const days = stayDays(4, [{ hotel: "Hilton Kyoto", group: "a", checkIn: 0, nights: 2 }]);
+  assert.deepEqual(findStayConflict(days, 1, 2), { dayIndex: 1, hotelName: "Hilton Kyoto" });
+});
+
+test("checking in on another hotel's check-out day is fine", () => {
+  const days = stayDays(4, [{ hotel: "Hilton Kyoto", group: "a", checkIn: 0, nights: 2 }]);
+  assert.equal(findStayConflict(days, 2, 1), null);
+});
+
+test("returning to the same hotel on later, free nights is fine", () => {
+  const days = stayDays(6, [
+    { hotel: "Hilton Kyoto", group: "a", checkIn: 0, nights: 2 },
+    { hotel: "Osaka Inn", group: "b", checkIn: 2, nights: 1 },
+  ]);
+  assert.equal(findStayConflict(days, 3, 2), null);
+});
+
+test("moving a stay ignores its own nights", () => {
+  const days = stayDays(4, [{ hotel: "Hilton Kyoto", group: "a", checkIn: 0, nights: 2 }]);
+  assert.equal(findStayConflict(days, 1, 2, "a"), null);
+  assert.ok(findStayConflict(days, 1, 2, "other"));
+});
+
+test("nights on days that don't exist yet can't conflict", () => {
+  const days = stayDays(2, [{ hotel: "Hilton Kyoto", group: "a", checkIn: 0, nights: 1 }]);
+  assert.equal(findStayConflict(days, 1, 3), null);
 });

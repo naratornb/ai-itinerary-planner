@@ -13,6 +13,7 @@ import {
   computePackagePrice,
   copilotSuggestionToTimelineItem,
   extractClockTimeInZone,
+  findStayConflict,
   flightArrivalDayOffset,
   flightDurationMinutes,
   getEndTime,
@@ -563,6 +564,7 @@ type AddStopFlowProps = {
   hotelNotes: string;
   setHotelNotes: Dispatch<SetStateAction<string>>;
   createHotel: () => void;
+  hotelConflictMessage: string | null;
   creatorDraft: CreatorDraft;
   setCreatorDraft: Dispatch<SetStateAction<CreatorDraft>>;
   creatorPhotos: DayPhoto[];
@@ -722,7 +724,8 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
                         <label className="full"><span>Notes</span><textarea value={p.hotelNotes} onChange={(event) => p.setHotelNotes(event.target.value)} placeholder="Add check-in or booking details" /></label>
                       </div>
                     </>}
-                    <div className="activity-form-actions"><button className="publish-button" disabled={!p.selectedHotelOption || !p.hotelCheckInDayId} onClick={p.createHotel}>Add hotel</button></div>
+                    {p.hotelConflictMessage && <p className="hotel-stay-conflict" role="alert">{p.hotelConflictMessage}</p>}
+                    <div className="activity-form-actions"><button className="publish-button" disabled={!p.selectedHotelOption || !p.hotelCheckInDayId || Boolean(p.hotelConflictMessage)} onClick={p.createHotel}>Add hotel</button></div>
                   </>}
 
                   {p.addFlow === "creator" && <>
@@ -1711,6 +1714,14 @@ export default function ItineraryEditor({
   const selectedHotelCheckOutDayOption = hotelCheckOutDayOptions.find((option) => option.id === hotelCheckOutDayId) ?? hotelCheckOutDayOptions[0];
   const hotelCheckOutDayIndex = selectedHotelCheckOutDayOption.index;
   const hotelNightsCount = Math.max(1, hotelCheckOutDayIndex - hotelCheckInDayIndex);
+  // Shown in the add-hotel form itself (not a toast) as soon as the chosen days
+  // overlap an existing stay, and it stays until the days or hotel change.
+  const hotelConflict = selectedHotelOption && hotelCheckInDayId
+    ? findStayConflict(days, hotelCheckInDayIndex, hotelNightsCount)
+    : null;
+  const hotelConflictMessage = hotelConflict
+    ? `Day ${hotelConflict.dayIndex + 1} already has a hotel (${hotelConflict.hotelName}). Pick different days or remove that stay first.`
+    : null;
 
   const editStayCheckInIndex = editStayCheckInDayId === NEW_DAY_OPTION_ID
     ? days.length
@@ -1722,6 +1733,18 @@ export default function ItineraryEditor({
     { id: NEW_DAY_OPTION_ID, index: Math.max(days.length, editStayCheckInIndex + 1), title: "New day" },
   ];
   const selectedEditStayCheckOutDayOption = editStayCheckOutDayOptions.find((option) => option.id === editStayCheckOutDayId) ?? editStayCheckOutDayOptions[0];
+  // Same overlap check as the add-hotel form, shown inside the stay being edited.
+  const editStayConflict = editingStayGroupId && editStayCheckInDayId
+    ? findStayConflict(
+        days,
+        editStayCheckInIndex,
+        Math.max(editStayCheckInIndex + 1, selectedEditStayCheckOutDayOption.index) - editStayCheckInIndex,
+        editingStayGroupId,
+      )
+    : null;
+  const editStayConflictMessage = editStayConflict
+    ? `Day ${editStayConflict.dayIndex + 1} already has a hotel (${editStayConflict.hotelName}). Pick different days or remove that stay first.`
+    : null;
 
   const createHotel = () => {
     if (!selectedHotelOption) return;
@@ -1730,6 +1753,8 @@ export default function ItineraryEditor({
     const nights = hotelNightsCount;
     const checkInIndex = hotelCheckInDayIndex;
     const checkOutIndex = hotelCheckOutDayIndex;
+    // The form shows the conflict and disables the button; this is the backstop.
+    if (hotelConflict) return;
     const stayGroupId = `hotel-stay-${nextItemId.current + 1}`;
     setDays((current) => {
       const next = [...current];
@@ -1788,6 +1813,8 @@ export default function ItineraryEditor({
     const template = days.flatMap((day) => day.items).find((it) => it.stayGroupId === stayGroupId);
     if (!template) return;
     const hotelName = template.hotelName ?? "Hotel";
+    // The edit form shows the conflict and disables Save; this is the backstop.
+    if (findStayConflict(days, checkInIndex, nights, stayGroupId)) return;
     setDays((current) => {
       let next = current.map((day) => ({ ...day, items: day.items.filter((it) => it.stayGroupId !== stayGroupId) }));
       while (next.length <= checkOutIndex) {
@@ -2007,6 +2034,7 @@ export default function ItineraryEditor({
     selectedHotelCheckOutDayOption,
     hotelNotes, setHotelNotes,
     createHotel,
+    hotelConflictMessage,
     creatorDraft, setCreatorDraft,
     creatorPhotos, setCreatorPhotos,
     addCreatorPhotos,
@@ -2167,9 +2195,10 @@ export default function ItineraryEditor({
                           />
                         </label>
                       </div>
+                      {editStayConflictMessage && <p className="hotel-stay-conflict" role="alert">{editStayConflictMessage}</p>}
                       <div className="stay-edit-actions">
                         <button type="button" className="stay-edit-cancel" onClick={() => setEditingStayGroupId(null)}>Cancel</button>
-                        <button type="button" className="stay-edit-save" disabled={!editStayCheckInDayId || !selectedEditStayCheckOutDayOption} onClick={() => updateHotelStayDays(item.stayGroupId!, editStayCheckInDayId!, selectedEditStayCheckOutDayOption.id)}>Save</button>
+                        <button type="button" className="stay-edit-save" disabled={!editStayCheckInDayId || !selectedEditStayCheckOutDayOption || Boolean(editStayConflictMessage)} onClick={() => updateHotelStayDays(item.stayGroupId!, editStayCheckInDayId!, selectedEditStayCheckOutDayOption.id)}>Save</button>
                       </div>
                     </div>
                   </dd> : <dd className="stat-with-action">

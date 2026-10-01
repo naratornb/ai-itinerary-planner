@@ -86,6 +86,29 @@ export function computePackagePrice(days: BuilderDay[]): number {
     .reduce((sum, item) => sum + (Number(item.price.replace(/[^0-9.]/g, "")) || 0), 0);
 }
 
+/**
+ * The first night a new stay (checkInIndex, `nights` nights) would share with an
+ * existing hotel, or null. A night is any hotel row except a check-out row, so
+ * checking in on another stay's check-out day is fine. Each stay's rows are all
+ * billed, so two stays on one night double-charge the traveller.
+ * `ignoreStayGroupId` skips the stay being moved.
+ */
+export function findStayConflict(
+  days: BuilderDay[],
+  checkInIndex: number,
+  nights: number,
+  ignoreStayGroupId?: string,
+): { dayIndex: number; hotelName: string } | null {
+  for (let dayIndex = checkInIndex; dayIndex < checkInIndex + nights && dayIndex < days.length; dayIndex += 1) {
+    const existing = days[dayIndex].items.find((item) =>
+      item.type === "HOTEL" &&
+      item.stayMarker !== "check-out" &&
+      (!ignoreStayGroupId || item.stayGroupId !== ignoreStayGroupId));
+    if (existing) return { dayIndex, hotelName: existing.hotelName ?? existing.title.replace(STAY_LABEL_SUFFIX, "") };
+  }
+  return null;
+}
+
 /** The next legacy calendar date, or null for a date-flexible package. */
 export function nextCalendarDate(dateStr?: string | null): string | null {
   if (!dateStr) return null;
