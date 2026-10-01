@@ -30,6 +30,9 @@ export const SLOT_HOURS: Record<string, number> = {
 export const SLOT_ADVISORY_RATIO = 0.75; // e.g. 3 hrs in a 4-hr slot triggers a soft warning
 // R5 per-activity: flag single activities that are unusually long
 export const LONG_ACTIVITY_HOURS = 4;
+// R20 arrival/departure days lose part of the day to flights, so a lighter limit
+// than R1's 10 hours — above it is a warning, never a block.
+export const TRAVEL_DAY_MAX_HOURS = 6;
 // R2 fixed post-landing transfer buffer, by flight type — replaces the old
 // AI airport lookup with a flat, always-consistent number.
 export const TRANSFER_BUFFER_MIN: Record<string, number> = {
@@ -263,6 +266,20 @@ export function runCodeChecks(days: any[]): { hard: CodeIssue[]; soft: CodeIssue
         message: `${dayLabel} has ${totalHours.toFixed(1)} hours of activities with no time left for travel between stops.`,
         action: "Remove or shorten activities so the day totals ≤ 10 hours of scheduled time.",
       });
+    } else if (totalHours > TRAVEL_DAY_MAX_HOURS && (day.day_number === 1 || day.day_number === days.length)) {
+      // ── R20 – Travel Day Load: replaces an AI rule that capped first/last days at
+      //     one activity; the real concern is total hours, not the activity count.
+      const dayKind = day.day_number === 1 ? "an arrival day" : "a departure day";
+      soft.push({
+        error_code: "LONG_TRAVEL_DAY",
+        rule: "R20 – Travel Day Load",
+        severity: "warning",
+        field: dayLabel,
+        field_value: `${totalHours.toFixed(1)} hrs`,
+        affected_item: dayLabel,
+        message: `${dayLabel} has ${totalHours.toFixed(1)} hours of activities on ${dayKind}, which may leave travellers tired around their flight.`,
+        action: `Consider a lighter schedule (${TRAVEL_DAY_MAX_HOURS} hours or less) or moving an activity to another day.`,
+      });
     }
 
     // ── R9 – Content Quality: soft warning for each activity missing a description
@@ -349,7 +366,7 @@ export function checkPackagePhotos(pkg: any): CodeIssue | null {
   };
 }
 
-// ─── AI prompt (R3, R4, R6, R8, R10, R11, R12, R14, R15) ──────────────────────
+// ─── AI prompt (R3, R4, R6, R10, R11, R12, R14, R15) ──────────────────────
 // Contextual rules that require real-world knowledge or semantic judgment are
 // sent to the model (R2's airport transfer buffer moved to a fixed-number code
 // check above — see TRANSFER_BUFFER_MIN). Rule wording is normally supplied by
@@ -375,12 +392,6 @@ export const FALLBACK_RULES: FeasibilityRule[] = [
     rule_name: "Route Efficiency",
     rule_description:
       "Flag days where the sequence of activities requires excessive back-and-forth travel across the city.",
-  },
-  {
-    rule_code: "R8",
-    rule_name: "Capacity/Suitability",
-    rule_description:
-      "Flag solo or intimate experiences (private dining, solo kayaking) when group_size > 2.",
   },
   {
     rule_code: "R10",
@@ -506,7 +517,6 @@ export function buildUserPrompt(pkg: any, days: any[]): string {
     `Destination  : ${pkg.city || ""}, ${pkg.country || ""}`,
     `Travel Season: ${pkg.travel_season || "N/A"}`,
     `Total Days   : ${pkg.total_days || days.length}`,
-    `Group Size   : ${pkg.group_size || "N/A"}`,
     `Hotel        : ${pkg.hotel_name || "N/A"} (${pkg.hotel_stars || 4}★)`,
     "",
     "=== DAY-BY-DAY ITINERARY ===",

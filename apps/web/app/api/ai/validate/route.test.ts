@@ -11,6 +11,8 @@ import {
   findWordingWarnings,
   buildIllegalActError,
   checkFailedResult,
+  dropIllegalActDuplicates,
+  keepKnownRules,
 } from "./route";
 
 const NO_WAR_ZONES: string[] = [];
@@ -249,15 +251,18 @@ test("a competitor with a dot in its name is still matched as a whole name", () 
 test("an AI-suspected illegal activity becomes a blocking error naming the activity and its day", () => {
   const days = [
     { day_number: 1, activities: [{ activity_name: "Harbour cruise" }] },
-    { day_number: 2, activities: [{ activity_name: "Ivory market shopping tour" }] },
+    { day_number: 2, activities: [{ activity_name: "Buy animals part from the dark market" }] },
   ];
-  const error = buildIllegalActError({ scores: { illegal_act: true }, illegal_evidence: "Ivory market shopping tour" }, days);
+  const error = buildIllegalActError(
+    { scores: { illegal_act: true }, illegal_evidence: "Buy animals part from the dark market" },
+    days,
+  );
   assert.ok(error, "expected an error when illegal_act is true");
   assert.equal(error.severity, "error");
   assert.equal(error.error_code, "POLICY_VIOLATION");
   assert.equal(error.rule, "SafetyStatus");
   assert.equal(error.field, "Day 2");
-  assert.match(error.message, /Ivory market shopping tour/);
+  assert.match(error.message, /Buy animals part from the dark market/);
   assert.match(error.message, /Day 2/);
 });
 
@@ -281,4 +286,30 @@ test("a crashed check blocks submission with a retry message instead of passing 
   assert.equal(result.hard_errors.length, 1);
   assert.equal(result.hard_errors[0].error_code, "CHECK_FAILED");
   assert.equal(result.hard_errors[0].severity, "error");
+});
+
+test("the AI's own note about the illegal activity isn't repeated as a warning under the critical issue", () => {
+  const illegal = buildIllegalActError(
+    { scores: { illegal_act: true }, illegal_evidence: "Buy animals part from the dark market" },
+    [],
+  );
+  const warnings = [
+    { rule: "R15 – General Feasibility", affected_item: "Buy animals part from the dark market", message: "suggests illegal or unethical trade" },
+    { rule: "R14 – Similar Duplicate Activity", affected_item: "Harbour cruise", message: "similar to another" },
+  ];
+  const kept = dropIllegalActDuplicates(warnings, illegal);
+  assert.deepEqual(kept.map((w) => w.affected_item), ["Harbour cruise"]);
+  assert.equal(dropIllegalActDuplicates(warnings, null).length, 2);
+});
+
+test("database rules the code doesn't know are ignored, so retired rows stop reaching the AI", () => {
+  // Regression: an uncoded legacy row ("at most one activity on the first/last day")
+  // and the removed R8 kept being sent to the AI while still active in the table.
+  const rows = [
+    { rule_code: "R3", rule_name: "Opening Hours", rule_description: "db wording" },
+    { rule_code: null, rule_name: null, rule_description: "First and last days must have at most one activity" },
+    { rule_code: "R8", rule_name: "Capacity/Suitability", rule_description: "group size" },
+  ];
+  assert.deepEqual(keepKnownRules(rows as any).map((r) => r.rule_code), ["R3"]);
+  assert.equal(keepKnownRules(rows as any)[0].rule_description, "db wording", "database wording still wins");
 });

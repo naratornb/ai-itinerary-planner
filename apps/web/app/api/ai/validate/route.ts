@@ -13,7 +13,7 @@ const GEMINI_KEY = process.env.GEMINI_API_KEY!;
 const MODEL_NAME = process.env.MODEL_NAME || "gemini-2.5-flash";
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent?key=${GEMINI_KEY}`;
 
-// ─── Feasibility rules (R2, R3, R4, R6, R8, R10, R11, R12) ────────────────────
+// ─── Feasibility rules (R2, R3, R4, R6, R10, R11, R12) ────────────────────
 // Contextual rules that require real-world knowledge are sent to the AI. Rule
 // wording lives in the `feasibility_rules` table so it can be edited without a
 // deploy; falls back to FALLBACK_RULES if the table is empty or unreachable.
@@ -25,11 +25,22 @@ async function fetchActiveRules(): Promise<FeasibilityRule[]> {
     .eq("is_active", true)
     .order("rule_priority");
 
-  if (error || !data || data.length === 0) {
+  const rules = keepKnownRules((data ?? []) as FeasibilityRule[]);
+  if (error || rules.length === 0) {
     if (error) console.warn("Failed to fetch feasibility_rules, using fallback:", error.message);
     return FALLBACK_RULES;
   }
-  return data as FeasibilityRule[];
+  return rules;
+}
+
+/**
+ * The table supplies each rule's wording, but only for rule codes the code knows
+ * (FALLBACK_RULES). A retired rule — or an old uncoded row — still marked active in
+ * the database then can't keep reaching the AI before a migration switches it off.
+ */
+export function keepKnownRules(rows: FeasibilityRule[]): FeasibilityRule[] {
+  const known = new Set(FALLBACK_RULES.map((r) => r.rule_code));
+  return rows.filter((r) => known.has(r.rule_code));
 }
 
 // ─── Hard text-based block filters ────────────────────────────────────────────
@@ -217,6 +228,17 @@ export function checkFailedResult() {
   };
 }
 
+/**
+ * The AI usually also describes the illegal activity in its own issue list, which
+ * partitionAiHardErrors demotes to a warning — drop that copy so the same activity
+ * isn't shown both as a critical issue and as a warning.
+ */
+export function dropIllegalActDuplicates(issues: any[], illegalActError: any | null): any[] {
+  const evidence = String(illegalActError?.field_value ?? "").trim().toLowerCase();
+  if (!illegalActError || !evidence || evidence === "n/a") return issues;
+  return issues.filter((issue) => String(issue?.affected_item ?? "").trim().toLowerCase() !== evidence);
+}
+
 export function runHardBlockFilters(pkg: any, warZones: string[], days: any[] = []) {
   const fullText = JSON.stringify(pkg).toLowerCase();
   const country = (pkg.country || "").toLowerCase();
@@ -371,7 +393,7 @@ export async function POST(req: NextRequest) {
     //console.log("Soft warnings:", JSON.stringify(codeResults.soft, null, 2));
     //console.log("======================================================\n");
 
-    // 3. AI contextual checks (R3, R4, R6, R8, R10, R11, R12, R14, R15)
+    // 3. AI contextual checks (R3, R4, R6, R10, R11, R12, R14, R15)
     //    temperature: 0 + fixed seed for maximum consistency across repeated calls
     let aiResult: any = { hard_errors: [], soft_warnings: [], scores: {}, summary: "" };
     // The deterministic checks above still gate when the AI can't run, but that must
@@ -463,9 +485,11 @@ export async function POST(req: NextRequest) {
     const mergedSoftWarnings = [
       ...codeResults.soft,
       ...wordingWarnings,
-      ...downgradedAiHardErrors,
+      ...dropIllegalActDuplicates([
+        ...downgradedAiHardErrors,
+        ...(aiResult.soft_warnings || []).filter((issue: any) => !isTransferTimeIssue(issue)),
+      ], illegalActError),
       ...(aiAvailable ? [] : [AI_UNAVAILABLE_WARNING]),
-      ...(aiResult.soft_warnings || []).filter((issue: any) => !isTransferTimeIssue(issue)),
     ];
 
     // 5. Quality score: FinalScore = SafetyStatus x BrandSafety x [(Grammar x 0.2) + (Completeness x 0.3) + (Feasibility x 0.5)] x 100

@@ -1017,7 +1017,7 @@ export default function ItineraryEditor({
       trip_name: packageTitle,
       city: pkg.destination_city,
       country: pkg.destination_country,
-      // group_size has no editor UI yet — omit rather than send a fake number.
+      // No group_size: there's no editor input for it and no rule uses it (R8 removed).
       travel_season: travelSeason,
       total_days: days.length,
       hotel_name: hotelName,

@@ -304,7 +304,9 @@ test("buildUserPrompt includes a day's summary/story text so the AI recheck can 
 
 test("FALLBACK_RULES still covers every contextual rule code previously hardcoded", () => {
   const codes = FALLBACK_RULES.map((r) => r.rule_code);
-  assert.deepEqual(codes, ["R3", "R4", "R6", "R8", "R10", "R11", "R12", "R14", "R15"]);
+  // R8 (group size) was removed: the editor has no group-size input, so the AI was
+  // judging "Private Edition" activities against a group size it never had.
+  assert.deepEqual(codes, ["R3", "R4", "R6", "R10", "R11", "R12", "R14", "R15"]);
 });
 
 test("R2: domestic arrival with less than 60 min before first activity is a hard error", () => {
@@ -352,4 +354,56 @@ test("R2: a return/departure flight later than the day's first activity is not f
     hard.every((i) => i.error_code !== "SHORT_TRANSFER"),
     "a flight departing after the first activity already started must not be treated as an arrival"
   );
+});
+
+function longDayCodes(days: any[]) {
+  const { hard, soft } = runCodeChecks(days);
+  return {
+    hard: hard.filter((i) => i.error_code === "LONG_TRAVEL_DAY"),
+    soft: soft.filter((i) => i.error_code === "LONG_TRAVEL_DAY"),
+  };
+}
+
+test("arrival day with more than 6 hours of activities warns that travellers may be tired, without blocking", () => {
+  const days = [
+    day(1, [activity("Bike tour", { duration_hours: 4 }), activity("Cooking class", { start_time: "14:00", duration_hours: 3.5 })]),
+    day(2, [activity("Museum")]),
+    day(3, [activity("Market")]),
+  ];
+  const { hard, soft } = longDayCodes(days);
+  assert.equal(hard.length, 0);
+  assert.equal(soft.length, 1);
+  assert.equal(soft[0].severity, "warning");
+  assert.equal(soft[0].field, "Day 1");
+  assert.match(soft[0].message, /7\.5 hours/);
+  assert.match(soft[0].message, /arrival day/);
+});
+
+test("departure day with more than 6 hours of activities also warns", () => {
+  const days = [day(1, [activity("Museum")]), day(2, [activity("Day trip", { duration_hours: 6.5 })])];
+  const { soft } = longDayCodes(days);
+  assert.equal(soft.length, 1);
+  assert.equal(soft[0].field, "Day 2");
+  assert.match(soft[0].message, /departure day/);
+});
+
+test("several activities on the first or last day are fine when the total stays within 6 hours", () => {
+  // Regression: an AI rule capped first/last days at one activity, flagging an ordinary
+  // two-activity arrival day even when it was only a few hours long.
+  const days = [
+    day(1, [activity("Bike tour", { duration_hours: 3 }), activity("Cooking class", { start_time: "14:00", duration_hours: 3 })]),
+    day(2, [activity("Museum")]),
+    day(3, [activity("A", { duration_hours: 2 }), activity("B", { duration_hours: 2 }), activity("C", { duration_hours: 2 })]),
+  ];
+  assert.equal(longDayCodes(days).soft.length, 0);
+});
+
+test("a long middle day is left to the normal 10-hour rule, not the arrival/departure warning", () => {
+  const days = [day(1, [activity("A")]), day(2, [activity("Safari", { duration_hours: 8 })]), day(3, [activity("B")])];
+  assert.equal(longDayCodes(days).soft.length, 0);
+});
+
+test("buildUserPrompt no longer sends a group size to the AI", () => {
+  const prompt = buildUserPrompt({ group_size: 4 }, []);
+  assert.doesNotMatch(prompt, /Group Size/i);
 });
