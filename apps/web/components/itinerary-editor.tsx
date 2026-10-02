@@ -598,7 +598,7 @@ type AddStopFlowProps = {
   creatorPhotos: DayPhoto[];
   setCreatorPhotos: Dispatch<SetStateAction<DayPhoto[]>>;
   addCreatorPhotos: (files: File[]) => Promise<void>;
-  removeCreatorPhoto: (photo: DayPhoto) => void;
+  removeCreatorPhoto: (photo: DayPhoto) => Promise<void>;
   trackUpload: <T,>(operation: Promise<T>) => Promise<T>;
   toSafeImageSrc: (value: string) => string;
   createCreatorPick: () => void;
@@ -775,7 +775,7 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
                           {index === 0
                             ? <b><Icon name="star" size={10} />Cover</b>
                             : <button type="button" className="set-cover-btn" onClick={() => p.setCreatorPhotos([photo, ...p.creatorPhotos.filter((_, i) => i !== index)])}>Set as cover</button>}
-                          <button type="button" className="remove-photo-btn" aria-label="Remove photo" onClick={() => p.removeCreatorPhoto(photo)}><Icon name="plus" size={10} /></button>
+                          <button type="button" className="remove-photo-btn" aria-label="Remove photo" onClick={() => void p.removeCreatorPhoto(photo)}><Icon name="plus" size={10} /></button>
                         </figure>)}
                         {p.creatorPhotos.length < MAX_ITEM_PHOTOS && <label><input type="file" accept="image/png,image/jpeg" multiple onChange={(event) => { const files = Array.from(event.target.files ?? []).slice(0, MAX_ITEM_PHOTOS - p.creatorPhotos.length); event.target.value = ""; if (files.length) void p.trackUpload(p.addCreatorPhotos(files)); }} /><span className="edit-photo-add-icon"><Icon name="plus" size={16} /></span><span className="edit-photo-add-label">Add photo</span></label>}
                       </div>
@@ -1539,6 +1539,7 @@ export default function ItineraryEditor({
   };
 
   const addItemPhotos = async (files: File[]) => {
+    const dayNumber = activeDayData?.day;
     const previews = files.map((file) => ({
       file,
       photo: { src: URL.createObjectURL(file), alt: file.name } satisfies DayPhoto,
@@ -1554,16 +1555,32 @@ export default function ItineraryEditor({
         fileName: file.name,
         media: await uploadPackageMedia(fetch, API_URL, token, pkg.package_id, file),
       })));
+      const live: typeof uploaded = [];
+      for (const entry of uploaded) {
+        if (cancelledPreviews.current.has(entry.preview)) {
+          // Removed while the upload was in flight — delete the row so a
+          // refresh can't resurrect it as an unassociated photo.
+          cancelledPreviews.current.delete(entry.preview);
+          try { await deletePackageMedia(fetch, API_URL, token, entry.media.media_id); } catch { /* row lingers unassociated; harmless */ }
+        } else {
+          live.push(entry);
+        }
+      }
+      if (dayNumber !== undefined && live.length) {
+        const pending = readPendingDays();
+        live.forEach(({ media }) => { pending[media.media_id] = dayNumber; });
+        writePendingDays(pending);
+      }
       setEditingItem((current) => current ? {
         ...current,
         photos: current.photos.map((photo) => {
-          const match = uploaded.find(({ preview }) => preview === photo.src);
+          const match = live.find(({ preview }) => preview === photo.src);
           return match
             ? { src: match.media.url, alt: match.fileName, media_id: match.media.media_id }
             : photo;
         }),
       } : current);
-      showNotice(`${files.length} photo${files.length === 1 ? "" : "s"} uploaded`);
+      showNotice(`${live.length} photo${live.length === 1 ? "" : "s"} uploaded`);
     } catch (error) {
       const previewUrls = new Set(previews.map(({ photo }) => photo.src));
       setEditingItem((current) => current
@@ -1575,15 +1592,33 @@ export default function ItineraryEditor({
     }
   };
 
-  const removeItemPhoto = (photo: DayPhoto) => {
-    // Item edits are cancellable, so remove only the association here. The
-    // package media itself remains available until a later cleanup policy.
+  const removeItemPhoto = async (photo: DayPhoto) => {
+    if (!photo.media_id) {
+      // Still uploading — flag the preview so its completion handler
+      // deletes the fresh row instead of swapping it into state.
+      cancelledPreviews.current.add(photo.src);
+    } else {
+      try {
+        const token = await accessToken();
+        if (!token) throw new Error("Your session expired. Please sign in again.");
+        await deletePackageMedia(fetch, API_URL, token, photo.media_id);
+        const pending = readPendingDays();
+        if (photo.media_id in pending) {
+          delete pending[photo.media_id];
+          writePendingDays(pending);
+        }
+      } catch (error) {
+        showNotice(error instanceof Error ? error.message : "Unable to remove this photo.");
+        return;
+      }
+    }
     setEditingItem((current) => current
       ? { ...current, photos: current.photos.filter((entry) => entry.src !== photo.src) }
       : current);
   };
 
   const addCreatorPhotos = async (files: File[]) => {
+    const dayNumber = activeDayData?.day;
     const previews = files.map((file) => ({
       file,
       photo: { src: URL.createObjectURL(file), alt: file.name } satisfies DayPhoto,
@@ -1597,13 +1632,27 @@ export default function ItineraryEditor({
         fileName: file.name,
         media: await uploadPackageMedia(fetch, API_URL, token, pkg.package_id, file),
       })));
+      const live: typeof uploaded = [];
+      for (const entry of uploaded) {
+        if (cancelledPreviews.current.has(entry.preview)) {
+          cancelledPreviews.current.delete(entry.preview);
+          try { await deletePackageMedia(fetch, API_URL, token, entry.media.media_id); } catch { /* row lingers unassociated; harmless */ }
+        } else {
+          live.push(entry);
+        }
+      }
+      if (dayNumber !== undefined && live.length) {
+        const pending = readPendingDays();
+        live.forEach(({ media }) => { pending[media.media_id] = dayNumber; });
+        writePendingDays(pending);
+      }
       setCreatorPhotos((current) => current.map((photo) => {
-        const match = uploaded.find(({ preview }) => preview === photo.src);
+        const match = live.find(({ preview }) => preview === photo.src);
         return match
           ? { src: match.media.url, alt: match.fileName, media_id: match.media.media_id }
           : photo;
       }));
-      showNotice(`${files.length} photo${files.length === 1 ? "" : "s"} uploaded`);
+      showNotice(`${live.length} photo${live.length === 1 ? "" : "s"} uploaded`);
     } catch (error) {
       const previewUrls = new Set(previews.map(({ photo }) => photo.src));
       setCreatorPhotos((current) => current.filter((photo) => !previewUrls.has(photo.src)));
@@ -1613,7 +1662,24 @@ export default function ItineraryEditor({
     }
   };
 
-  const removeCreatorPhoto = (photo: DayPhoto) => {
+  const removeCreatorPhoto = async (photo: DayPhoto) => {
+    if (!photo.media_id) {
+      cancelledPreviews.current.add(photo.src);
+    } else {
+      try {
+        const token = await accessToken();
+        if (!token) throw new Error("Your session expired. Please sign in again.");
+        await deletePackageMedia(fetch, API_URL, token, photo.media_id);
+        const pending = readPendingDays();
+        if (photo.media_id in pending) {
+          delete pending[photo.media_id];
+          writePendingDays(pending);
+        }
+      } catch (error) {
+        showNotice(error instanceof Error ? error.message : "Unable to remove this photo.");
+        return;
+      }
+    }
     setCreatorPhotos((current) => current.filter((entry) => entry.src !== photo.src));
   };
 
@@ -2395,7 +2461,7 @@ export default function ItineraryEditor({
                         {index === 0
                           ? <b><Icon name="star" size={10} />Cover</b>
                           : <button type="button" className="set-cover-btn" onClick={() => setEditingItem({ ...editingItem, photos: [photo, ...editingItem.photos.filter((_, i) => i !== index)] })}>Set as cover</button>}
-                        <button type="button" className="remove-photo-btn" aria-label="Remove photo" onClick={() => removeItemPhoto(photo)}><Icon name="plus" size={10} /></button>
+                        <button type="button" className="remove-photo-btn" aria-label="Remove photo" onClick={() => void removeItemPhoto(photo)}><Icon name="plus" size={10} /></button>
                       </figure>)}
                       {editingItem.photos.length < MAX_ITEM_PHOTOS && <label><input type="file" accept="image/png,image/jpeg" multiple onChange={(event) => { const files = Array.from(event.target.files ?? []).slice(0, MAX_ITEM_PHOTOS - editingItem.photos.length); event.target.value = ""; if (files.length) void trackUpload(addItemPhotos(files)); }} /><span className="edit-photo-add-icon"><Icon name="plus" size={16} /></span><span className="edit-photo-add-label">Add photo</span></label>}
                     </div>
