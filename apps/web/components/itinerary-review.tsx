@@ -9,6 +9,7 @@ import {
   formatMinutes,
   summarizeDay,
   summarizePackageComponents,
+  type BuilderDay,
 } from "../lib/itinerary-builder";
 import {
   deletePackageMedia,
@@ -18,6 +19,7 @@ import {
   uploadPackageMedia,
   SubmitPackageError,
   type CreatorPackageDetail,
+  type PackageDayInput,
   type PackageMedia,
 } from "../lib/creator-api";
 import {
@@ -36,6 +38,20 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 type SubmitResult = { kind: "success" | "error"; message: string; code?: string };
 
 const capitalize = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
+
+// The save RPC upserts every supplied day row wholesale: a day object sent
+// without media_ids/meta is written back with both emptied, so omitting them
+// here wipes day photos and meta the editor already saved. Mirrors the field
+// set itinerary-editor's buildPackageUpdate sends for days.
+export function buildReviewDayUpdates(days: BuilderDay[]): PackageDayInput[] {
+  return days.map((day, index) => ({
+    day_number: index + 1,
+    title: day.title === `Day ${index + 1}` ? null : day.title || null,
+    summary: day.story || null,
+    meta: day.meta || null,
+    media_ids: day.photos.flatMap((photo) => photo.media_id ? [photo.media_id] : []),
+  }));
+}
 
 export default function ItineraryReview({
   pkg,
@@ -142,11 +158,7 @@ export default function ItineraryReview({
         title: packageTitle,
         description: reviewDraft.description,
         base_price_aud: Math.round(packagePrice),
-        days: days.map((day, index) => ({
-          day_number: index + 1,
-          title: day.title === `Day ${index + 1}` ? null : day.title || null,
-          summary: day.story || null,
-        })),
+        days: buildReviewDayUpdates(days),
       });
       showNotice("Draft saved");
     } catch (error) {
