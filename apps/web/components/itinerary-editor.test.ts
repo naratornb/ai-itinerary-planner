@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { annotateItems, deriveFlightType, findTimeConflict, referenceFlightPresentation } from "./itinerary-editor";
-import type { TimelineItem } from "../lib/itinerary-builder";
+import { annotateItems, deriveFlightType, findTimeConflict, placeUnassociatedMedia, referenceFlightPresentation } from "./itinerary-editor";
+import type { BuilderDay, TimelineItem } from "../lib/itinerary-builder";
 
 function item(overrides: Partial<TimelineItem> & { id: number; time: string }): TimelineItem {
   return {
@@ -196,4 +196,54 @@ test("deriveFlightType: known limitation — a genuine domestic hop in a non-AU 
 test("deriveFlightType: missing IATA codes fall back to destination_country", () => {
   assert.equal(deriveFlightType(undefined, undefined, "Australia"), "domestic");
   assert.equal(deriveFlightType(undefined, undefined, "Indonesia"), "international");
+});
+
+function builderDay(day: number, overrides: Partial<BuilderDay> = {}): BuilderDay {
+  return { id: `day-${day}`, day, title: `Day ${day}`, meta: "", items: [], story: "", photos: [], ...overrides };
+}
+
+test("placeUnassociatedMedia returns an unsaved upload to its recorded day", () => {
+  // Regression: a day-3 upload refreshed before Save Draft used to land on
+  // day 1 — media rows have no server-side day, so the pending stash is
+  // the only record of where the photo belongs.
+  const days = [builderDay(1), builderDay(2), builderDay(3)];
+  const media = [{ media_id: "m1", url: "u1", caption: null }];
+
+  const placed = placeUnassociatedMedia(days, media, { m1: 3 });
+
+  assert.equal(placed[2].photos[0]?.media_id, "m1");
+  assert.equal(placed[0].photos.length, 0);
+});
+
+test("placeUnassociatedMedia keeps the day-1 fallback when no pending day was recorded", () => {
+  const days = [builderDay(1), builderDay(2)];
+
+  const placed = placeUnassociatedMedia(days, [{ media_id: "m1", url: "u1" }], {});
+
+  assert.equal(placed[0].photos[0]?.media_id, "m1");
+});
+
+test("placeUnassociatedMedia skips media already associated with a day or an item", () => {
+  const days = [
+    builderDay(1, { photos: [{ src: "u1", alt: "a", media_id: "m1" }] }),
+    builderDay(2, { items: [item({ id: 1, time: "09:00", photos: [{ src: "u2", alt: "b", media_id: "m2" }] })] }),
+  ];
+  const media = [
+    { media_id: "m1", url: "u1" },
+    { media_id: "m2", url: "u2" },
+    { media_id: "m3", url: "u3" },
+  ];
+
+  const placed = placeUnassociatedMedia(days, media, {});
+
+  assert.deepEqual(placed[0].photos.map((photo) => photo.media_id), ["m3", "m1"]);
+  assert.equal(placed[1].photos.length, 0);
+});
+
+test("placeUnassociatedMedia falls back to day 1 when the pending day no longer exists", () => {
+  // The pending stash remembers day 3 but the day was deleted before a
+  // save — the photo still has to surface somewhere rather than vanish.
+  const placed = placeUnassociatedMedia([builderDay(1)], [{ media_id: "m1", url: "u1" }], { m1: 5 });
+
+  assert.equal(placed[0].photos[0]?.media_id, "m1");
 });

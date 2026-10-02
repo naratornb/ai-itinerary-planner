@@ -37,6 +37,7 @@ import {
   type CreatorHotelDetail,
   type CreatorPackageDetail,
 } from "../lib/creator-api";
+import { pendingMediaStorageKey, parsePendingMediaDays, type PendingMediaDays } from "../lib/pending-media";
 import { itinerarySnapshotStorageKey, parseWizardVibesDraft, wizardVibesStorageKey } from "../lib/review-draft";
 import { APP_ROUTES } from "../lib/routes";
 import { iataOf } from "../lib/ai/itinerary";
@@ -199,6 +200,35 @@ export function referenceFlightPresentation(item: TimelineItem) {
     price: item.price,
     guidance: REFERENCE_FLIGHT_GUIDANCE,
   };
+}
+
+// Media rows carry no day association server-side — Save Draft is what
+// writes package_days.media_ids. Unassociated rows found on load land on
+// their recorded pending day when one exists (uploaded, then refreshed
+// before saving), else on day 1 as they always have.
+// ponytail: a package_media.day_number column is the real fix; this
+// sessionStorage stash only covers the tab that did the upload.
+export function placeUnassociatedMedia(
+  days: BuilderDay[],
+  media: { media_id: string; url: string; caption?: string | null }[],
+  pendingDays: PendingMediaDays,
+): BuilderDay[] {
+  const associatedIds = new Set(days.flatMap((day) => [
+    ...day.photos.flatMap((photo) => photo.media_id ? [photo.media_id] : []),
+    ...day.items.flatMap((item) => item.photos?.flatMap((photo) => photo.media_id ? [photo.media_id] : []) ?? []),
+  ]));
+  const byDay = new Map<number, DayPhoto[]>();
+  for (const entry of media) {
+    if (associatedIds.has(entry.media_id)) continue;
+    const pending = pendingDays[entry.media_id];
+    const index = pending !== undefined && pending >= 1 && pending <= days.length ? pending - 1 : 0;
+    byDay.set(index, [...(byDay.get(index) ?? []), { src: entry.url, alt: entry.caption || "Trip photo", media_id: entry.media_id }]);
+  }
+  if (!byDay.size) return days;
+  return days.map((day, index) => {
+    const orphans = byDay.get(index);
+    return orphans ? { ...day, photos: [...orphans, ...day.photos] } : day;
+  });
 }
 
 // The inverse of getEndTime(): how far back a stop's start time has to move
@@ -812,6 +842,10 @@ export default function ItineraryEditor({
   );
   const nextItemId = useRef(1000);
   const pendingUploads = useRef<Set<Promise<unknown>>>(new Set());
+  // Blob previews removed while their upload is still in flight — the
+  // upload's completion handler must not resurrect them (or leave an
+  // orphan media row a refresh would dump back onto a day).
+  const cancelledPreviews = useRef<Set<string>>(new Set());
   const submittingRef = useRef(false);
   const [packageTitle, setPackageTitle] = useState(pkg.title);
   const [titleDraft, setTitleDraft] = useState(pkg.title);
@@ -1399,8 +1433,16 @@ export default function ItineraryEditor({
     }
   };
 
-  // ponytail: media rows carry no day association server-side, so every
-  // existing photo lands on day 1. Add a day column when it matters.
+  const readPendingDays = (): PendingMediaDays =>
+    parsePendingMediaDays(window.sessionStorage.getItem(pendingMediaStorageKey(pkg.package_id)));
+  const writePendingDays = (next: PendingMediaDays) => {
+    try {
+      window.sessionStorage.setItem(pendingMediaStorageKey(pkg.package_id), JSON.stringify(next));
+    } catch {
+      // best-effort only
+    }
+  };
+
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -1409,26 +1451,26 @@ export default function ItineraryEditor({
       try {
         const media = await listPackageMedia(fetch, API_URL, token, pkg.package_id);
         if (cancelled || !media.length) return;
-        setDays((current) => {
-          const associatedIds = new Set(current.flatMap((day) => [
-            ...day.photos.flatMap((photo) => photo.media_id ? [photo.media_id] : []),
-            ...day.items.flatMap((item) => item.photos?.flatMap((photo) => photo.media_id ? [photo.media_id] : []) ?? []),
-          ]));
-          const legacyMedia = media.filter((entry) => !associatedIds.has(entry.media_id));
-          return current.map((day, index) => index === 0 && legacyMedia.length
-            ? { ...day, photos: [...legacyMedia.map((entry) => ({ src: entry.url, alt: entry.caption || "Trip photo", media_id: entry.media_id })), ...day.photos] }
-            : day);
-        });
+        const pendingDays = readPendingDays();
+        setDays((current) => placeUnassociatedMedia(current, media, pendingDays));
+        // Drop stash entries for rows that no longer exist; entries whose
+        // save has since landed stay inert (associated ids are skipped) and
+        // get swept here once the row is deleted.
+        const live = new Set(media.map((entry) => entry.media_id));
+        const stillPending = Object.fromEntries(Object.entries(pendingDays).filter(([id]) => live.has(id)));
+        if (Object.keys(stillPending).length !== Object.keys(pendingDays).length) writePendingDays(stillPending);
       } catch {
         // A photo list that won't load isn't worth blocking the editor over.
       }
     })();
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pkg.package_id]);
 
   const addDayPhoto = async (file: File) => {
     const dayId = activeDayData?.id;
-    if (!dayId) return;
+    const dayNumber = activeDayData?.day;
+    if (!dayId || dayNumber === undefined) return;
     const preview = URL.createObjectURL(file);
     const dropPreview = () => setDays((current) => current.map((day) => day.id === dayId
       ? { ...day, photos: day.photos.filter((photo) => photo.src !== preview) }
@@ -1440,6 +1482,14 @@ export default function ItineraryEditor({
       const token = await accessToken();
       if (!token) throw new Error("Your session expired. Please sign in again.");
       const uploaded = await uploadPackageMedia(fetch, API_URL, token, pkg.package_id, file);
+      if (cancelledPreviews.current.has(preview)) {
+        // Removed while the upload was in flight — delete the row so a
+        // refresh can't resurrect it as an unassociated photo.
+        cancelledPreviews.current.delete(preview);
+        try { await deletePackageMedia(fetch, API_URL, token, uploaded.media_id); } catch { /* row lingers unassociated; harmless */ }
+        return;
+      }
+      writePendingDays({ ...readPendingDays(), [uploaded.media_id]: dayNumber });
       setDays((current) => current.map((day) => day.id === dayId ? {
         ...day,
         photos: day.photos.map((photo) => photo.src === preview
@@ -1458,11 +1508,20 @@ export default function ItineraryEditor({
   const removeDayPhoto = async (photo: DayPhoto) => {
     const dayId = activeDayData?.id;
     if (!dayId) return;
-    if (photo.media_id) {
+    if (!photo.media_id) {
+      // Still uploading — flag the preview so its completion handler
+      // deletes the fresh row instead of swapping it into state.
+      cancelledPreviews.current.add(photo.src);
+    } else {
       try {
         const token = await accessToken();
         if (!token) throw new Error("Your session expired. Please sign in again.");
         await deletePackageMedia(fetch, API_URL, token, photo.media_id);
+        const pending = readPendingDays();
+        if (photo.media_id in pending) {
+          delete pending[photo.media_id];
+          writePendingDays(pending);
+        }
       } catch (error) {
         showNotice(error instanceof Error ? error.message : "Unable to remove this photo.");
         return;
@@ -2077,6 +2136,7 @@ export default function ItineraryEditor({
               <div className="day-photo-single">
                 {photos.map((photo) => <figure key={photo.src}>
                   <img src={toSafeImageSrc(photo.src)} alt={photo.alt} />
+                  <button type="button" className="remove-photo-btn" aria-label="Remove photo" onClick={() => { void removeDayPhoto(photo); }}><Icon name="plus" size={10} /></button>
                   <label className="change-photo-btn" aria-label={`Change ${photo.alt}`}>
                     <input type="file" accept="image/png,image/jpeg" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (!file) return; void trackUpload(changeDayPhoto(photo, file)); }} />
                     Change photo
