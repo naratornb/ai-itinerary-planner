@@ -17,27 +17,24 @@ export type FeasibilityRule = {
   rule_description: string;
 };
 
-// ─── Code-based deterministic checks (R1, R2, R5, R7, R9, R13) ───────────────
+// ─── Code-based deterministic checks ───────────────────────────────────────────
 // These rules can be evaluated purely from payload data — no AI needed.
 
-// Available hours per time slot (hard cap used by R7; advisory threshold used by R5)
-export const SLOT_HOURS: Record<string, number> = {
-  Morning: 4,   // ~09:00–12:00 usable
-  Afternoon: 4, // ~12:00–18:00 minus lunch ≈ 4 usable hours
-  Evening: 3,   // ~18:00–21:00 usable
-};
-// R5 advisory threshold: warn when a slot reaches this fraction of its hard cap
-export const SLOT_ADVISORY_RATIO = 0.75; // e.g. 3 hrs in a 4-hr slot triggers a soft warning
-// R5 per-activity: flag single activities that are unusually long
-export const LONG_ACTIVITY_HOURS = 4;
 // R20 arrival/departure days lose part of the day to flights, so a lighter limit
 // than R1's 10 hours — above it is a warning, never a block.
 export const TRAVEL_DAY_MAX_HOURS = 6;
-// R2 fixed post-landing transfer buffer, by flight type — replaces the old
-// AI airport lookup with a flat, always-consistent number.
+// R2 post-landing transfer buffer, by flight type (also shown on the editor card).
 export const TRANSFER_BUFFER_MIN: Record<string, number> = {
   domestic: 60,
   international: 90,
+};
+// R21 time between the day's last activity ending and the return flight's
+// departure — check-in, security, and getting to the airport.
+// R22 minimum time between one activity ending and the next starting.
+export const ACTIVITY_GAP_MIN = 15;
+export const DEPARTURE_BUFFER_MIN: Record<string, number> = {
+  domestic: 120,
+  international: 180,
 };
 
 /** Convert "HH:MM" to total minutes from midnight. */
@@ -64,13 +61,21 @@ export function isValidClockTime(time: unknown): boolean {
   return hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59;
 }
 
-export function runCodeChecks(days: any[]): { hard: CodeIssue[]; soft: CodeIssue[] } {
+/** Where the trip's arrival flight lands — worked out by the editor (arrivalLanding). */
+export type ArrivalLanding = { day_number: number; time: string; flight_type?: string; title?: string };
+
+export function runCodeChecks(days: any[], arrival?: ArrivalLanding | null): { hard: CodeIssue[]; soft: CodeIssue[] } {
   const hard: CodeIssue[] = [];
   const soft: CodeIssue[] = [];
 
+  // The trip's return flight: the last flight, unless it's the only one and isn't
+  // on the last day (then it's the arrival). Used by R21.
+  const allFlights = days.flatMap((d: any) => (d.flights || []).map((f: any) => ({ flight: f, dayNumber: d.day_number })));
+  const lastFlight = allFlights[allFlights.length - 1];
+  const returnFlight = lastFlight && (allFlights.length > 1 || lastFlight.dayNumber === days.length) ? lastFlight : null;
+
   for (const day of days) {
     const acts: any[] = day.activities || [];
-    const flights: any[] = day.flights || [];
     const dayLabel = `Day ${day.day_number}`;
 
     // ── R19 – Schedule Validity: a corrupted/missing start_time (e.g. "NaN:NaN")
@@ -88,41 +93,6 @@ export function runCodeChecks(days: any[]): { hard: CodeIssue[]; soft: CodeIssue
           message: `"${act.activity_name}" has an invalid start time (${act.start_time || "missing"}), making it unschedulable.`,
           action: `Set a valid start time for "${act.activity_name}".`,
         });
-      }
-    }
-
-    // ── R2 – Airport Landing Transfer Buffer: fixed minutes by flight type
-    //     (no AI airport lookup — same buffer every time, for consistency).
-    if (acts.length > 0) {
-      const firstActivity = acts.reduce((earliest: any, a: any) =>
-        a.start_time && (!earliest || toMinutes(a.start_time) < toMinutes(earliest.start_time))
-          ? a
-          : earliest,
-      null as any);
-
-      if (firstActivity) {
-        for (const flight of flights) {
-          if (!flight.arrival_time) continue;
-          // day.flights holds both arrivals and departures/return flights (the payload
-          // labels every flight's time "arrival_time" regardless of direction). Only a
-          // flight landing before the day's first activity is one you need to clear
-          // before it — a flight later in the day (e.g. the return flight home) isn't.
-          if (toMinutes(flight.arrival_time) >= toMinutes(firstActivity.start_time)) continue;
-          const buffer = TRANSFER_BUFFER_MIN[flight.flight_type] ?? TRANSFER_BUFFER_MIN.domestic;
-          const gap = toMinutes(firstActivity.start_time) - toMinutes(flight.arrival_time);
-          if (gap < buffer) {
-            hard.push({
-              error_code: "SHORT_TRANSFER",
-              rule: "R2 – Transfer Time",
-              severity: "error",
-              field: dayLabel,
-              field_value: `${gap} min gap, ${buffer} min required`,
-              affected_item: firstActivity.activity_name,
-              message: `${flight.title || "The flight"} arrives at ${flight.arrival_time}, but "${firstActivity.activity_name}" starts at ${firstActivity.start_time} — only ${gap} minutes later. ${flight.flight_type === "international" ? "International" : "Domestic"} arrivals need at least ${buffer} minutes to clear the airport and reach the first stop.`,
-              action: `Push "${firstActivity.activity_name}" to start no earlier than ${minutesToTime(toMinutes(flight.arrival_time) + buffer)}, or move it later in the day.`,
-            });
-          }
-        }
       }
     }
 
@@ -167,17 +137,7 @@ export function runCodeChecks(days: any[]): { hard: CodeIssue[]; soft: CodeIssue
       });
     }
 
-    // ── Hoist slot totals so both R5 and R7 can share them ──────────────────
-    const slotData: Record<string, { names: string[]; hours: number }> = {};
-    for (const act of acts) {
-      const slot: string = act.slot || "Morning";
-      if (!slotData[slot]) slotData[slot] = { names: [], hours: 0 };
-      slotData[slot].names.push(act.activity_name);
-      slotData[slot].hours += Number(act.duration_hours) || 1;
-    }
-
-    // ── R5 – Schedule Density (enhanced) ────────────────────────────────────
-    // 5a. Count-based: advisory when > 3 activities in a day
+    // ── R5 – Schedule Density: advisory when > 3 activities in a day
     if (acts.length > 3) {
       soft.push({
         error_code: "SCHEDULE_DENSITY",
@@ -191,61 +151,74 @@ export function runCodeChecks(days: any[]): { hard: CodeIssue[]; soft: CodeIssue
       });
     }
 
-    // 5b. Per-slot advisory: warn when a slot is heavily loaded (≥ advisory threshold)
-    //     but hasn't yet hit the hard cap (that's R7). Only warn when 2+ activities share the slot.
-    for (const [slot, { names, hours }] of Object.entries(slotData)) {
-      const limit = SLOT_HOURS[slot] ?? 4;
-      const advisory = limit * SLOT_ADVISORY_RATIO;
-      if (names.length >= 2 && hours >= advisory && hours <= limit) {
-        soft.push({
-          error_code: "SLOT_DENSITY",
-          rule: "R5 – Schedule Density",
-          severity: "warning",
-          field: `${dayLabel} – ${slot}`,
-          field_value: `${hours.toFixed(1)} hrs of ~${limit} hrs available`,
-          affected_item: names.join(", "),
-          message: `The ${slot} slot on ${dayLabel} is heavily loaded (${hours.toFixed(1)} hrs across ${names.length} activities), leaving little buffer for delays or travel between stops.`,
-          action: `Consider shortening one activity or moving "${names[names.length - 1]}" to a less full slot.`,
+    // ── R7 – Time Overlap: two activities whose real times overlap (start_time +
+    //     duration_hours). Replaces a check on rough Morning/Afternoon/Evening
+    //     windows that blocked schedules that actually fit, like dinner and a show.
+    const timed = acts
+      .filter((a: any) => isValidClockTime(a.start_time))
+      .map((a: any) => ({ act: a, start: toMinutes(a.start_time), end: toMinutes(a.start_time) + (Number(a.duration_hours) || 1) * 60 }))
+      .sort((a: any, b: any) => a.start - b.start);
+    for (let k = 1; k < timed.length; k += 1) {
+      const prev = timed[k - 1];
+      const next = timed[k];
+      if (next.start >= prev.end && next.start - prev.end < ACTIVITY_GAP_MIN) {
+        // ── R22 – Transfer Gap: too little time to get from one stop to the next.
+        const gap = next.start - prev.end;
+        hard.push({
+          error_code: "SHORT_ACTIVITY_GAP",
+          rule: "R22 – Transfer Gap",
+          severity: "error",
+          field: dayLabel,
+          field_value: `${gap} min gap, ${ACTIVITY_GAP_MIN} min required`,
+          affected_item: next.act.activity_name,
+          message: `Only ${gap} min to get from "${prev.act.activity_name}" to "${next.act.activity_name}" on ${dayLabel}. Leave at least ${ACTIVITY_GAP_MIN} min to travel between them.`,
+          action: `Start "${next.act.activity_name}" at ${minutesToTime(prev.end + ACTIVITY_GAP_MIN)} or later.`,
         });
       }
-    }
-
-    // 5c. Per-activity: flag unusually long single activities (> ${LONG_ACTIVITY_HOURS} hrs).
-    //     Skipped when it's the day's only activity — nothing else that day for it to
-    //     crowd out, so the "may tire travellers" rationale doesn't apply.
-    for (const act of acts) {
-      const hrs = Number(act.duration_hours) || 1;
-      if (acts.length > 1 && hrs > LONG_ACTIVITY_HOURS) {
-        soft.push({
-          error_code: "LONG_ACTIVITY",
-          rule: "R5 – Schedule Density",
-          severity: "warning",
-          field: `${dayLabel} – ${act.slot || ""}`,
-          field_value: `${hrs} hrs`,
-          affected_item: act.activity_name,
-          message: `"${act.activity_name}" is scheduled for ${hrs} hours, which is unusually long for a single activity and may tire travellers.`,
-          action: "Consider splitting this into two shorter experiences or reducing the allocated time.",
-        });
-      }
-    }
-
-    // ── R7 – Time Overlap ────────────────────────────────────────────────────
-    // Flag only when total activity duration in a slot physically exceeds available time,
-    // AND it's a genuine conflict between 2+ activities. A single activity alone exceeding
-    // the slot cap (a day tour, a half-day pass) isn't a scheduling conflict — it's just a
-    // long activity, already caught as a soft warning below (R5c – Schedule Density).
-    for (const [slot, { names, hours }] of Object.entries(slotData)) {
-      const limit = SLOT_HOURS[slot] ?? 4;
-      if (names.length >= 2 && hours > limit) {
+      if (next.start < prev.end) {
         hard.push({
           error_code: "TIME_OVERLAP",
           rule: "R7 – Time Overlap",
           severity: "error",
-          field: `${dayLabel} – ${slot}`,
-          field_value: `${hours.toFixed(1)} hrs scheduled, ${limit} hrs available`,
-          affected_item: names[0],
-          message: `The ${slot} slot on ${dayLabel} has ${hours.toFixed(1)} hours of activities (${names.join(", ")}) but only ~${limit} hours are available in that time window.`,
-          action: `Move "${names[names.length - 1]}" to a different slot or another day.`,
+          field: dayLabel,
+          field_value: `${minutesToTime(prev.end)} end, ${next.act.start_time} start`,
+          affected_item: next.act.activity_name,
+          message: `"${prev.act.activity_name}" runs until ${minutesToTime(prev.end)}, but "${next.act.activity_name}" starts at ${next.act.start_time} on ${dayLabel}.`,
+          action: `Start "${next.act.activity_name}" at ${minutesToTime(prev.end)} or later, or move it to another time or day.`,
+        });
+      }
+    }
+
+    // ── R2 – Arrival Transfer: on the day the arrival flight lands, nothing can start
+    //     before landing, and the first activity needs time to clear the airport.
+    if (arrival && arrival.day_number === day.day_number && isValidClockTime(arrival.time)) {
+      const landing = toMinutes(arrival.time);
+      const international = arrival.flight_type === "international";
+      const buffer = TRANSFER_BUFFER_MIN[international ? "international" : "domestic"];
+      const flightName = arrival.title || "Your flight";
+      for (const { act } of timed.filter((t: any) => t.start < landing)) {
+        hard.push({
+          error_code: "ACTIVITY_BEFORE_LANDING",
+          rule: "R2 – Transfer Time",
+          severity: "error",
+          field: dayLabel,
+          field_value: `starts ${act.start_time}, lands ${arrival.time}`,
+          affected_item: act.activity_name,
+          message: `"${act.activity_name}" starts at ${act.start_time}, but ${flightName} only lands at ${arrival.time}.`,
+          action: `Move "${act.activity_name}" to ${minutesToTime(landing + buffer)} or later, or to another day.`,
+        });
+      }
+      const first = timed.find((t: any) => t.start >= landing);
+      if (first && first.start - landing < buffer) {
+        hard.push({
+          error_code: "SHORT_TRANSFER",
+          rule: "R2 – Transfer Time",
+          severity: "error",
+          field: dayLabel,
+          field_value: `${first.start - landing} min gap, ${buffer} min required`,
+          affected_item: first.act.activity_name,
+          message: `${flightName} lands at ${arrival.time}, but "${first.act.activity_name}" starts at ${first.act.start_time}, only ${first.start - landing} min later. ${international ? "International" : "Domestic"} arrivals need at least ${buffer} min to clear the airport and get there.`,
+          action: `Start "${first.act.activity_name}" at ${minutesToTime(landing + buffer)} or later.`,
         });
       }
     }
@@ -255,7 +228,9 @@ export function runCodeChecks(days: any[]): { hard: CodeIssue[]; soft: CodeIssue
       (sum: number, a: any) => sum + (Number(a.duration_hours) || 1),
       0
     );
-    if (totalHours > 10) {
+    // A day that is one single full-day tour (Mt Fuji, safari, reef trip) is allowed
+    // past 10 hours — the limit is about cramming several things in.
+    if (totalHours > 10 && acts.length > 1) {
       hard.push({
         error_code: "SCHEDULE_TOO_PACKED",
         rule: "R1 – Travel Time",
@@ -280,6 +255,30 @@ export function runCodeChecks(days: any[]): { hard: CodeIssue[]; soft: CodeIssue
         message: `${dayLabel} has ${totalHours.toFixed(1)} hours of activities on ${dayKind}, which may leave travellers tired around their flight.`,
         action: `Consider a lighter schedule (${TRAVEL_DAY_MAX_HOURS} hours or less) or moving an activity to another day.`,
       });
+    }
+
+    // ── R21 – Departure Buffer: the day's activities must finish in time to make
+    //     the return flight.
+    if (returnFlight && returnFlight.dayNumber === day.day_number && returnFlight.flight.departure_time) {
+      const flight = returnFlight.flight;
+      const buffer = DEPARTURE_BUFFER_MIN[flight.flight_type] ?? DEPARTURE_BUFFER_MIN.domestic;
+      const latestEnd = toMinutes(flight.departure_time) - buffer;
+      const late = acts.filter((a: any) =>
+        isValidClockTime(a.start_time) &&
+        toMinutes(a.start_time) + (Number(a.duration_hours) || 1) * 60 > latestEnd);
+      for (const act of late) {
+        const end = minutesToTime(toMinutes(act.start_time) + (Number(act.duration_hours) || 1) * 60);
+        hard.push({
+          error_code: "SHORT_DEPARTURE_BUFFER",
+          rule: "R21 – Departure Buffer",
+          severity: "error",
+          field: dayLabel,
+          field_value: `ends ${end}, flight ${flight.departure_time}`,
+          affected_item: act.activity_name,
+          message: `"${act.activity_name}" ends at ${end}, but ${flight.title || "the return flight"} departs at ${flight.departure_time}. ${flight.flight_type === "international" ? "International" : "Domestic"} departures need ${buffer / 60} hours to get to the airport and check in.`,
+          action: `Finish "${act.activity_name}" by ${minutesToTime(latestEnd)}, or move it to an earlier day.`,
+        });
+      }
     }
 
     // ── R9 – Content Quality: soft warning for each activity missing a description
@@ -379,13 +378,13 @@ export const FALLBACK_RULES: FeasibilityRule[] = [
     rule_code: "R3",
     rule_name: "Opening Hours",
     rule_description:
-      "Flag activities at venues commonly known to close early or have restricted hours (e.g. shrines close at dusk, some attractions close by 17:00, Tsukiji Outer Market stalls generally close by 14:00-15:00). Always classify these as a SOFT WARNING, never a hard error, with error_code \"OPENING_HOURS\", rule \"R3 – Opening Hours\", since opening hours can vary or the creator may intend a partial visit, so it doesn't block publishing on its own.",
+      "Flag an activity whose scheduled time (start_time to start_time + duration_hours) falls clearly outside the venue's usual opening hours (e.g. a shrine after dusk, a museum after it closes at 17:00–18:00, Tsukiji Outer Market stalls after 14:00–15:00). Only flag venues whose hours you are confident about. This is a HARD ERROR with error_code \"OPENING_HOURS\", rule \"R3 – Opening Hours\"; the message names the venue, the scheduled time and its usual hours, and the action suggests a time within them.",
   },
   {
     rule_code: "R4",
     rule_name: "Day Closure",
     rule_description:
-      "Flag venues known to close on specific weekdays (e.g. many Japanese museums close Mondays).",
+      "Flag an activity at a venue that is closed on the weekday that day falls on (e.g. many Japanese museums close Mondays). Only flag it when the itinerary states a date or weekday for that day; if it doesn't, skip this rule rather than guess. This is a HARD ERROR with error_code \"DAY_CLOSURE\", rule \"R4 – Day Closure\".",
   },
   {
     rule_code: "R6",
@@ -397,7 +396,7 @@ export const FALLBACK_RULES: FeasibilityRule[] = [
     rule_code: "R10",
     rule_name: "Daily Range",
     rule_description:
-      "Flag if 2 or more activities on the same day are in geographically distant areas — including combining a far out-of-city day-trip excursion (e.g. Mt. Fuji, Nikko, Hakone, or anywhere requiring 1+ hours of one-way travel from the city center) with ANY other activity that same day, not just 3+ activities spread across a city. This is often intentional (an early start and late finish on a packed day), so always classify these as a SOFT WARNING, never a hard error, with error_code \"DAILY_RANGE\", rule \"R10 – Daily Range\", so it doesn't block publishing on its own.",
+      "Flag a day only when it combines an out-of-city excursion (1+ hours of one-way travel from the city centre, e.g. Mt. Fuji, Nikko or Hakone from Tokyo, Ayutthaya from Bangkok) with other activities, or has activities in different cities. Never flag activities that are all in the same city as too far apart, however spread out the city is. This is often intentional (an early start and late finish), so always classify these as a SOFT WARNING, never a hard error, with error_code \"DAILY_RANGE\", rule \"R10 – Daily Range\".",
   },
   {
     rule_code: "R11",
@@ -409,7 +408,7 @@ export const FALLBACK_RULES: FeasibilityRule[] = [
     rule_code: "R12",
     rule_name: "Activity Transfer Time",
     rule_description:
-      "Each activity line shows a start_time and duration_hours. For each consecutive pair of activities on the same day, calculate the gap between the end of one (start_time + duration_hours) and the start of the next. Flag as a hard error if the gap is less than 15 minutes AND the two activities are in different locations that would require travel (same venue or adjacent is fine). Flag as a soft warning if the gap is 15–30 minutes for activities more than 2 km apart. Use common knowledge of the destination city to estimate travel distances between named locations.",
+      "Each activity line shows a start_time, duration_hours and address. For each consecutive pair of activities on the same day, use the gap given on the first activity's line (\"N min until the next activity\" — never work it out yourself), and estimate a realistic door-to-door travel time between the two addresses by taxi or public transport (most trips within one city take 10–40 minutes; allow up to 60 minutes across a large, congested city). Flag a HARD ERROR if the gap is shorter than your estimated travel time. Do not flag pairs at the same venue, next door, or in the same neighbourhood. Use error_code \"SHORT_TRANSFER_ACTIVITY\", rule \"R12 – Activity Transfer Time\", and word it as: message \"Not enough time to get from \\\"<first activity>\\\" to \\\"<second activity>\\\": <gap> min between them, but the trip takes about <estimate> min.\", action \"Leave at least <estimate> min between them, or swap one for something closer.\"",
   },
   {
     rule_code: "R14",
@@ -457,11 +456,44 @@ one clock time (arrival), by deliberate design, even on a departure day, even fo
 the destination. Do NOT flag this as ambiguous, incomplete, a factual error, or any other kind of
 problem — it is not something the creator can act on, and it is not a defect to report.
 
+Each activity line already shows when it ends and how many minutes remain until the next activity.
+Use those numbers as given — never recalculate end times or gaps yourself.
+
+Travel between activities: places in the same city are never too far apart to visit on the same
+day, however spread out the city is — only the time between them can be a problem. Judge that time
+realistically: most trips within one city take 10–40 minutes by taxi or public transport, up to 60
+minutes across a large, congested city. Whenever you flag a gap that is too short to travel between
+two activities (under any rule), word it this way:
+  message: Not enough time to get from "<first activity>" to "<second activity>": <gap> min between them, but the trip takes about <estimate> min.
+  action: Leave at least <estimate> min between them, or swap one for something closer.
+
+[catalog] activities come from the Marketplace's activity inventory: the creator picks them but
+cannot edit their name, address or duration. Their address may be a
+meeting or pick-up point (e.g. a tour office in the city centre for a mountain hike, or a pier for a
+cruise), or just the city. Do NOT flag a [catalog] activity's name, address or duration as wrong,
+inconsistent or factually incorrect, and do not lower any score because of them. Its description
+("desc") is the creator's own editable notes, so judge that like any creator text. You may also flag
+how the creator scheduled it (its time, its day, what it is combined with). [creator pick] activities
+are written by the creator and can be judged on everything.
+
+R3 (Opening Hours) covers both an activity that starts before the venue usually opens (e.g. a museum
+or gallery before 09:00) and one that runs past its usual closing time. Check every activity's start
+and end time against the venue's usual hours, and report it only when the scheduled time is clearly outside
+them — never for a visit that fits the hours but "might be rushed" or "could be tight".
+
+R10 (Daily Range) only applies to days with two or more activities — a day trip that is the day's
+only activity is fine, however long it is.
+
+Do NOT flag activities with exactly the same name scheduled more than once (under R14 or any other
+rule) — that is already reported deterministically. R14 is only for differently worded activities
+that are very likely the same experience.
+
 Do NOT flag a missing or malformed activity start time (e.g. "NaN:NaN", or an activity with no
 start time at all) under any rule, including general judgment calls. That is already caught
 deterministically as a hard error (error_code "INVALID_START_TIME") and always runs whether or not
 you also flag it — flagging it yourself only ever produces a duplicate of that same finding.
 
+Hard-error rules: R3 (Opening Hours), R4 (Day Closure) and R12 (Activity Transfer Time) are hard error rules — a problem they find always goes in hard_errors with severity "error", whatever a rule's own wording says about severity.
 Only flag something as a hard error (severity "error") if the rule below explicitly says to. For
 every other contextual rule, always use a soft warning (severity "warning") — these are judgment
 calls a creator may reasonably disagree with or intend on purpose, so none of them should block
@@ -469,6 +501,23 @@ publishing on their own.
 
 === CONTEXTUAL RULES ===
 ${rulesText}
+
+=== SCORING ===
+Rate each score the same way every time: start at 1.0 and subtract 0.1 for each problem listed for
+it (never below 0.0). Count problems; don't rate by overall impression.
+SCORING only sets the three scores — never add hard_errors or soft_warnings for it; those come only
+from the numbered rules.
+- grammar_score — wording and tone of the creator's text (day summaries and every activity's
+  description, including [catalog] ones): subtract 0.1 for each summary or description with spelling
+  or grammar mistakes, an unclear meaning, or a tone unsuitable for travellers. Don't judge [catalog]
+  activity names.
+- completeness_score — every day has at least one activity and a hotel night (except the last day),
+  each day's summary matches the activities scheduled that day, and every activity has a duration:
+  subtract 0.1 for each day missing an activity or hotel, each day whose summary doesn't match its
+  activities, and each activity without a duration.
+- feasibility_score — whether a real traveller can actually do the schedule on time: subtract 0.1
+  for each gap too short to travel between activities, each activity too soon after landing, and
+  each activity scheduled outside the venue's opening hours or on a day it's closed.
 
 === OUTPUT FORMAT ===
 Return ONLY a valid JSON object — no markdown, no explanation:
@@ -478,7 +527,7 @@ Return ONLY a valid JSON object — no markdown, no explanation:
       "error_code": "<SNAKE_CASE>",
       "rule": "<R# – Rule Name>",
       "severity": "error",
-      "field": "<day/slot reference>",
+      "field": "Day <number> – <slot>" (must start with "Day" and the day number, e.g. "Day 3 – Morning"),
       "field_value": "<relevant value>",
       "affected_item": "<activity name>",
       "message": "<clear, specific explanation>",
@@ -490,7 +539,7 @@ Return ONLY a valid JSON object — no markdown, no explanation:
       "error_code": "<SNAKE_CASE>",
       "rule": "<R# – Rule Name>",
       "severity": "warning",
-      "field": "<day/slot reference>",
+      "field": "Day <number> – <slot>" (must start with "Day" and the day number, e.g. "Day 3 – Morning"),
       "field_value": "<relevant value>",
       "affected_item": "<activity name>",
       "message": "<clear, specific explanation>",
@@ -498,9 +547,9 @@ Return ONLY a valid JSON object — no markdown, no explanation:
     }
   ],
   "scores": {
-    "grammar_score": <0.0-1.0, rate quality of activity descriptions>,
-    "completeness_score": <0.0-1.0, rate how complete the itinerary feels>,
-    "feasibility_score": <0.0-1.0, based only on the contextual rules above>,
+    "grammar_score": <0.0-1.0, per SCORING below>,
+    "completeness_score": <0.0-1.0, per SCORING below>,
+    "feasibility_score": <0.0-1.0, per SCORING below>,
     "illegal_act": <true only if an activity is clearly illegal or unethical, else false>,
     "contains_profanity": <true only if you found profanity/offensive content missed by a static keyword filter, else false>
   },
@@ -538,12 +587,22 @@ export function buildUserPrompt(pkg: any, days: any[]): string {
       // the AI into flagging a real return flight as a "factual error."
       lines.push(`    [FLIGHT] ${flight.title}${flightType} — arrives ${flight.arrival_time}`);
     }
+    // End times and gaps are worked out here, not by the AI — it once read a 90-minute
+    // gap as 30 minutes and hard-blocked on it (R12).
+    const timed = (day.activities || [])
+      .filter((a: any) => isValidClockTime(a.start_time))
+      .map((a: any) => ({ act: a, start: toMinutes(a.start_time), end: toMinutes(a.start_time) + (Number(a.duration_hours) || 1) * 60 }))
+      .sort((a: any, b: any) => a.start - b.start);
     for (const act of day.activities || []) {
+      const slot = timed.findIndex((t: any) => t.act === act);
+      const timing = slot === -1 ? "" : ` | ends ${minutesToTime(timed[slot].end)}` + (
+        timed[slot + 1] ? ` | ${timed[slot + 1].start - timed[slot].end} min until the next activity` : "");
       const desc = act.description ? ` | desc: ${act.description.slice(0, 60)}` : "";
       const startTime = act.start_time ? ` @${act.start_time}` : "";
       const address = act.address ? ` | @ ${act.address}` : "";
+      const source = act.source === "creator" ? "[creator pick] " : act.source === "catalog" ? "[catalog] " : "";
       lines.push(
-        `    [${act.slot}${startTime}] ${act.activity_name} (${act.category}) | ${act.duration_hours}hrs${address}${desc}`
+        `    [${act.slot}${startTime}] ${source}${act.activity_name} (${act.category}) | ${act.duration_hours}hrs${timing}${address}${desc}`
       );
     }
   }

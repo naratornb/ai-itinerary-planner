@@ -98,35 +98,54 @@ test("R19: a normal start time is not flagged", () => {
 
 test("R7: a single long activity alone in a slot is not a hard TIME_OVERLAP error", () => {
   // A day tour / gallery pass that alone runs longer than the slot's nominal cap isn't a
-  // scheduling conflict — it's just a long activity, already covered by R5c below.
+  // scheduling conflict — it's just a long activity.
   const days = [day(1, [activity("Denpasar Museum & Gallery Pass", { duration_hours: 4.4 })])];
 
   const { hard } = runCodeChecks(days);
   assert.ok(hard.every((issue) => issue.error_code !== "TIME_OVERLAP"));
 });
 
-test("R5c: a long activity is not flagged when it's the day's only activity", () => {
-  // Nothing else scheduled that day for it to crowd out, so the "may tire
-  // travellers" rationale behind LONG_ACTIVITY doesn't apply here.
-  const days = [day(1, [activity("Denpasar Museum & Gallery Pass", { duration_hours: 4.4 })])];
-
+test("a long activity alongside another is no longer flagged — catalog durations can't be changed", () => {
+  // Regression: "Bangkok Museum & Gallery Pass — Evening Edition" (4.3 h, from the
+  // catalog) was warned as unusually long, though the creator can't edit its duration.
+  const days = [
+    day(1, [
+      activity("Denpasar Museum & Gallery Pass", { duration_hours: 4.4 }),
+      activity("Sunset Beach Walk", { start_time: "15:00", duration_hours: 1 }),
+    ]),
+  ];
   const { soft } = runCodeChecks(days);
   assert.ok(soft.every((issue) => issue.error_code !== "LONG_ACTIVITY"));
 });
 
-test("R5c: a long activity alongside another activity the same day is still flagged", () => {
+test("activities in the same rough time window that don't actually overlap are fine", () => {
+  // Regression: a cooking class 13:00–16:18 and a museum pass 17:00–21:18, both tagged
+  // "Afternoon", were blocked for exceeding a ~4 h "Afternoon window".
   const days = [
     day(1, [
-      activity("Denpasar Museum & Gallery Pass", { duration_hours: 4.4 }),
-      activity("Sunset Beach Walk", { duration_hours: 1 }),
+      activity("Bangkok Cooking Class", { slot: "Afternoon", start_time: "13:00", duration_hours: 3.3 }),
+      activity("Bangkok Museum & Gallery Pass", { slot: "Afternoon", start_time: "17:00", duration_hours: 4.3 }),
     ]),
   ];
-
-  const { soft } = runCodeChecks(days);
-  assert.ok(soft.some((issue) => issue.error_code === "LONG_ACTIVITY"));
+  const { hard, soft } = runCodeChecks(days);
+  assert.ok(hard.every((issue) => issue.error_code !== "TIME_OVERLAP"));
+  assert.ok(soft.every((issue) => issue.error_code !== "SLOT_DENSITY"));
 });
 
-test("R7: two activities that together exceed the slot cap is still a hard TIME_OVERLAP error", () => {
+test("two activities whose real times overlap are a hard error naming both times", () => {
+  const days = [
+    day(1, [
+      activity("Sunrise Yoga", { start_time: "06:00", duration_hours: 1.5 }),
+      activity("Kayak Tour", { start_time: "07:00", duration_hours: 3.3 }),
+    ]),
+  ];
+  const overlap = runCodeChecks(days).hard.filter((issue) => issue.error_code === "TIME_OVERLAP");
+  assert.equal(overlap.length, 1);
+  assert.match(overlap[0].message, /Sunrise Yoga.*07:30/);
+  assert.match(overlap[0].message, /Kayak Tour.*07:00/);
+});
+
+test("R7: two activities starting at the same time is still a hard TIME_OVERLAP error", () => {
   const days = [
     day(1, [
       activity("Museum Tour", { duration_hours: 2.5 }),
@@ -309,53 +328,6 @@ test("FALLBACK_RULES still covers every contextual rule code previously hardcode
   assert.deepEqual(codes, ["R3", "R4", "R6", "R10", "R11", "R12", "R14", "R15"]);
 });
 
-test("R2: domestic arrival with less than 60 min before first activity is a hard error", () => {
-  const days = [
-    day(1, [activity("City Walking Tour", { start_time: "10:30" })], [flight("10:00", "domestic")]),
-  ];
-
-  const { hard } = runCodeChecks(days);
-  const issue = hard.find((i) => i.error_code === "SHORT_TRANSFER");
-  assert.ok(issue, "expected a SHORT_TRANSFER hard error (30 min gap < 60 min domestic buffer)");
-  assert.equal(issue?.rule, "R2 – Transfer Time");
-});
-
-test("R2: domestic arrival with exactly 60 min before first activity passes", () => {
-  const days = [
-    day(1, [activity("City Walking Tour", { start_time: "11:00" })], [flight("10:00", "domestic")]),
-  ];
-
-  const { hard } = runCodeChecks(days);
-  assert.ok(hard.every((i) => i.error_code !== "SHORT_TRANSFER"));
-});
-
-test("R2: international arrival needs 90 min, not just the domestic 60", () => {
-  const days = [
-    day(1, [activity("City Walking Tour", { start_time: "11:00" })], [flight("10:00", "international")]),
-  ];
-
-  const { hard } = runCodeChecks(days);
-  const issue = hard.find((i) => i.error_code === "SHORT_TRANSFER");
-  assert.ok(issue, "60 min gap is short for an international arrival (needs 90 min)");
-  assert.match(issue!.field_value, /90 min required/);
-});
-
-test("R2: a return/departure flight later than the day's first activity is not flagged", () => {
-  const days = [
-    day(
-      3,
-      [activity("Mt. Fuji 5th Station & Lake Kawaguchiko Excursion", { start_time: "08:30" })],
-      [flight("19:00", "domestic", "Return flight from Tokyo Haneda (HND)")]
-    ),
-  ];
-
-  const { hard } = runCodeChecks(days);
-  assert.ok(
-    hard.every((i) => i.error_code !== "SHORT_TRANSFER"),
-    "a flight departing after the first activity already started must not be treated as an arrival"
-  );
-});
-
 function longDayCodes(days: any[]) {
   const { hard, soft } = runCodeChecks(days);
   return {
@@ -406,4 +378,207 @@ test("a long middle day is left to the normal 10-hour rule, not the arrival/depa
 test("buildUserPrompt no longer sends a group size to the AI", () => {
   const prompt = buildUserPrompt({ group_size: 4 }, []);
   assert.doesNotMatch(prompt, /Group Size/i);
+});
+
+function returnFlight(departureTime: string, flightType: "domestic" | "international" = "international") {
+  return { departure_time: departureTime, arrival_time: "23:59", flight_type: flightType, title: "BKK to SYD" };
+}
+
+function returnCodes(days: any[]) {
+  return runCodeChecks(days).hard.filter((i) => i.error_code === "SHORT_DEPARTURE_BUFFER");
+}
+
+test("an activity ending less than 3 hours before an international return flight is a hard error", () => {
+  const days = [
+    day(1, [activity("Temple")], [{ ...flight("10:00", "international", "SYD to BKK"), departure_time: "06:00" }]),
+    day(2, [activity("Market", { start_time: "13:00", duration_hours: 2 })], [returnFlight("17:00")]),
+  ];
+  const errors = returnCodes(days);
+  assert.equal(errors.length, 1);
+  assert.equal(errors[0].field, "Day 2");
+  assert.match(errors[0].message, /17:00/);
+  assert.match(errors[0].message, /3 hours/);
+});
+
+test("an activity finishing with enough time before the return flight is fine", () => {
+  const days = [
+    day(1, [activity("Temple")], [{ ...flight("10:00", "international", "SYD to BKK"), departure_time: "06:00" }]),
+    day(2, [activity("Market", { start_time: "10:00", duration_hours: 2 })], [returnFlight("17:00")]),
+  ];
+  assert.equal(returnCodes(days).length, 0);
+});
+
+test("a domestic return flight needs 2 hours, not 3", () => {
+  const days = [
+    day(1, [activity("A")], [{ ...flight("10:00", "domestic", "SYD to MEL"), departure_time: "08:30" }]),
+    day(2, [activity("B", { start_time: "13:00", duration_hours: 2 })], [returnFlight("17:30", "domestic")]),
+  ];
+  assert.equal(returnCodes(days).length, 0);
+});
+
+test("a single full-day tour over 10 hours is allowed", () => {
+  const days = [day(1, [activity("Mt Fuji day tour", { start_time: "07:00", duration_hours: 12 })]), day(2, [activity("A")]), day(3, [activity("B")])];
+  const packed = runCodeChecks(days).hard.filter((i) => i.error_code === "SCHEDULE_TOO_PACKED");
+  assert.equal(packed.length, 0);
+});
+
+test("several activities adding up to more than 10 hours are still blocked", () => {
+  const days = [
+    day(1, [activity("A")]),
+    day(2, [activity("Tour", { duration_hours: 8 }), activity("Show", { start_time: "19:00", duration_hours: 3 })]),
+    day(3, [activity("B")]),
+  ];
+  const packed = runCodeChecks(days).hard.filter((i) => i.error_code === "SCHEDULE_TOO_PACKED");
+  assert.equal(packed.length, 1);
+});
+
+test("the AI is told places in the same city are never too far apart, and how to word a travel-time issue", () => {
+  // Regression: two activities both in Bangkok were flagged as too far apart to be possible.
+  const prompt = buildSystemPrompt(FALLBACK_RULES);
+  assert.match(prompt, /same city[^.]*never too far/i);
+  assert.match(prompt, /Not enough time to get from "<first activity>" to "<second activity>"/);
+});
+
+test("R12 and R10 wording only objects to genuinely short gaps or out-of-city trips", () => {
+  const r12 = FALLBACK_RULES.find((r) => r.rule_code === "R12")!.rule_description;
+  const r10 = FALLBACK_RULES.find((r) => r.rule_code === "R10")!.rule_description;
+  assert.match(r12, /Not enough time to get from/);
+  assert.match(r12, /realistic/i);
+  assert.match(r10, /Never flag activities that are all in the same city/);
+});
+
+
+const BKK_LANDING = { day_number: 1, time: "18:31", flight_type: "international", title: "SYD to BKK" };
+
+test("R2: the first activity less than 90 min after an international landing is a hard error", () => {
+  const days = [day(1, [activity("Night Market", { start_time: "20:00" })]), day(2, [activity("Temple")])];
+  const short = runCodeChecks(days, BKK_LANDING).hard.filter((i) => i.error_code === "SHORT_TRANSFER");
+  assert.equal(short.length, 1);
+  assert.match(short[0].message, /18:31/);
+  assert.match(short[0].action, /20:01/);
+});
+
+test("R2: a first activity a full buffer after landing is fine", () => {
+  const days = [day(1, [activity("Night Market", { start_time: "20:01" })]), day(2, [activity("Temple")])];
+  assert.ok(runCodeChecks(days, BKK_LANDING).hard.every((i) => i.error_code !== "SHORT_TRANSFER"));
+});
+
+test("R2: an activity starting before the flight lands is a hard error", () => {
+  const days = [day(1, [activity("Museum", { start_time: "10:00" })]), day(2, [activity("Temple")])];
+  const before = runCodeChecks(days, BKK_LANDING).hard.filter((i) => i.error_code === "ACTIVITY_BEFORE_LANDING");
+  assert.equal(before.length, 1);
+  assert.match(before[0].message, /Museum/);
+});
+
+test("R2: a domestic landing needs 60 min", () => {
+  const days = [day(1, [activity("Walk", { start_time: "11:00" })]), day(2, [activity("B")])];
+  const landing = { day_number: 1, time: "10:00", flight_type: "domestic", title: "SYD to MEL" };
+  assert.ok(runCodeChecks(days, landing).hard.every((i) => i.error_code !== "SHORT_TRANSFER"));
+});
+
+test("R22: a gap under 15 minutes between two stops is a hard error", () => {
+  const days = [day(1, [
+    activity("Grand Palace", { start_time: "09:00", duration_hours: 1 }),
+    activity("Wat Arun", { start_time: "10:05", duration_hours: 1 }),
+  ])];
+  const gap = runCodeChecks(days).hard.filter((i) => i.error_code === "SHORT_ACTIVITY_GAP");
+  assert.equal(gap.length, 1);
+  assert.match(gap[0].message, /Only 5 min to get from "Grand Palace" to "Wat Arun"/);
+});
+
+test("R22: a 15-minute gap is enough, and an overlap is left to R7", () => {
+  const ok = [day(1, [activity("A", { start_time: "09:00" }), activity("B", { start_time: "10:15" })])];
+  assert.ok(runCodeChecks(ok).hard.every((i) => i.error_code !== "SHORT_ACTIVITY_GAP"));
+  const overlap = [day(1, [activity("A", { start_time: "09:00" }), activity("B", { start_time: "09:30" })])];
+  assert.ok(runCodeChecks(overlap).hard.every((i) => i.error_code !== "SHORT_ACTIVITY_GAP"));
+});
+
+test("the AI may hard-block on R3, R4 and R12, and the prompt says so over any rule wording", () => {
+  const prompt = buildSystemPrompt(FALLBACK_RULES);
+  assert.match(prompt, /R3[^\n]*R4[^\n]*R12[^\n]*hard error/);
+  const r3 = FALLBACK_RULES.find((r) => r.rule_code === "R3")!.rule_description;
+  assert.doesNotMatch(r3, /SOFT WARNING, never a hard error/);
+});
+
+test("buildUserPrompt marks each activity as catalog or the creator's own pick", () => {
+  const days = [{
+    day_number: 1, summary: "", flights: [],
+    activities: [
+      { activity_name: "Madrid Zipline & Ropes Adventure", slot: "Morning", start_time: "09:00", category: "adventure", duration_hours: 2, address: "Calle de Fuencarral", source: "catalog" },
+      { activity_name: "My favourite churros spot", slot: "Afternoon", start_time: "15:00", category: "food", duration_hours: 1, address: "", source: "creator" },
+    ],
+  }];
+  const prompt = buildUserPrompt({}, days);
+  assert.match(prompt, /\[catalog\] Madrid Zipline/);
+  assert.match(prompt, /\[creator pick\] My favourite churros spot/);
+});
+
+test("the AI is told not to flag catalog activity details the creator can't edit", () => {
+  // Regression: catalog activities were flagged because their address was a city-centre
+  // meeting point ("Mountain Hike… city center address"), which the creator can't change.
+  const prompt = buildSystemPrompt(FALLBACK_RULES);
+  assert.match(prompt, /\[catalog\] activities/);
+  assert.match(prompt, /meeting or pick-up point/);
+  assert.match(prompt, /do not lower any score/i);
+});
+
+test("the AI is told exact-name repeats are already reported, so R14 is for differently worded ones", () => {
+  assert.match(buildSystemPrompt(FALLBACK_RULES), /exactly the same name/);
+});
+
+test("the AI rates each score against the agreed definitions, starting at 1.0 with fixed deductions", () => {
+  const prompt = buildSystemPrompt(FALLBACK_RULES);
+  assert.match(prompt, /=== SCORING ===/);
+  assert.match(prompt, /grammar_score[\s\S]*wording/);
+  assert.match(prompt, /completeness_score[\s\S]*at least one activity and a hotel[\s\S]*duration/);
+  assert.match(prompt, /feasibility_score[\s\S]*after landing[\s\S]*opening/);
+  assert.match(prompt, /subtract 0\.1/);
+});
+
+test("a catalog activity's description is the creator's editable notes, so the AI still judges it", () => {
+  // Catalog cards let the creator edit only the start time and Notes — and Notes is
+  // what's sent as the description.
+  const prompt = buildSystemPrompt(FALLBACK_RULES);
+  assert.match(prompt, /cannot edit their name, address or duration/);
+  assert.match(prompt, /description[^.]*creator's own editable notes/);
+  assert.match(prompt, /every activity's\s+description, including \[catalog\] ones/);
+});
+
+test("the output format tells the AI that field must start with the day number", () => {
+  const prompt = buildSystemPrompt(FALLBACK_RULES);
+  assert.doesNotMatch(prompt, /<day\/slot reference>/);
+  assert.match(prompt, /"field": "Day <number>/);
+});
+
+test("the AI is told Daily Range only applies to days with two or more activities", () => {
+  assert.match(buildSystemPrompt(FALLBACK_RULES), /R10[^\n]*two or more activities/);
+});
+
+test("the AI is told opening hours cover starting before a venue opens, not only running past closing", () => {
+  // Regression: a museum pass at 06:00 wasn't flagged — the live R3 wording only
+  // talked about venues that close early.
+  const prompt = buildSystemPrompt(FALLBACK_RULES);
+  assert.match(prompt, /R3[^\n]*before the venue usually opens/);
+});
+
+test("buildUserPrompt gives each activity its end time and the real gap to the next one", () => {
+  // Regression: the AI worked out the gap itself and got 30 min for a 90-minute gap.
+  const days = [{
+    day_number: 5, summary: "", flights: [],
+    activities: [
+      { activity_name: "Cooking Class", slot: "Afternoon", start_time: "13:00", category: "food", duration_hours: 3.5, address: "Old Town", source: "catalog" },
+      { activity_name: "Evening Walking Tour", slot: "Evening", start_time: "18:00", category: "culture", duration_hours: 2.8, address: "Old Town", source: "catalog" },
+    ],
+  }];
+  const prompt = buildUserPrompt({}, days);
+  assert.match(prompt, /Cooking Class[^\n]*ends 16:30[^\n]*90 min until the next activity/);
+  assert.match(prompt, /Evening Walking Tour[^\n]*ends 20:48/);
+});
+
+test("the AI is told scoring sets only the three numbers, never extra issues", () => {
+  assert.match(buildSystemPrompt(FALLBACK_RULES), /SCORING only sets the three scores/);
+});
+
+test("the AI is told to report opening hours only when the time is clearly outside them", () => {
+  assert.match(buildSystemPrompt(FALLBACK_RULES), /R3[\s\S]*only when the scheduled time is clearly outside/);
 });
