@@ -1,19 +1,23 @@
+import { createHash } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "../../../../lib/supabase/client";
 import {
+  ACTIVITY_GAP_MIN,
   FALLBACK_RULES,
   FeasibilityRule,
   buildSystemPrompt,
   buildUserPrompt,
   checkPackagePhotos,
+  isValidClockTime,
   runCodeChecks,
+  toMinutes,
 } from "../../../../lib/feasibility";
 
 const GEMINI_KEY = process.env.GEMINI_API_KEY!;
 const MODEL_NAME = process.env.MODEL_NAME || "gemini-2.5-flash";
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent?key=${GEMINI_KEY}`;
 
-// ─── Feasibility rules (R2, R3, R4, R6, R10, R11, R12) ────────────────────
+// ─── AI rules (R3, R4, R6, R10, R11, R12, R14, R15) ─────────────────────────
 // Contextual rules that require real-world knowledge are sent to the AI. Rule
 // wording lives in the `feasibility_rules` table so it can be edited without a
 // deploy; falls back to FALLBACK_RULES if the table is empty or unreachable.
@@ -41,6 +45,47 @@ async function fetchActiveRules(): Promise<FeasibilityRule[]> {
 export function keepKnownRules(rows: FeasibilityRule[]): FeasibilityRule[] {
   const known = new Set(FALLBACK_RULES.map((r) => r.rule_code));
   return rows.filter((r) => known.has(r.rule_code));
+}
+
+// ─── AI result consistency ─────────────────────────────────────────────────────
+// Gemini isn't fully deterministic even at temperature 0, so the same package could
+// score 80 on one check and 64 on the next. A successful AI result is cached by the
+// exact prompt it answered: re-checking unchanged content returns the same result,
+// and any edit (or a rule/model change) asks again. Per server instance, in memory.
+
+const AI_CACHE_MAX = 500;
+const aiResultCache = new Map<string, unknown>();
+
+export function aiCacheKey(model: string, systemPrompt: string, userPrompt: string): string {
+  return createHash("sha256").update(`${model}\n${systemPrompt}\n${userPrompt}`).digest("hex");
+}
+
+export function getCachedAiResult(key: string): any | undefined {
+  const hit = aiResultCache.get(key);
+  return hit === undefined ? undefined : structuredClone(hit);
+}
+
+export function putCachedAiResult(key: string, result: unknown): void {
+  aiResultCache.delete(key);
+  aiResultCache.set(key, structuredClone(result));
+  // Map keeps insertion order — drop the oldest entries past the cap.
+  while (aiResultCache.size > AI_CACHE_MAX) aiResultCache.delete(aiResultCache.keys().next().value!);
+}
+
+/**
+ * temperature 0 + fixed seed + topK 1 for the most repeatable answers. Gemini 2.5
+ * Flash's thinking is capped at a small fixed budget: with none, it stopped catching
+ * things like a museum booked at 06:00; unlimited, its answers varied run to run.
+ * Only set on 2.5 Flash models, so switching MODEL_NAME can't break the request.
+ */
+export function geminiGenerationConfig(model: string) {
+  return {
+    responseMimeType: "application/json",
+    temperature: 0,
+    seed: 42,
+    topK: 1,
+    ...(model.startsWith("gemini-2.5-flash") ? { thinkingConfig: { thinkingBudget: 1024 } } : {}),
+  };
 }
 
 // ─── Hard text-based block filters ────────────────────────────────────────────
@@ -146,25 +191,199 @@ export function isTransferTimeIssue(issue: any): boolean {
 }
 
 /**
- * R12 is the only contextual rule the system prompt allows to hard-block (a genuinely
- * impossible activity-to-activity transfer, which the creator CAN fix by moving
- * something). Every other AI hard_error is a judgment call about content the creator
- * often can't act on (e.g. flight data is read-only, catalog-selected) — this splits
+ * R3, R4 and R12 are the contextual rules allowed to hard-block (opening hours, day
+ * closures, travel time between activities — all fixable by moving something). Every
+ * other AI hard_error is a judgment call about content the creator often can't act
+ * on (e.g. flight data is read-only, catalog-selected) — this splits
  * the AI's hard_errors into ones that are allowed through as-is and ones that get
  * demoted to a warning, independent of whether the model actually followed that
  * instruction in the prompt.
  */
-export function partitionAiHardErrors(issues: any[]): { allowed: any[]; downgraded: any[] } {
+/**
+ * R13 (code) already reports activities with exactly the same name. Drop an AI R14
+ * issue that only names those activities, so the same repeat isn't shown twice; an
+ * R14 issue that also names a differently worded activity is a real near-duplicate
+ * and stays.
+ */
+export function dropRepeatedDuplicates(aiIssues: any[], codeSoft: any[], days: any[]): any[] {
+  const repeated = new Set(
+    codeSoft.filter((i) => i.error_code === "DUPLICATE_ACTIVITY").map((i) => String(i.affected_item).toLowerCase()),
+  );
+  if (repeated.size === 0) return aiIssues;
+  const names = [...new Set(days.flatMap((d: any) => (d.activities || []).map((a: any) => String(a.activity_name || "").toLowerCase())))]
+    .filter(Boolean)
+    // Longest first, so "X — Premium Edition" is matched before plain "X".
+    .sort((a, b) => b.length - a.length);
+  return aiIssues.filter((issue) => {
+    if (!String(issue?.rule ?? "").startsWith("R14")) return true;
+    let text = `${issue.affected_item ?? ""} ${issue.field_value ?? ""} ${issue.message ?? ""}`.toLowerCase();
+    const mentioned: string[] = [];
+    for (const name of names) {
+      if (text.includes(name)) {
+        mentioned.push(name);
+        text = text.split(name).join(" ");
+      }
+    }
+    return !(mentioned.length > 0 && mentioned.every((name) => repeated.has(name)));
+  });
+}
+
+/**
+ * The editor's Go to Day button needs `field` to start with "Day N". The AI sometimes
+ * writes something else there (once, the prompt's own placeholder text), so fall back
+ * to the first "Day N" anywhere in the issue, then to the day containing an activity
+ * it names.
+ */
+export function withDayField(issue: any, days: any[]): any {
+  if (/^Day \d+/.test(String(issue?.field ?? ""))) return issue;
+  const text = `${issue?.field_value ?? ""} ${issue?.affected_item ?? ""} ${issue?.message ?? ""}`;
+  const mentioned = text.match(/\bDay (\d+)/);
+  if (mentioned) return { ...issue, field: `Day ${mentioned[1]}` };
+  for (const name of String(issue?.affected_item ?? "").split(/[;,]/)) {
+    const day = findDayContainingText(days, name);
+    if (day !== null) return { ...issue, field: `Day ${day}` };
+  }
+  return issue;
+}
+
+/**
+ * R10 (Daily Range) is about combining a far excursion with other activities, so it
+ * can't apply to a day with a single activity — drop it there, whatever the AI says.
+ * Runs after withDayField, so `field` names the day.
+ */
+export function dropSingleActivityDailyRange(issues: any[], days: any[]): any[] {
+  return issues.filter((issue) => {
+    if (!String(issue?.rule ?? "").startsWith("R10")) return true;
+    const dayNumber = Number(String(issue.field ?? "").match(/^Day (\d+)/)?.[1]);
+    const day = days.find((d: any) => d.day_number === dayNumber);
+    return !day || (day.activities || []).length >= 2;
+  });
+}
+
+type Verdict = "block" | "drop" | "warn";
+
+/** Splits AI issues by a code verdict: confirmed → block, disproved → dropped, can't tell → warning. */
+function splitByVerdict(issues: any[], verdict: (issue: any) => Verdict): { blocks: any[]; warnings: any[] } {
+  const blocks: any[] = [];
+  const warnings: any[] = [];
+  for (const issue of issues) {
+    const v = verdict(issue);
+    if (v === "block") blocks.push(issue);
+    else if (v === "warn") warnings.push({ ...issue, severity: "warning" });
+  }
+  return { blocks, warnings };
+}
+
+/**
+ * R12 can hard-block, so its claim is checked in code: find the two activities it
+ * names on one day and the real gap between them. Under ACTIVITY_GAP_MIN, R22 already
+ * blocks it (dropped); at least the AI's own estimate ("about N min", or the top of a
+ * range), it's false (dropped); shorter, it's confirmed (block). If the pair or the
+ * estimate can't be read, it can't be confirmed (warning).
+ */
+export function verifyTransferGaps(issues: any[], days: any[]): { blocks: any[]; warnings: any[] } {
+  return splitByVerdict(issues, (issue): Verdict => {
+    const text = `${issue.affected_item ?? ""} ${issue.message ?? ""}`.toLowerCase();
+    const range = String(issue.message ?? "").match(/about (\d+)(?:\s*[-–]\s*(\d+))?\s*min/i);
+    const estimate = range ? Number(range[2] ?? range[1]) : NaN;
+    for (const day of days) {
+      const acts = (day.activities || [])
+        .filter((a: any) => a.activity_name && isValidClockTime(a.start_time))
+        .map((a: any) => ({ name: String(a.activity_name).toLowerCase(), start: toMinutes(a.start_time), end: toMinutes(a.start_time) + (Number(a.duration_hours) || 1) * 60 }))
+        .sort((a: any, b: any) => a.start - b.start);
+      for (let k = 1; k < acts.length; k += 1) {
+        if (text.includes(acts[k - 1].name) && text.includes(acts[k].name)) {
+          const gap = acts[k].start - acts[k - 1].end;
+          if (gap < ACTIVITY_GAP_MIN) return "drop";
+          if (Number.isNaN(estimate)) return "warn";
+          return gap < estimate ? "block" : "drop";
+        }
+      }
+    }
+    return "warn";
+  });
+}
+
+/**
+ * Only issues under a real AI rule (the FALLBACK_RULES codes) reach the editor. The
+ * AI has invented rules before — e.g. "Completeness Score" warnings repeating what
+ * R9 already reported — and those are dropped.
+ */
+export function keepRealAiRules(issues: any[]): any[] {
+  const codes = FALLBACK_RULES.map((r) => r.rule_code);
+  return issues.filter((issue) => {
+    const rule = String(issue?.rule ?? "");
+    return codes.some((code) => rule === code || rule.startsWith(`${code} `));
+  });
+}
+
+/**
+ * R3 can hard-block, so its claim is checked against the hours the AI itself quotes
+ * ("open around 09:00-10:00 … close by 17:00-18:00", most generous reading of each
+ * range): the named activity outside them is confirmed (block); inside them it's only
+ * a hedge like "might be rushed" (dropped). With no activity or no hours to check —
+ * "unusually early", say — it can't be confirmed (warning).
+ */
+export function verifyOpeningHours(issues: any[], days: any[]): { blocks: any[]; warnings: any[] } {
+  const acts = days.flatMap((d: any) => (d.activities || []))
+    .filter((a: any) => a.activity_name && isValidClockTime(a.start_time))
+    .sort((a: any, b: any) => String(b.activity_name).length - String(a.activity_name).length);
+  const times = (m: RegExpMatchArray | null) => (m ? [m[1], m[2] ?? m[1]].map(toMinutes) : null);
+  return splitByVerdict(issues, (issue): Verdict => {
+    const message = String(issue.message ?? "");
+    const act = acts.find((a: any) => `${issue.affected_item ?? ""} ${message}`.toLowerCase().includes(String(a.activity_name).toLowerCase()));
+    const open = times(message.match(/open\w*[^.]*?(\d{1,2}:\d{2})(?:\s*[-–]\s*(\d{1,2}:\d{2}))?/i));
+    const close = times(message.match(/clos\w*[^.]*?(\d{1,2}:\d{2})(?:\s*[-–]\s*(\d{1,2}:\d{2}))?/i));
+    if (!act || (!open && !close)) return "warn";
+    const start = toMinutes(act.start_time);
+    const end = start + (Number(act.duration_hours) || 1) * 60;
+    const fits = (!open || start >= open[0]) && (!close || end <= close[1]);
+    return fits ? "drop" : "block";
+  });
+}
+
+// Agreed hard blocks among the AI rules: opening hours, day closures and travel
+// time between activities. Every other AI rule is demoted to a warning.
+const AI_HARD_RULES = ["R3", "R4", "R12"];
+
+export function partitionAiHardErrors(hardErrors: any[], softWarnings: any[] = []): { allowed: any[]; downgraded: any[] } {
+  const isHardRule = (issue: any) =>
+    typeof issue?.rule === "string" && AI_HARD_RULES.some((code) => issue.rule.startsWith(`${code} `) || issue.rule === code);
   const allowed: any[] = [];
   const downgraded: any[] = [];
-  for (const issue of issues) {
-    if (typeof issue?.rule === "string" && issue.rule.startsWith("R12")) {
-      allowed.push(issue);
-    } else {
-      downgraded.push({ ...issue, severity: "warning" });
-    }
+  // An agreed hard rule blocks whichever list the AI filed it in.
+  for (const issue of [...hardErrors, ...softWarnings]) {
+    if (isHardRule(issue)) allowed.push({ ...issue, severity: "error" });
+    else downgraded.push({ ...issue, severity: "warning" });
   }
   return { allowed, downgraded };
+}
+
+/**
+ * The AI sometimes reports one similar pair twice, once from each side ("A is like B",
+ * then "B is like A"). Keep the first R14 issue for each set of activities it names.
+ */
+export function dedupeSimilarPairs(issues: any[], days: any[]): any[] {
+  const names = [...new Set(days.flatMap((d: any) => (d.activities || []).map((a: any) => String(a.activity_name || "").toLowerCase())))]
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length);
+  const seen = new Set<string>();
+  return issues.filter((issue) => {
+    if (!String(issue?.rule ?? "").startsWith("R14")) return true;
+    let text = `${issue.affected_item ?? ""} ${issue.field_value ?? ""} ${issue.message ?? ""}`.toLowerCase();
+    const mentioned: string[] = [];
+    for (const name of names) {
+      if (text.includes(name)) {
+        mentioned.push(name);
+        text = text.split(name).join(" ");
+      }
+    }
+    if (mentioned.length < 2) return true;
+    const key = mentioned.sort().join("|");
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 /**
@@ -384,17 +603,13 @@ export async function POST(req: NextRequest) {
       };
     }
 
-    // 2. Code-based deterministic checks (R1, R2, R5, R7, R9, R13, R16, R17) — always consistent
-    const codeResults = runCodeChecks(days);
+    // 2. Code-based deterministic checks (see runCodeChecks) — always consistent
+    const codeResults = runCodeChecks(days, pkg.arrival_landing);
     const photosError = checkPackagePhotos(pkg); // R18 — package-level, not per-day
 
-    //console.log("\n========== [AI VALIDATE] CODE CHECK RESULTS ==========");
-    //console.log("Hard errors:", JSON.stringify(codeResults.hard, null, 2));
-    //console.log("Soft warnings:", JSON.stringify(codeResults.soft, null, 2));
-    //console.log("======================================================\n");
 
     // 3. AI contextual checks (R3, R4, R6, R10, R11, R12, R14, R15)
-    //    temperature: 0 + fixed seed for maximum consistency across repeated calls
+    //    see geminiGenerationConfig and the AI result cache for consistency
     let aiResult: any = { hard_errors: [], soft_warnings: [], scores: {}, summary: "" };
     // The deterministic checks above still gate when the AI can't run, but that must
     // show up as a warning rather than a silently thinner check.
@@ -408,24 +623,27 @@ export async function POST(req: NextRequest) {
     console.log(userPrompt);
     console.log("=========================================================\n");
 
-    const res = await fetch(GEMINI_URL, {
+    // The model settings are part of the key, so changing them can't serve old answers.
+    const cacheKey = aiCacheKey(`${MODEL_NAME} ${JSON.stringify(geminiGenerationConfig(MODEL_NAME))}`, systemPrompt, userPrompt);
+    const cached = getCachedAiResult(cacheKey);
+    const res = cached ? null : await fetch(GEMINI_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         system_instruction: { parts: [{ text: systemPrompt }] },
         contents: [{ parts: [{ text: userPrompt }] }],
-        generationConfig: {
-          responseMimeType: "application/json",
-          temperature: 0,
-          seed: 42,
-        },
+        generationConfig: geminiGenerationConfig(MODEL_NAME),
       }),
     }).catch((err) => {
       console.warn("Gemini API unreachable — AI checks skipped:", err?.message);
       return null;
     });
 
-    if (!res) {
+    if (cached) {
+      aiResult = cached;
+      aiAvailable = true;
+      console.log("[AI VALIDATE] Unchanged content — reusing the cached AI result.");
+    } else if (!res) {
       // Already logged above.
     } else if (!res.ok) {
       console.warn(`Gemini API returned ${res.status}. Skipping AI contextual checks.`);
@@ -435,6 +653,7 @@ export async function POST(req: NextRequest) {
         const raw = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
         aiResult = JSON.parse(raw.replace(/```json|```/g, "").trim());
         aiAvailable = true;
+        putCachedAiResult(cacheKey, aiResult);
         console.log("\n========== [AI VALIDATE] GEMINI RESPONSE ==========");
         console.log(JSON.stringify(aiResult, null, 2));
         console.log("===================================================\n");
@@ -472,8 +691,20 @@ export async function POST(req: NextRequest) {
     //    not a hard guarantee the model always follows, so entries matching it are
     //    dropped here as well rather than relying on prompt wording alone.
     //    See isTransferTimeIssue/partitionAiHardErrors for why each filter exists.
-    const aiHardErrors: any[] = (aiResult.hard_errors || []).filter((issue: any) => !isTransferTimeIssue(issue));
-    const { allowed: allowedAiHardErrors, downgraded: downgradedAiHardErrors } = partitionAiHardErrors(aiHardErrors);
+    const cleanAi = (list: any[] | undefined) => keepRealAiRules(list || [])
+      .filter((issue: any) => !isTransferTimeIssue(issue))
+      .map((issue: any) => withDayField(issue, days));
+    const { allowed: aiBlockCandidates, downgraded: aiSoftWarnings } =
+      partitionAiHardErrors(cleanAi(aiResult.hard_errors), cleanAi(aiResult.soft_warnings));
+    // R3 and R12 only block once code confirms them (see verifyOpeningHours/verifyTransferGaps).
+    const r3 = verifyOpeningHours(aiBlockCandidates.filter((i: any) => i.rule.startsWith("R3")), days);
+    const r12 = verifyTransferGaps(aiBlockCandidates.filter((i: any) => i.rule.startsWith("R12")), days);
+    const allowedAiHardErrors = [
+      ...aiBlockCandidates.filter((i: any) => !i.rule.startsWith("R3") && !i.rule.startsWith("R12")),
+      ...r3.blocks,
+      ...r12.blocks,
+    ];
+    const aiWarnings = [...aiSoftWarnings, ...r3.warnings, ...r12.warnings];
     const mergedHardErrors = [
       ...codeResults.hard,
       ...(photosError ? [photosError] : []),
@@ -485,10 +716,13 @@ export async function POST(req: NextRequest) {
     const mergedSoftWarnings = [
       ...codeResults.soft,
       ...wordingWarnings,
-      ...dropIllegalActDuplicates([
-        ...downgradedAiHardErrors,
-        ...(aiResult.soft_warnings || []).filter((issue: any) => !isTransferTimeIssue(issue)),
-      ], illegalActError),
+      ...dedupeSimilarPairs(
+        dropSingleActivityDailyRange(
+          dropRepeatedDuplicates(dropIllegalActDuplicates(aiWarnings, illegalActError), codeResults.soft, days),
+          days,
+        ),
+        days,
+      ),
       ...(aiAvailable ? [] : [AI_UNAVAILABLE_WARNING]),
     ];
 
