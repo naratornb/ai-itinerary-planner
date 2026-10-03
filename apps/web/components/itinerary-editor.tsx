@@ -8,6 +8,7 @@ import RouteMap, { type RouteStop } from "./route-map";
 import { createCopilotClient } from "../lib/copilot-client";
 import {
   appendItemToDay,
+  arrivalLanding,
   buildPackageUpdate,
   buildDaysFromPackage,
   computePackagePrice,
@@ -40,6 +41,7 @@ import {
 import { itinerarySnapshotStorageKey, parseWizardVibesDraft, wizardVibesStorageKey } from "../lib/review-draft";
 import { APP_ROUTES } from "../lib/routes";
 import { iataOf } from "../lib/ai/itinerary";
+import { ACTIVITY_GAP_MIN, minutesToTime, TRANSFER_BUFFER_MIN } from "../lib/feasibility";
 import { supabase } from "../lib/supabase/client";
 import Icon from "./icon";
 
@@ -75,8 +77,6 @@ function timeToSlot(time: string): string {
   return "Evening";
 }
 
-// Transfer-gap check threshold used by annotateItems.
-const MIN_TRANSFER_GAP_MIN = 15; // minutes — minimum breathing room between consecutive items
 
 // Major Australian commercial airports — used by deriveFlightType to tell domestic
 // from international per flight leg, not just per package.
@@ -366,15 +366,46 @@ function detectGibberish(text: string): boolean {
 /**
  * Annotates each item with problem / problemDetail / status based on (priority order):
  *  1. OVERLAP       : this item starts before the previous item ends
- *  2. SHORT_TRANSFER: gap to the next item is > 0 but < MIN_TRANSFER_GAP_MIN
+ *  2. SHORT_TRANSFER: gap to the next item is > 0 but < ACTIVITY_GAP_MIN (same as R22)
  *  3. GIBBERISH     : item notes contain random/unreadable characters
+ * Before all of these, on the arrival flight's landing day (`landing`, see
+ * arrivalLanding): an activity starting before the landing time is flagged (the
+ * traveller isn't there yet), and so is the first activity starting less than
+ * `landing.bufferMin` after it (clearing the airport and getting there).
  * All other items are marked "pass" with no problem.
- * (Unusually-long-duration is intentionally NOT flagged per-item here — it's already
- * surfaced as a soft warning by the feasibility check (R5c), and some activities come
- * from the catalog with a fixed duration the creator can't edit anyway.)
+ * (Unusually-long-duration is intentionally NOT flagged — catalog activities come
+ * with a fixed duration the creator can't edit anyway.)
  */
-export function annotateItems(raw: TimelineItem[]): TimelineItem[] {
+export function annotateItems(
+  raw: TimelineItem[],
+  landing?: { time: string; bufferMin: number; international: boolean },
+): TimelineItem[] {
+  const isTimedStop = (item: TimelineItem) =>
+    item.type !== "FLIGHT" && item.type !== "HOTEL" && REAL_TIME_PATTERN.test(item.time);
+  const landingMin = landing ? toMinutes(landing.time) : 0;
+  const firstAfterLanding = landing
+    ? raw.filter((item) => isTimedStop(item) && toMinutes(item.time) >= landingMin)
+        .sort((a, b) => toMinutes(a.time) - toMinutes(b.time))[0]
+    : undefined;
+
   return raw.map((item, i) => {
+    if (landing && isTimedStop(item) && toMinutes(item.time) < landingMin) {
+      return {
+        ...item,
+        status: "critical" as const,
+        problem: "Starts before your flight lands",
+        problemDetail: `Your flight lands at ${landing.time}. Move this to after you arrive.`,
+      };
+    }
+    if (landing && item === firstAfterLanding && toMinutes(item.time) < landingMin + landing.bufferMin) {
+      return {
+        ...item,
+        status: "critical" as const,
+        problem: "Too soon after landing",
+        problemDetail: `Your flight lands at ${landing.time}. ${landing.international ? "International" : "Domestic"} arrivals need at least ${landing.bufferMin} min to clear the airport and get here, so start this at ${minutesToTime(landingMin + landing.bufferMin)} or later.`,
+      };
+    }
+
     const durationMin = Number(item.duration ?? 60);
     // A flight's `time` is its arrival — it has already "ended" the moment it lands.
     // `duration` on a flight is travel time, not time occupied after landing, so
@@ -397,12 +428,12 @@ export function annotateItems(raw: TimelineItem[]): TimelineItem[] {
         };
       }
 
-      if (gapMin < MIN_TRANSFER_GAP_MIN) {
+      if (gapMin < ACTIVITY_GAP_MIN) {
         return {
           ...item,
           status: "critical" as const,
-          problem: "Transfer gap is too short",
-          problemDetail: `${gapMin} min to reach "${next.title}" · ${MIN_TRANSFER_GAP_MIN} min minimum`,
+          problem: "Not enough travel time",
+          problemDetail: `Only ${gapMin} min to get from "${item.title}" to "${next.title}". Leave at least ${ACTIVITY_GAP_MIN} min to travel between them.`,
         };
       }
     }
@@ -901,7 +932,16 @@ export default function ItineraryEditor({
   };
   // Feasibility annotation is a pure function of the day's items, so it's
   // derived here once instead of being re-applied inside every handler.
-  const items = useMemo(() => annotateItems(activeDayData?.items ?? []), [activeDayData]);
+  const landing = useMemo(() => {
+    const arrival = arrivalLanding(days);
+    if (!arrival) return null;
+    const international = deriveFlightType(arrival.flight.originIata, arrival.flight.destinationIata, pkg.destination_country) === "international";
+    return { ...arrival, international, bufferMin: TRANSFER_BUFFER_MIN[international ? "international" : "domestic"] };
+  }, [days, pkg.destination_country]);
+  const items = useMemo(
+    () => annotateItems(activeDayData?.items ?? [], landing?.dayIndex === activeDay ? landing : undefined),
+    [activeDayData, activeDay, landing],
+  );
   const story = activeDayData?.story ?? "";
   const photos = activeDayData?.photos ?? [];
   // Activities carry a plain city name in `address` (buildDaysFromPackage);
@@ -1011,7 +1051,11 @@ export default function ItineraryEditor({
       trip_name: packageTitle,
       city: pkg.destination_city,
       country: pkg.destination_country,
-      // group_size has no editor UI yet — omit rather than send a fake number.
+      // No group_size: there's no editor input for it and no rule uses it (R8 removed).
+      // Where the arrival flight lands (overnight flights land the next day) — R2.
+      arrival_landing: landing
+        ? { day_number: landing.dayIndex + 1, time: landing.time, flight_type: landing.international ? "international" : "domestic", title: landing.flight.title }
+        : null,
       travel_season: travelSeason,
       total_days: days.length,
       hotel_name: hotelName,
@@ -1039,7 +1083,10 @@ export default function ItineraryEditor({
           flights: day.items
             .filter((item) => item.type === "FLIGHT")
             .map((item) => ({
-              arrival_time: item.time,
+              // `time` is the departure on relative flights, so send the real
+              // landing and take-off times (R2 after landing, R21 before departure).
+              arrival_time: item.arrivalTime ?? item.time,
+              departure_time: item.departureTime,
               flight_type: deriveFlightType(item.originIata, item.destinationIata, pkg.destination_country),
               title: item.title,
             })),
@@ -1051,10 +1098,12 @@ export default function ItineraryEditor({
               slot: timeToSlot(item.time),
               category: item.category ?? item.type ?? "Activity",
               duration_hours: Number(item.duration ?? 60) / 60,
-              suitable_for: "Couple",
               address: item.address ?? "",
               description: item.notes ?? "",
               price: item.price, // used by R16 — "$0" is valid (free), only a blank field fails
+              // Catalog activities can't be edited by the creator — the AI is told not
+              // to flag their name/address/duration (see buildSystemPrompt).
+              source: item.type === "CREATOR PICK" ? "creator" : "catalog",
             })),
         }))
       ),
@@ -1080,9 +1129,12 @@ export default function ItineraryEditor({
         // eslint-disable-next-line react-hooks/purity
         setLastCheckedAt(Date.now());
         setResultStale(false);
+      } else {
+        showNotice("Check failed, please try again.");
       }
     } catch (err) {
       console.error("Failed to run feasibility check:", err);
+      showNotice("Check failed, please try again.");
     } finally {
       setFeasLoading(false);
     }
@@ -1890,19 +1942,17 @@ export default function ItineraryEditor({
   );
   const scorePassing = Boolean(feasResult) && !resultStale && (displayScore ?? 0) >= 70;
 
-  // "Daily schedule has a clear start and end" has no backing rule yet (nothing in
-  // the feasibility check currently validates it), so it's shown whenever a check has
-  // run at all. Every other line below IS backed by a real hard-error rule — each only
+  // Each line is backed by a real hard-error rule — it only
   // counts as passed when its matching error isn't present in this result, so a
   // creator can see exactly which of their own past fixes is still holding and get an
   // early flag the moment an edit accidentally breaks one of them again.
   const passedChecklist = [
-    { label: "Daily schedule has a clear start and end", passed: true },
     { label: "All stops have pricing", passed: hardErrors.every((e) => e.error_code !== "MISSING_PRICE") },
     { label: "Accommodation is included", passed: hardErrors.every((e) => e.error_code !== "MISSING_ACCOMMODATION") },
     { label: "Every day has at least one activity", passed: hardErrors.every((e) => e.error_code !== "EMPTY_DAY") },
-    { label: "Flights have enough transfer time after landing", passed: hardErrors.every((e) => e.error_code !== "SHORT_TRANSFER") },
+    { label: "Flights have enough transfer time after landing", passed: hardErrors.every((e) => e.error_code !== "SHORT_TRANSFER" && e.error_code !== "ACTIVITY_BEFORE_LANDING") },
     { label: "No scheduling conflicts between activities", passed: hardErrors.every((e) => e.error_code !== "TIME_OVERLAP") },
+    { label: "Enough travel time between stops", passed: hardErrors.every((e) => e.error_code !== "SHORT_ACTIVITY_GAP") },
     { label: "Daily schedule leaves room for travel between stops", passed: hardErrors.every((e) => e.error_code !== "SCHEDULE_TOO_PACKED") },
     { label: "Package has at least one photo", passed: hardErrors.every((e) => e.error_code !== "MISSING_PHOTOS") },
     { label: "No banned competitor mentions", passed: hardErrors.every((e) => e.rule !== "BrandSafety") },
