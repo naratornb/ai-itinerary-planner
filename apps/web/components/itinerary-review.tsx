@@ -29,6 +29,7 @@ import {
   wizardVibesStorageKey,
   type ReviewDraft,
 } from "../lib/review-draft";
+import { vibeLabelsFromTags } from "../lib/vibes";
 import { supabase } from "../lib/supabase/client";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -63,6 +64,9 @@ export default function ItineraryReview({
       ? null
       : parseWizardVibesDraft(window.sessionStorage.getItem(wizardVibesStorageKey(pkg.package_id)))
   ));
+  // The session draft only exists right after the wizard ran; on later visits
+  // the persisted tags carry the same vibe picks (see lib/vibes.ts).
+  const vibeLabels = vibesDraft?.vibes.length ? vibesDraft.vibes : vibeLabelsFromTags(pkg.tags);
   const [reviewDraft, setReviewDraft] = useState<ReviewDraft>(() => {
     // A stored draft means the user already started editing this session —
     // resume it exactly, even if they cleared the description to empty.
@@ -175,7 +179,7 @@ export default function ItineraryReview({
           selectedHotel: pkg.hotels[0]?.hotel_name ?? "",
           totalDays: days.length,
           items: activityNames,
-          vibe: vibesDraft?.vibes.join(", ") ?? "",
+          vibe: vibeLabels.join(", "),
         }),
       });
       const data = (await response.json()) as { listing?: string; error?: string };
@@ -278,7 +282,7 @@ export default function ItineraryReview({
           <dl className="stat-grid review-panel-body">
             <div><dt>Destination</dt><dd>{destination}</dd></div>
             <div><dt>Duration</dt><dd>{days.length} Day{days.length === 1 ? "" : "s"} / {nights} Night{nights === 1 ? "" : "s"}</dd></div>
-            <div><dt>Vibes</dt><dd>{vibesDraft?.vibes.length ? vibesDraft.vibes.join(", ") : "Not set"}</dd></div>
+            <div><dt>Vibes</dt><dd>{vibeLabels.length ? vibeLabels.join(", ") : "Not set"}</dd></div>
             <div><dt>Season</dt><dd>{vibesDraft?.season ? capitalize(vibesDraft.season) : "Not set"}</dd></div>
             <div><dt>Flights</dt><dd>{componentCounts.flightCount}</dd></div>
             <div><dt>Hotels</dt><dd>{componentCounts.hotelCount}</dd></div>
