@@ -51,6 +51,16 @@ export function minutesToTime(total: number): string {
   return `${hh}:${mm}`;
 }
 
+/** A real, schedulable "HH:MM" clock time — rejects missing values, "NaN:NaN", and out-of-range hours/minutes. */
+export function isValidClockTime(time: unknown): boolean {
+  if (typeof time !== "string") return false;
+  const match = /^(\d{1,2}):(\d{2})$/.exec(time);
+  if (!match) return false;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  return hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59;
+}
+
 export function runCodeChecks(days: any[]): { hard: CodeIssue[]; soft: CodeIssue[] } {
   const hard: CodeIssue[] = [];
   const soft: CodeIssue[] = [];
@@ -59,6 +69,24 @@ export function runCodeChecks(days: any[]): { hard: CodeIssue[]; soft: CodeIssue
     const acts: any[] = day.activities || [];
     const flights: any[] = day.flights || [];
     const dayLabel = `Day ${day.day_number}`;
+
+    // ── R19 – Schedule Validity: a corrupted/missing start_time (e.g. "NaN:NaN")
+    //     can't be scheduled at all, so this is always a hard error, never a
+    //     judgment call left to the AI check.
+    for (const act of acts) {
+      if (!isValidClockTime(act.start_time)) {
+        hard.push({
+          error_code: "INVALID_START_TIME",
+          rule: "R19 – Schedule Validity",
+          severity: "error",
+          field: `${dayLabel} – ${act.slot || ""}`,
+          field_value: String(act.start_time ?? "missing"),
+          affected_item: act.activity_name,
+          message: `"${act.activity_name}" has an invalid start time (${act.start_time || "missing"}), making it unschedulable.`,
+          action: `Set a valid start time for "${act.activity_name}".`,
+        });
+      }
+    }
 
     // ── R2 – Airport Landing Transfer Buffer: fixed minutes by flight type
     //     (no AI airport lookup — same buffer every time, for consistency).
@@ -96,16 +124,29 @@ export function runCodeChecks(days: any[]): { hard: CodeIssue[]; soft: CodeIssue
     }
 
     if (acts.length === 0) {
-      hard.push({
+      // Arrival/departure days are commonly all-travel with no scheduled activity —
+      // day_number is re-numbered 1..N on every add/delete (see removeDay()), so
+      // this stays correct as the trip's first/last day shifts.
+      const isFirstOrLastDay = day.day_number === 1 || day.day_number === days.length;
+      const issue: CodeIssue = {
         error_code: "EMPTY_DAY",
         rule: "R9 – Completeness",
-        severity: "error",
+        severity: isFirstOrLastDay ? "warning" : "error",
         field: dayLabel,
         field_value: "0 activities",
         affected_item: dayLabel,
-        message: `${dayLabel} has no activities scheduled. Every day must have at least one activity.`,
-        action: `Add at least one activity to ${dayLabel}.`,
-      });
+        message: isFirstOrLastDay
+          ? `${dayLabel} has no activities scheduled. As this is an arrival or departure day, please confirm this is intentional.`
+          : `${dayLabel} has no activities scheduled. Please add at least one activity.`,
+        action: isFirstOrLastDay
+          ? `If ${dayLabel} involves more than arrival/departure travel, please add an activity.`
+          : `Add at least one activity to ${dayLabel}.`,
+      };
+      if (isFirstOrLastDay) {
+        soft.push(issue);
+      } else {
+        hard.push(issue);
+      }
     }
 
     // ── R17 – Accommodation: per day, not package-wide — so a creator can jump
@@ -166,10 +207,12 @@ export function runCodeChecks(days: any[]): { hard: CodeIssue[]; soft: CodeIssue
       }
     }
 
-    // 5c. Per-activity: flag unusually long single activities (> ${LONG_ACTIVITY_HOURS} hrs)
+    // 5c. Per-activity: flag unusually long single activities (> ${LONG_ACTIVITY_HOURS} hrs).
+    //     Skipped when it's the day's only activity — nothing else that day for it to
+    //     crowd out, so the "may tire travellers" rationale doesn't apply.
     for (const act of acts) {
       const hrs = Number(act.duration_hours) || 1;
-      if (hrs > LONG_ACTIVITY_HOURS) {
+      if (acts.length > 1 && hrs > LONG_ACTIVITY_HOURS) {
         soft.push({
           error_code: "LONG_ACTIVITY",
           rule: "R5 – Schedule Density",
@@ -349,7 +392,7 @@ export const FALLBACK_RULES: FeasibilityRule[] = [
     rule_code: "R11",
     rule_name: "Seasonality",
     rule_description:
-      "Flag if the travel month falls outside the commonly recommended season for the destination.",
+      "Flag if the stated travel season is a poor fit for the destination (e.g. a trip themed or named around a season that contradicts a separately stated travel season). Skip this rule entirely if no travel season is given.",
   },
   {
     rule_code: "R12",
@@ -403,6 +446,11 @@ one clock time (arrival), by deliberate design, even on a departure day, even fo
 the destination. Do NOT flag this as ambiguous, incomplete, a factual error, or any other kind of
 problem — it is not something the creator can act on, and it is not a defect to report.
 
+Do NOT flag a missing or malformed activity start time (e.g. "NaN:NaN", or an activity with no
+start time at all) under any rule, including general judgment calls. That is already caught
+deterministically as a hard error (error_code "INVALID_START_TIME") and always runs whether or not
+you also flag it — flagging it yourself only ever produces a duplicate of that same finding.
+
 Only flag something as a hard error (severity "error") if the rule below explicitly says to. For
 every other contextual rule, always use a soft warning (severity "warning") — these are judgment
 calls a creator may reasonably disagree with or intend on purpose, so none of them should block
@@ -455,9 +503,9 @@ export function buildUserPrompt(pkg: any, days: any[]): string {
     `Package ID   : ${pkg.package_id || "N/A"}`,
     `Trip Name    : ${pkg.trip_name || "N/A"}`,
     `Destination  : ${pkg.city || ""}, ${pkg.country || ""}`,
-    `Travel Month : ${pkg.travel_month || "N/A"}`,
+    `Travel Season: ${pkg.travel_season || "N/A"}`,
     `Total Days   : ${pkg.total_days || days.length}`,
-    `Group Size   : ${pkg.group_size || 2}`,
+    `Group Size   : ${pkg.group_size || "N/A"}`,
     `Hotel        : ${pkg.hotel_name || "N/A"} (${pkg.hotel_stars || 4}★)`,
     "",
     "=== DAY-BY-DAY ITINERARY ===",
@@ -482,8 +530,9 @@ export function buildUserPrompt(pkg: any, days: any[]): string {
     for (const act of day.activities || []) {
       const desc = act.description ? ` | desc: ${act.description.slice(0, 60)}` : "";
       const startTime = act.start_time ? ` @${act.start_time}` : "";
+      const address = act.address ? ` | @ ${act.address}` : "";
       lines.push(
-        `    [${act.slot}${startTime}] ${act.activity_name} (${act.category}) | ${act.duration_hours}hrs${desc}`
+        `    [${act.slot}${startTime}] ${act.activity_name} (${act.category}) | ${act.duration_hours}hrs${address}${desc}`
       );
     }
   }
