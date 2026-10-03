@@ -9,6 +9,7 @@ import {
   copilotSuggestionToTimelineItem,
   daySubtitle,
   extractClockTimeInZone,
+  arrivalLanding,
   flightArrivalDayOffset,
   flightDurationMinutes,
   formatMinutes,
@@ -691,4 +692,40 @@ test("summarizePackageComponents counts a multi-night stay as one hotel, not one
 
 test("summarizePackageComponents of no days is all zero", () => {
   assert.deepEqual(summarizePackageComponents([]), { flightCount: 0, hotelCount: 0, activityCount: 0 });
+});
+
+function flightDay(dayNumber: number, items: Partial<TimelineItem>[]): BuilderDay {
+  return {
+    id: `d${dayNumber}`, day: dayNumber, title: "", meta: "", story: "", photos: [],
+    items: items.map((it, i) => ({ id: dayNumber * 100 + i, time: "09:00", title: "x", price: "$0", icon: "star", status: "pass", type: "ACTIVITY", ...it }) as TimelineItem),
+  };
+}
+
+test("arrivalLanding finds when and on which day the arrival flight lands", () => {
+  const days = [
+    flightDay(1, [{ type: "FLIGHT", time: "07:00", departureTime: "07:00", arrivalTime: "16:45" }]),
+    flightDay(2, []),
+    flightDay(3, [{ type: "FLIGHT", time: "18:00", departureTime: "18:00", arrivalTime: "23:30" }]),
+  ];
+  const { dayIndex, time } = arrivalLanding(days)!;
+  assert.deepEqual({ dayIndex, time }, { dayIndex: 0, time: "16:45" });
+});
+
+test("an overnight arrival flight lands on the next day", () => {
+  const days = [
+    flightDay(1, [{ type: "FLIGHT", time: "22:00", departureTime: "22:00", arrivalTime: "06:30" }]),
+    flightDay(2, []),
+    flightDay(3, [{ type: "FLIGHT", time: "18:00", departureTime: "18:00", arrivalTime: "23:30" }]),
+  ];
+  const { dayIndex, time } = arrivalLanding(days)!;
+  assert.deepEqual({ dayIndex, time }, { dayIndex: 1, time: "06:30" });
+});
+
+test("a lone flight on the last day is the trip home, not an arrival", () => {
+  const days = [flightDay(1, []), flightDay(2, [{ type: "FLIGHT", time: "18:00", arrivalTime: "23:30" }])];
+  assert.equal(arrivalLanding(days), null);
+});
+
+test("no flights means no arrival landing", () => {
+  assert.equal(arrivalLanding([flightDay(1, [])]), null);
 });

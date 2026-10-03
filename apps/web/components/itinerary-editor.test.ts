@@ -223,3 +223,64 @@ test("deriveFlightType: missing IATA codes fall back to destination_country", ()
   assert.equal(deriveFlightType(undefined, undefined, "Australia"), "domestic");
   assert.equal(deriveFlightType(undefined, undefined, "Indonesia"), "international");
 });
+
+test("an activity starting before the arrival flight lands gets a warning on its card", () => {
+  // Singapore case: the museum was booked for 10:00 but the flight lands at 16:45.
+  const items = [
+    { id: 1, time: "07:00", type: "FLIGHT", title: "SYD to SIN", price: "$0", icon: "plane", status: "pass" },
+    { id: 2, time: "10:00", type: "ACTIVITY", title: "Museum", price: "$0", icon: "star", status: "pass", duration: "60" },
+    { id: 3, time: "18:30", type: "ACTIVITY", title: "Night market", price: "$0", icon: "star", status: "pass", duration: "60" },
+  ] as TimelineItem[];
+  const [, museum, market] = annotateItems(items, { time: "16:45", bufferMin: 90, international: true });
+  assert.equal(museum.status, "critical");
+  assert.equal(museum.problem, "Starts before your flight lands");
+  assert.match(museum.problemDetail ?? "", /16:45/);
+  assert.equal(market.problem, undefined);
+});
+
+test("without a landing time, activities aren't flagged for it", () => {
+  const items = [
+    { id: 2, time: "10:00", type: "ACTIVITY", title: "Museum", price: "$0", icon: "star", status: "pass", duration: "60" },
+  ] as TimelineItem[];
+  assert.equal(annotateItems(items)[0].problem, undefined);
+});
+
+test("a short gap between two stops says which trip there isn't enough time for", () => {
+  const items = [
+    { id: 1, time: "09:00", type: "ACTIVITY", title: "Grand Palace", price: "$0", icon: "star", status: "pass", duration: "60" },
+    { id: 2, time: "10:05", type: "ACTIVITY", title: "Wat Arun", price: "$0", icon: "star", status: "pass", duration: "60" },
+  ] as TimelineItem[];
+  const [palace] = annotateItems(items);
+  assert.equal(palace.problem, "Not enough travel time");
+  assert.match(palace.problemDetail ?? "", /Only 5 min to get from "Grand Palace" to "Wat Arun"/);
+});
+
+test("the first activity too soon after landing gets a card warning with the earliest start", () => {
+  // Was a blocking feasibility error (R2): lands 18:31, night market at 20:00 — 89 min.
+  const items = [
+    { id: 1, time: "13:00", type: "FLIGHT", title: "SYD to BKK", price: "$0", icon: "plane", status: "pass" },
+    { id: 2, time: "20:00", type: "ACTIVITY", title: "Night Market", price: "$0", icon: "star", status: "pass", duration: "120" },
+  ] as TimelineItem[];
+  const [, market] = annotateItems(items, { time: "18:31", bufferMin: 90, international: true });
+  assert.equal(market.status, "critical");
+  assert.equal(market.problem, "Too soon after landing");
+  assert.match(market.problemDetail ?? "", /18:31/);
+  assert.match(market.problemDetail ?? "", /90 min/);
+  assert.match(market.problemDetail ?? "", /20:01/);
+});
+
+test("only the first activity after landing is checked against the buffer", () => {
+  const items = [
+    { id: 2, time: "20:00", type: "ACTIVITY", title: "Dinner", price: "$0", icon: "star", status: "pass", duration: "60" },
+    { id: 3, time: "21:30", type: "ACTIVITY", title: "Rooftop bar", price: "$0", icon: "star", status: "pass", duration: "60" },
+  ] as TimelineItem[];
+  const [, bar] = annotateItems(items, { time: "18:31", bufferMin: 90, international: true });
+  assert.equal(bar.problem, undefined);
+});
+
+test("an activity starting after the full buffer is fine", () => {
+  const items = [
+    { id: 2, time: "20:01", type: "ACTIVITY", title: "Night Market", price: "$0", icon: "star", status: "pass", duration: "60" },
+  ] as TimelineItem[];
+  assert.equal(annotateItems(items, { time: "18:31", bufferMin: 90, international: true })[0].problem, undefined);
+});
