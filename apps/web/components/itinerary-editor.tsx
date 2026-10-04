@@ -201,6 +201,29 @@ export function referenceFlightPresentation(item: TimelineItem) {
   };
 }
 
+// Flights resolve their detail data from the item itself — both
+// buildDaysFromPackage and addSelectedFlight stamp every field on it. The
+// old flights[Nth-item] positional lookup broke for flights added via
+// "+ Add Stop" (packageDetail.flights never grows): they resolved to
+// nothing and couldn't be opened or edited, and one inserted ahead of a
+// package flight shifted every later card onto the wrong record.
+export function flightForItem(item: TimelineItem): CreatorFlightDetail | undefined {
+  if (item.type !== "FLIGHT") return undefined;
+  return {
+    flight_id: item.sourceId ?? null,
+    airline: item.airline ?? null,
+    flight_number: item.flightNumber ?? null,
+    origin_iata: item.originIata ?? null,
+    destination_iata: item.destinationIata ?? null,
+    departure_datetime: item.departureDatetime ?? null,
+    arrival_datetime: item.arrivalDatetime ?? null,
+    departure_time: item.departureTime ?? null,
+    arrival_time: item.arrivalTime ?? null,
+    cabin_class: item.cabinClass ?? null,
+    price_aud: null,
+  };
+}
+
 // The inverse of getEndTime(): how far back a stop's start time has to move
 // so it still finishes exactly at a given clock time.
 function subtractMinutes(time: string, durationMinutes: string) {
@@ -921,8 +944,7 @@ export default function ItineraryEditor({
   const hotelForItem = (item: TimelineItem) =>
     item.type === "HOTEL" && item.stayGroupId ? hotelByStayGroup.get(item.stayGroupId) : undefined;
   const routeStopBases = items.map((item, index) => {
-    const flightIdx = items.slice(0, index).filter(({ type }) => type === "FLIGHT").length;
-    const flight = item.type === "FLIGHT" ? flights[flightIdx] : undefined;
+    const flight = flightForItem(item);
     const hotel = hotelForItem(item);
     const hint = [item.address, item.title, flight?.destination_iata, hotel?.address, hotel?.city]
       .filter((part): part is string => Boolean(part))
@@ -1681,6 +1703,7 @@ export default function ItineraryEditor({
             return minutes === undefined ? undefined : String(minutes);
           })(),
       cabinClass: flight.cabin_class ?? undefined,
+      sourceId: flight.flight_id ?? undefined,
     });
     setFlightSearch("");
     setSelectedFlightIndex(null);
@@ -2105,8 +2128,7 @@ export default function ItineraryEditor({
             <h3>Timeline</h3>
             <div className={`timeline-list${items.length === 0 ? " is-empty" : ""}`}>
               {items.map((item, index) => {
-                const flightIndex = items.slice(0, index).filter(({ type }) => type === "FLIGHT").length;
-                const flight = item.type === "FLIGHT" ? flights[flightIndex] : undefined;
+                const flight = flightForItem(item);
                 const referenceFlight = item.type === "FLIGHT" ? referenceFlightPresentation(item) : null;
                 const hotel = hotelForItem(item);
                 const hasHotelDetails = item.type === "HOTEL" && (Boolean(hotel) || Boolean(item.roomType));
