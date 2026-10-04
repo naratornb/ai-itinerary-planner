@@ -13,6 +13,7 @@ import {
   computePackagePrice,
   copilotSuggestionToTimelineItem,
   extractClockTimeInZone,
+  findDuplicateFlight,
   flightArrivalDayOffset,
   flightDurationMinutes,
   getEndTime,
@@ -544,6 +545,7 @@ type AddStopFlowProps = {
   selectedFlightIndex: number | null;
   setSelectedFlightIndex: Dispatch<SetStateAction<number | null>>;
   addSelectedFlight: () => void;
+  flightDuplicateMessage: string | null;
   availableHotels: CreatorHotelDetail[];
   selectedHotelIndex: number | null;
   setSelectedHotelIndex: Dispatch<SetStateAction<number | null>>;
@@ -639,7 +641,8 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
                       })}
                       {p.matchingFlights.length === 0 && <p>No matching flights found.</p>}
                     </div>
-                    <div className="activity-form-actions"><button className="publish-button" disabled={p.selectedFlightIndex === null} onClick={p.addSelectedFlight}>Add as reference flight</button></div>
+                    {p.flightDuplicateMessage && <p className="field-conflict" role="alert">{p.flightDuplicateMessage}</p>}
+                    <div className="activity-form-actions"><button className="publish-button" disabled={p.selectedFlightIndex === null || Boolean(p.flightDuplicateMessage)} onClick={p.addSelectedFlight}>Add as reference flight</button></div>
                   </>}
 
                   {p.addFlow === "hotel" && <>
@@ -1693,6 +1696,11 @@ export default function ItineraryEditor({
   );
   const selectedHotelOption = selectedHotelIndex !== null ? (catalogHotels ?? hotels)[selectedHotelIndex] : undefined;
 
+  const selectedFlight = selectedFlightIndex !== null ? matchingFlights[selectedFlightIndex] : undefined;
+  const flightDuplicateMessage = selectedFlight && findDuplicateFlight(activeDayData?.items ?? [], selectedFlight)
+    ? `Day ${activeDayData?.day} already has this flight. Pick a different flight or remove the existing one first.`
+    : null;
+
   const hotelCheckInDayIndex = hotelCheckInDayId === NEW_DAY_OPTION_ID
     ? days.length
     : Math.max(0, days.findIndex((day) => day.id === hotelCheckInDayId));
@@ -1988,6 +1996,7 @@ export default function ItineraryEditor({
     matchingFlights,
     selectedFlightIndex, setSelectedFlightIndex,
     addSelectedFlight,
+    flightDuplicateMessage,
     availableHotels: catalogHotels ?? hotels,
     selectedHotelIndex, setSelectedHotelIndex,
     moreHotelsOpen, setMoreHotelsOpen,

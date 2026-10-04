@@ -317,7 +317,7 @@ export function copilotSuggestionToTimelineItem(
   };
 }
 import type { CopilotSuggestionV1 } from "./copilot";
-import type { CreatorPackageDetail, UpdatePackageInput } from "./creator-api";
+import type { CreatorFlightDetail, CreatorPackageDetail, UpdatePackageInput } from "./creator-api";
 
 function parseDay(dateStr: string | null): number | null {
   if (!dateStr) return null;
@@ -403,6 +403,25 @@ export function flightArrivalDayOffset(
   const departureDate = Date.parse(`${departureKey}T00:00:00Z`);
   const arrivalDate = Date.parse(`${arrivalKey}T00:00:00Z`);
   return Math.round((arrivalDate - departureDate) / 86_400_000);
+}
+
+/**
+ * The first FLIGHT item that is the same flight as `flight`, or null. Scoped to
+ * one day's items by the caller: the same flight number on another day can be a
+ * return leg, but the same flight twice on one day is never meaningful.
+ */
+export function findDuplicateFlight(items: TimelineItem[], flight: CreatorFlightDetail): TimelineItem | null {
+  return items.find((item) => {
+    if (item.type !== "FLIGHT") return false;
+    if (item.sourceId && flight.flight_id) return item.sourceId === flight.flight_id;
+    const itemDeparture = item.departureDatetime ? Date.parse(item.departureDatetime) : NaN;
+    const flightDeparture = flight.departure_datetime ? Date.parse(flight.departure_datetime) : NaN;
+    if (Number.isFinite(itemDeparture) && Number.isFinite(flightDeparture)) return itemDeparture === flightDeparture;
+    return Boolean(item.flightNumber)
+      && item.flightNumber === flight.flight_number
+      && item.originIata === flight.origin_iata
+      && item.destinationIata === flight.destination_iata;
+  }) ?? null;
 }
 
 /** Builds the editor from relative package days, with dated rows as a legacy fallback. */
