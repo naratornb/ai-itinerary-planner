@@ -180,17 +180,33 @@ export function itineraryToPackageInput(
   res: ItineraryResponse,
 ): CreatePackageInput {
   const engineDuration = res.trip?.duration_days;
-  const duration = Math.max(
+
+  // The itinerary's own days are the trip. A stay may push it out by one, for
+  // a check-out on the morning after the last day, and no further.
+  //
+  // The hotel used to be able to set the length on its own, via a date
+  // measured against trip.travel_dates.depart_date. When the engine re-dated
+  // the days to a real flight and left depart_date behind, that subtraction
+  // returned 301 for a 12-day Singapore trip and the editor drew 301 tabs,
+  // 289 of them empty. The engine keeps those dates in step now; this stops
+  // any future drift from reaching the editor at all.
+  const statedDuration =
     Number.isInteger(engineDuration) && (engineDuration as number) >= 1
       ? (engineDuration as number)
-      : base.duration_days,
-    res.days?.length ?? 0,
+      : base.duration_days;
+
+  const dayCount = Math.max(statedDuration, res.days?.length ?? 0);
+
+  const stayDuration = Math.max(
+    0,
     ...(res.accommodation ?? []).map((hotel) => relativeDayOf(
       hotel.check_out,
       res.trip?.travel_dates?.depart_date,
       Math.max(1, roundOrNull(hotel.nights) ?? 1) + 1,
     )),
   );
+
+  const duration = Math.max(dayCount, Math.min(stayDuration, dayCount + 1));
   const flights: FlightInput[] = [];
   for (const [index, flight] of (res.flights ?? []).entries()) {
     const origin = iataOf(flight.origin);
