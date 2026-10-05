@@ -29,6 +29,7 @@ import {
   wizardVibesStorageKey,
   type ReviewDraft,
 } from "../lib/review-draft";
+import { vibeLabelsFromTags } from "../lib/vibes";
 import { supabase } from "../lib/supabase/client";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -63,6 +64,9 @@ export default function ItineraryReview({
       ? null
       : parseWizardVibesDraft(window.sessionStorage.getItem(wizardVibesStorageKey(pkg.package_id)))
   ));
+  // The session draft only exists right after the wizard ran; on later visits
+  // the persisted tags carry the same vibe picks (see lib/vibes.ts).
+  const vibeLabels = vibesDraft?.vibes.length ? vibesDraft.vibes : vibeLabelsFromTags(pkg.tags);
   const [reviewDraft, setReviewDraft] = useState<ReviewDraft>(() => {
     // A stored draft means the user already started editing this session —
     // resume it exactly, even if they cleared the description to empty.
@@ -175,7 +179,7 @@ export default function ItineraryReview({
           selectedHotel: pkg.hotels[0]?.hotel_name ?? "",
           totalDays: days.length,
           items: activityNames,
-          vibe: vibesDraft?.vibes.join(", ") ?? "",
+          vibe: vibeLabels.join(", "),
         }),
       });
       const data = (await response.json()) as { listing?: string; error?: string };
@@ -278,7 +282,7 @@ export default function ItineraryReview({
           <dl className="stat-grid review-panel-body">
             <div><dt>Destination</dt><dd>{destination}</dd></div>
             <div><dt>Duration</dt><dd>{days.length} Day{days.length === 1 ? "" : "s"} / {nights} Night{nights === 1 ? "" : "s"}</dd></div>
-            <div><dt>Vibes</dt><dd>{vibesDraft?.vibes.length ? vibesDraft.vibes.join(", ") : "Not set"}</dd></div>
+            <div><dt>Vibes</dt><dd>{vibeLabels.length ? vibeLabels.join(", ") : "Not set"}</dd></div>
             <div><dt>Season</dt><dd>{vibesDraft?.season ? capitalize(vibesDraft.season) : "Not set"}</dd></div>
             <div><dt>Flights</dt><dd>{componentCounts.flightCount}</dd></div>
             <div><dt>Hotels</dt><dd>{componentCounts.hotelCount}</dd></div>
@@ -289,17 +293,33 @@ export default function ItineraryReview({
         <section className="editor-panel">
           <h2>Select cover image</h2>
           <div className="review-panel-body">
-            <div className="photo-grid">
-              {photos.map((photo) => (
-                <figure key={photo.media_id} className={photo.media_id === coverMediaId ? "is-cover" : undefined}>
-                  <button type="button" className="set-cover-btn" onClick={() => setReviewDraft((current) => ({ ...current, coverMediaId: photo.media_id }))} aria-label={`Set ${photo.caption ?? "this photo"} as the cover image`}>
-                    <img src={toSafeImageSrc(photo.url)} alt={photo.caption ?? "Package photo"} />
-                  </button>
-                  {photo.media_id === coverMediaId && <span className="cover-badge"><Icon name="star" size={12} /> Cover</span>}
-                  <button type="button" className="remove-photo-btn" aria-label={`Remove ${photo.caption ?? "photo"}`} onClick={() => { void removePhoto(photo); }}><Icon name="plus" size={10} /></button>
-                </figure>
-              ))}
-              <label className="photo-add"><input type="file" accept="image/png,image/jpeg" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (!file) return; void addCoverPhoto(file); }} /><Icon name="plus" size={30} /><span>Add</span><small>JPG or PNG</small></label>
+            <div className="cover-gallery">
+              {photos.map((photo) => {
+                const isCover = photo.media_id === coverMediaId;
+                return (
+                  <figure key={photo.media_id} className={`cover-gallery-item${isCover ? " is-cover" : ""}`}>
+                    <button
+                      type="button"
+                      className="cover-gallery-select"
+                      aria-pressed={isCover}
+                      onClick={() => setReviewDraft((current) => ({ ...current, coverMediaId: photo.media_id }))}
+                      aria-label={isCover ? `${photo.caption ?? "This photo"} is the cover image` : `Set ${photo.caption ?? "this photo"} as the cover image`}
+                    >
+                      <img src={toSafeImageSrc(photo.url)} alt={photo.caption ?? "Package photo"} />
+                    </button>
+                    {isCover && <span className="cover-gallery-badge"><Icon name="star" size={11} /> Cover</span>}
+                    <button type="button" className="cover-gallery-remove" aria-label={`Remove ${photo.caption ?? "photo"}`} onClick={() => { void removePhoto(photo); }}>
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg>
+                    </button>
+                  </figure>
+                );
+              })}
+              <label className="cover-gallery-add">
+                <input type="file" accept="image/png,image/jpeg" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (!file) return; void addCoverPhoto(file); }} />
+                <Icon name="plus" size={22} />
+                <span>Add photo</span>
+                <small>JPG or PNG</small>
+              </label>
             </div>
             <p className="review-photo-hint">{photos.length} photo{photos.length === 1 ? "" : "s"} available</p>
           </div>
@@ -307,8 +327,11 @@ export default function ItineraryReview({
 
         <section className="editor-panel">
           <h2>Description</h2>
-          <div className="review-panel-body story-copy">
-            <div className="section-label"><h3>Package description</h3><button className="ai-button" disabled={generating} aria-label="Generate description with AI" onClick={() => { void generateDescription(); }}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m12 3 1.2 3.8L17 8l-3.8 1.2L12 13l-1.2-3.8L7 8l3.8-1.2zM18 14l.8 2.2L21 17l-2.2.8L18 20l-.8-2.2L15 17l2.2-.8z" /></svg> {generating ? "Generating…" : "Generate with AI"}</button></div>
+          <div className="review-description-panel">
+            <div className="review-description-header">
+              <h3>Package description</h3>
+              <button className="ai-button" disabled={generating} aria-label="Generate description with AI" onClick={() => { void generateDescription(); }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m12 3 1.2 3.8L17 8l-3.8 1.2L12 13l-1.2-3.8L7 8l3.8-1.2zM18 14l.8 2.2L21 17l-2.2.8L18 20l-.8-2.2L15 17l2.2-.8z" /></svg> {generating ? "Generating…" : "Generate with AI"}</button>
+            </div>
             <textarea value={reviewDraft.description} onChange={(event) => setReviewDraft((current) => ({ ...current, description: event.target.value }))} placeholder="Describe this package for travellers…" aria-label="Package description" />
           </div>
         </section>
