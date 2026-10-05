@@ -405,6 +405,28 @@ export function flightArrivalDayOffset(
   return Math.round((arrivalDate - departureDate) / 86_400_000);
 }
 
+/**
+ * Where and when the traveller lands on the trip's arrival flight: the first flight,
+ * unless it's a lone flight on the last day (that's the trip home). An overnight
+ * flight lands on the following day. Null when there's no arrival flight or no
+ * landing time to go on.
+ */
+export function arrivalLanding(days: BuilderDay[]): { dayIndex: number; time: string; flight: TimelineItem } | null {
+  const flights = days.flatMap((day, dayIndex) =>
+    day.items.filter((item) => item.type === "FLIGHT").map((item) => ({ item, dayIndex })));
+  if (flights.length === 0) return null;
+  const { item, dayIndex } = flights[0];
+  if (flights.length === 1 && dayIndex === days.length - 1) return null;
+  if (!item.arrivalTime) return null;
+  const datedOffset = flightArrivalDayOffset(
+    item.departureDatetime, timezoneForIata(item.originIata),
+    item.arrivalDatetime, timezoneForIata(item.destinationIata),
+  );
+  const offset = datedOffset ?? (item.departureTime && item.arrivalTime < item.departureTime ? 1 : 0);
+  const landingDay = dayIndex + offset;
+  return landingDay < days.length ? { dayIndex: landingDay, time: item.arrivalTime, flight: item } : null;
+}
+
 /** Builds the editor from relative package days, with dated rows as a legacy fallback. */
 export function buildDaysFromPackage(pkg: CreatorPackageDetail): BuilderDay[] {
   const stayDates = [
