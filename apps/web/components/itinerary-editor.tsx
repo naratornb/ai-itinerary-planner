@@ -293,16 +293,83 @@ const TOKYO_LANDMARKS: { keywords: string[]; coordinate: [number, number] }[] = 
   { keywords: ["tokyo"], coordinate: [35.6812, 139.7671] },
 ];
 // Landmark-level precision only exists for Tokyo; anywhere else, stops
-// scatter around the day's actual city center instead of always Tokyo
-// Station, which put every non-Tokyo trip's map in the wrong country.
+// scatter around the day's actual city center. Every city name the
+// activities/hotels catalog uses (supabase/seed/activities.csv,
+// supabase/seed/hotels.csv) needs an entry here — a city missing from this
+// table silently fell back to Tokyo's coordinates, putting that trip's map
+// in the wrong country entirely. "Bali" is kept alongside "Denpasar" (the
+// catalog's actual city name for Bali) in case destination_city is ever
+// stored as the informal name instead.
 const CITY_CENTERS: Record<string, [number, number]> = {
-  Tokyo: [35.6812, 139.7671],
-  Paris: [48.8566, 2.3522],
-  Sydney: [-33.8688, 151.2093],
-  Bali: [-8.6705, 115.2126],
-  Seoul: [37.5665, 126.9780],
-  Reykjavik: [64.1466, -21.9426],
+  Amsterdam: [52.3676, 4.9041],
   Athens: [37.9838, 23.7275],
+  Auckland: [-36.8485, 174.7633],
+  Bali: [-8.6705, 115.2126],
+  Bangkok: [13.7563, 100.5018],
+  Barcelona: [41.3851, 2.1734],
+  Berlin: [52.5200, 13.4050],
+  Brisbane: [-27.4698, 153.0251],
+  "Buenos Aires": [-34.6037, -58.3816],
+  Busan: [35.1796, 129.0756],
+  Cairns: [-16.9186, 145.7781],
+  Cairo: [30.0444, 31.2357],
+  Cancun: [21.1619, -86.8515],
+  "Cape Town": [-33.9249, 18.4241],
+  "Chiang Mai": [18.7883, 98.9853],
+  Colombo: [6.9271, 79.8612],
+  Cusco: [-13.5319, -71.9675],
+  "Da Nang": [16.0544, 108.2022],
+  Delhi: [28.6139, 77.2090],
+  Denpasar: [-8.6705, 115.2126],
+  Doha: [25.2854, 51.5310],
+  Dubai: [25.2048, 55.2708],
+  Edinburgh: [55.9533, -3.1883],
+  Florence: [43.7696, 11.2558],
+  Hanoi: [21.0278, 105.8342],
+  "Ho Chi Minh City": [10.8231, 106.6297],
+  "Hong Kong": [22.3193, 114.1694],
+  Honolulu: [21.3069, -157.8583],
+  Istanbul: [41.0082, 28.9784],
+  Jakarta: [-6.2088, 106.8456],
+  Krakow: [50.0647, 19.9450],
+  "Kuala Lumpur": [3.1390, 101.6869],
+  Kyoto: [35.0116, 135.7681],
+  Lisbon: [38.7223, -9.1393],
+  London: [51.5072, -0.1276],
+  "Los Angeles": [34.0522, -118.2437],
+  Madrid: [40.4168, -3.7038],
+  Manila: [14.5995, 120.9842],
+  Marrakech: [31.6295, -7.9811],
+  Medellin: [6.2442, -75.5812],
+  Melbourne: [-37.8136, 144.9631],
+  "Mexico City": [19.4326, -99.1332],
+  Mumbai: [19.0760, 72.8777],
+  Nairobi: [-1.2921, 36.8219],
+  "New York": [40.7128, -74.0060],
+  Nice: [43.7102, 7.2620],
+  Osaka: [34.6937, 135.5023],
+  Paris: [48.8566, 2.3522],
+  Perth: [-31.9505, 115.8605],
+  Phuket: [7.8804, 98.3923],
+  Porto: [41.1579, -8.6291],
+  Prague: [50.0755, 14.4378],
+  Queenstown: [-45.0312, 168.6626],
+  Reykjavik: [64.1466, -21.9426],
+  "Rio de Janeiro": [-22.9068, -43.1729],
+  Rome: [41.9028, 12.4964],
+  "San Francisco": [37.7749, -122.4194],
+  Santorini: [36.3932, 25.4615],
+  Sapporo: [43.0618, 141.3545],
+  Seoul: [37.5665, 126.9780],
+  Shanghai: [31.2304, 121.4737],
+  Singapore: [1.3521, 103.8198],
+  Sydney: [-33.8688, 151.2093],
+  Taipei: [25.0330, 121.5654],
+  Tokyo: [35.6812, 139.7671],
+  Valencia: [39.4699, -0.3763],
+  Vancouver: [49.2827, -123.1207],
+  Venice: [45.4408, 12.3155],
+  Vienna: [48.2082, 16.3738],
 };
 
 function resolveStopCoordinate(hint: string, fallbackIndex: number, city: string | null): [number, number] {
@@ -311,6 +378,9 @@ function resolveStopCoordinate(hint: string, fallbackIndex: number, city: string
     const match = TOKYO_LANDMARKS.find(({ keywords }) => keywords.some((keyword) => lower.includes(keyword)));
     if (match) return match.coordinate;
   }
+  // Tokyo is the last-resort default for a city genuinely absent from the table above
+  // (no city set, or a catalog city added without a matching entry) — every catalog
+  // city as of this writing has its own entry, so this should rarely, if ever, hit.
   const center = (city && CITY_CENTERS[city]) || CITY_CENTERS.Tokyo;
   const angle = (fallbackIndex * 47 * Math.PI) / 180;
   const radius = 0.012;
