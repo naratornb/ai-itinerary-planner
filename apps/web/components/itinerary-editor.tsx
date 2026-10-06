@@ -3,16 +3,18 @@
 import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { useRouter } from "next/navigation";
 import CopilotPanel from "./copilot/copilot-panel";
-import { formatHotelStarRating } from "./hotel-catalog";
+import { HotelChoiceCard } from "./hotel-choice-card";
 import RouteMap, { type RouteStop } from "./route-map";
 import { createCopilotClient } from "../lib/copilot-client";
 import {
   appendItemToDay,
+  arrivalLanding,
   buildPackageUpdate,
   buildDaysFromPackage,
   computePackagePrice,
   copilotSuggestionToTimelineItem,
   extractClockTimeInZone,
+  findStayConflict,
   flightArrivalDayOffset,
   flightDurationMinutes,
   getEndTime,
@@ -40,6 +42,7 @@ import {
 import { itinerarySnapshotStorageKey, parseWizardVibesDraft, wizardVibesStorageKey } from "../lib/review-draft";
 import { APP_ROUTES } from "../lib/routes";
 import { iataOf } from "../lib/ai/itinerary";
+import { ACTIVITY_GAP_MIN, minutesToTime, TRANSFER_BUFFER_MIN } from "../lib/feasibility";
 import { supabase } from "../lib/supabase/client";
 import Icon from "./icon";
 
@@ -75,8 +78,6 @@ function timeToSlot(time: string): string {
   return "Evening";
 }
 
-// Transfer-gap check threshold used by annotateItems.
-const MIN_TRANSFER_GAP_MIN = 15; // minutes — minimum breathing room between consecutive items
 
 // Major Australian commercial airports — used by deriveFlightType to tell domestic
 // from international per flight leg, not just per package.
@@ -316,16 +317,83 @@ const TOKYO_LANDMARKS: { keywords: string[]; coordinate: [number, number] }[] = 
   { keywords: ["tokyo"], coordinate: [35.6812, 139.7671] },
 ];
 // Landmark-level precision only exists for Tokyo; anywhere else, stops
-// scatter around the day's actual city center instead of always Tokyo
-// Station, which put every non-Tokyo trip's map in the wrong country.
+// scatter around the day's actual city center. Every city name the
+// activities/hotels catalog uses (supabase/seed/activities.csv,
+// supabase/seed/hotels.csv) needs an entry here — a city missing from this
+// table silently fell back to Tokyo's coordinates, putting that trip's map
+// in the wrong country entirely. "Bali" is kept alongside "Denpasar" (the
+// catalog's actual city name for Bali) in case destination_city is ever
+// stored as the informal name instead.
 const CITY_CENTERS: Record<string, [number, number]> = {
-  Tokyo: [35.6812, 139.7671],
-  Paris: [48.8566, 2.3522],
-  Sydney: [-33.8688, 151.2093],
-  Bali: [-8.6705, 115.2126],
-  Seoul: [37.5665, 126.9780],
-  Reykjavik: [64.1466, -21.9426],
+  Amsterdam: [52.3676, 4.9041],
   Athens: [37.9838, 23.7275],
+  Auckland: [-36.8485, 174.7633],
+  Bali: [-8.6705, 115.2126],
+  Bangkok: [13.7563, 100.5018],
+  Barcelona: [41.3851, 2.1734],
+  Berlin: [52.5200, 13.4050],
+  Brisbane: [-27.4698, 153.0251],
+  "Buenos Aires": [-34.6037, -58.3816],
+  Busan: [35.1796, 129.0756],
+  Cairns: [-16.9186, 145.7781],
+  Cairo: [30.0444, 31.2357],
+  Cancun: [21.1619, -86.8515],
+  "Cape Town": [-33.9249, 18.4241],
+  "Chiang Mai": [18.7883, 98.9853],
+  Colombo: [6.9271, 79.8612],
+  Cusco: [-13.5319, -71.9675],
+  "Da Nang": [16.0544, 108.2022],
+  Delhi: [28.6139, 77.2090],
+  Denpasar: [-8.6705, 115.2126],
+  Doha: [25.2854, 51.5310],
+  Dubai: [25.2048, 55.2708],
+  Edinburgh: [55.9533, -3.1883],
+  Florence: [43.7696, 11.2558],
+  Hanoi: [21.0278, 105.8342],
+  "Ho Chi Minh City": [10.8231, 106.6297],
+  "Hong Kong": [22.3193, 114.1694],
+  Honolulu: [21.3069, -157.8583],
+  Istanbul: [41.0082, 28.9784],
+  Jakarta: [-6.2088, 106.8456],
+  Krakow: [50.0647, 19.9450],
+  "Kuala Lumpur": [3.1390, 101.6869],
+  Kyoto: [35.0116, 135.7681],
+  Lisbon: [38.7223, -9.1393],
+  London: [51.5072, -0.1276],
+  "Los Angeles": [34.0522, -118.2437],
+  Madrid: [40.4168, -3.7038],
+  Manila: [14.5995, 120.9842],
+  Marrakech: [31.6295, -7.9811],
+  Medellin: [6.2442, -75.5812],
+  Melbourne: [-37.8136, 144.9631],
+  "Mexico City": [19.4326, -99.1332],
+  Mumbai: [19.0760, 72.8777],
+  Nairobi: [-1.2921, 36.8219],
+  "New York": [40.7128, -74.0060],
+  Nice: [43.7102, 7.2620],
+  Osaka: [34.6937, 135.5023],
+  Paris: [48.8566, 2.3522],
+  Perth: [-31.9505, 115.8605],
+  Phuket: [7.8804, 98.3923],
+  Porto: [41.1579, -8.6291],
+  Prague: [50.0755, 14.4378],
+  Queenstown: [-45.0312, 168.6626],
+  Reykjavik: [64.1466, -21.9426],
+  "Rio de Janeiro": [-22.9068, -43.1729],
+  Rome: [41.9028, 12.4964],
+  "San Francisco": [37.7749, -122.4194],
+  Santorini: [36.3932, 25.4615],
+  Sapporo: [43.0618, 141.3545],
+  Seoul: [37.5665, 126.9780],
+  Shanghai: [31.2304, 121.4737],
+  Singapore: [1.3521, 103.8198],
+  Sydney: [-33.8688, 151.2093],
+  Taipei: [25.0330, 121.5654],
+  Tokyo: [35.6812, 139.7671],
+  Valencia: [39.4699, -0.3763],
+  Vancouver: [49.2827, -123.1207],
+  Venice: [45.4408, 12.3155],
+  Vienna: [48.2082, 16.3738],
 };
 
 function resolveStopCoordinate(hint: string, fallbackIndex: number, city: string | null): [number, number] {
@@ -334,6 +402,9 @@ function resolveStopCoordinate(hint: string, fallbackIndex: number, city: string
     const match = TOKYO_LANDMARKS.find(({ keywords }) => keywords.some((keyword) => lower.includes(keyword)));
     if (match) return match.coordinate;
   }
+  // Tokyo is the last-resort default for a city genuinely absent from the table above
+  // (no city set, or a catalog city added without a matching entry) — every catalog
+  // city as of this writing has its own entry, so this should rarely, if ever, hit.
   const center = (city && CITY_CENTERS[city]) || CITY_CENTERS.Tokyo;
   const angle = (fallbackIndex * 47 * Math.PI) / 180;
   const radius = 0.012;
@@ -346,6 +417,12 @@ function toMinutes(time: string): number {
   return (parts[0] ?? 0) * 60 + (parts[1] ?? 0);
 }
 
+// "y" reads as a vowel everywhere except a word's first letter ("countryside", "rhythm"
+// vs. "yellow") — without this, ordinary words trip the consonant-run check below.
+function isVowel(ch: string, index: number): boolean {
+  return "aeiou".includes(ch) || (ch === "y" && index > 0);
+}
+
 /**
  * Returns true when text appears to contain random/gibberish characters.
  * Heuristics (both must be language-agnostic enough to avoid false positives on proper nouns):
@@ -356,30 +433,73 @@ function toMinutes(time: string): number {
 function detectGibberish(text: string): boolean {
   if (!text || text.trim().length < 8) return false;
   const lower = text.toLowerCase();
-  // Immediate fail: any 5-consonant run is a strong gibberish signal
-  if (/[^aeiou\s\d\W]{5,}/.test(lower.replace(/[^a-z]/g, " "))) return true;
-  // Secondary: vowel-ratio check across long words
-  const words = lower.split(/\s+/).map((w) => w.replace(/[^a-z]/g, "")).filter((w) => w.length > 4);
+  const words = lower.split(/\s+/).map((w) => w.replace(/[^a-z]/g, "")).filter(Boolean);
   if (words.length === 0) return false;
-  const suspicious = words.filter((w) => {
-    const vowels = (w.match(/[aeiou]/g) ?? []).length;
+
+  // Immediate fail: any 5-consonant run within a single word is a strong gibberish signal
+  const hasConsonantRun = words.some((w) => {
+    let run = 0;
+    for (let i = 0; i < w.length; i++) {
+      run = isVowel(w[i], i) ? 0 : run + 1;
+      if (run >= 5) return true;
+    }
+    return false;
+  });
+  if (hasConsonantRun) return true;
+
+  // Secondary: vowel-ratio check across long words
+  const longWords = words.filter((w) => w.length > 4);
+  if (longWords.length === 0) return false;
+  const suspicious = longWords.filter((w) => {
+    const vowels = [...w].filter((ch, i) => isVowel(ch, i)).length;
     return vowels / w.length < 0.15;
   });
-  return suspicious.length / words.length > 0.4;
+  return suspicious.length / longWords.length > 0.4;
 }
 
 /**
  * Annotates each item with problem / problemDetail / status based on (priority order):
  *  1. OVERLAP       : this item starts before the previous item ends
- *  2. SHORT_TRANSFER: gap to the next item is > 0 but < MIN_TRANSFER_GAP_MIN
+ *  2. SHORT_TRANSFER: gap to the next item is > 0 but < ACTIVITY_GAP_MIN (same as R22)
  *  3. GIBBERISH     : item notes contain random/unreadable characters
+ * Before all of these, on the arrival flight's landing day (`landing`, see
+ * arrivalLanding): an activity starting before the landing time is flagged (the
+ * traveller isn't there yet), and so is the first activity starting less than
+ * `landing.bufferMin` after it (clearing the airport and getting there).
  * All other items are marked "pass" with no problem.
- * (Unusually-long-duration is intentionally NOT flagged per-item here — it's already
- * surfaced as a soft warning by the feasibility check (R5c), and some activities come
- * from the catalog with a fixed duration the creator can't edit anyway.)
+ * (Unusually-long-duration is intentionally NOT flagged — catalog activities come
+ * with a fixed duration the creator can't edit anyway.)
  */
-export function annotateItems(raw: TimelineItem[]): TimelineItem[] {
+export function annotateItems(
+  raw: TimelineItem[],
+  landing?: { time: string; bufferMin: number; international: boolean },
+): TimelineItem[] {
+  const isTimedStop = (item: TimelineItem) =>
+    item.type !== "FLIGHT" && item.type !== "HOTEL" && REAL_TIME_PATTERN.test(item.time);
+  const landingMin = landing ? toMinutes(landing.time) : 0;
+  const firstAfterLanding = landing
+    ? raw.filter((item) => isTimedStop(item) && toMinutes(item.time) >= landingMin)
+        .sort((a, b) => toMinutes(a.time) - toMinutes(b.time))[0]
+    : undefined;
+
   return raw.map((item, i) => {
+    if (landing && isTimedStop(item) && toMinutes(item.time) < landingMin) {
+      return {
+        ...item,
+        status: "critical" as const,
+        problem: "Starts before your flight lands",
+        problemDetail: `Your flight lands at ${landing.time}. Move this to after you arrive.`,
+      };
+    }
+    if (landing && item === firstAfterLanding && toMinutes(item.time) < landingMin + landing.bufferMin) {
+      return {
+        ...item,
+        status: "critical" as const,
+        problem: "Too soon after landing",
+        problemDetail: `Your flight lands at ${landing.time}. ${landing.international ? "International" : "Domestic"} arrivals need at least ${landing.bufferMin} min to clear the airport and get here, so start this at ${minutesToTime(landingMin + landing.bufferMin)} or later.`,
+      };
+    }
+
     const durationMin = Number(item.duration ?? 60);
     // A flight's `time` is its arrival — it has already "ended" the moment it lands.
     // `duration` on a flight is travel time, not time occupied after landing, so
@@ -402,12 +522,12 @@ export function annotateItems(raw: TimelineItem[]): TimelineItem[] {
         };
       }
 
-      if (gapMin < MIN_TRANSFER_GAP_MIN) {
+      if (gapMin < ACTIVITY_GAP_MIN) {
         return {
           ...item,
           status: "critical" as const,
-          problem: "Transfer gap is too short",
-          problemDetail: `${gapMin} min to reach "${next.title}" · ${MIN_TRANSFER_GAP_MIN} min minimum`,
+          problem: "Not enough travel time",
+          problemDetail: `Only ${gapMin} min to get from "${item.title}" to "${next.title}". Leave at least ${ACTIVITY_GAP_MIN} min to travel between them.`,
         };
       }
     }
@@ -586,6 +706,7 @@ type AddStopFlowProps = {
   hotelNotes: string;
   setHotelNotes: Dispatch<SetStateAction<string>>;
   createHotel: () => void;
+  hotelConflictMessage: string | null;
   creatorDraft: CreatorDraft;
   setCreatorDraft: Dispatch<SetStateAction<CreatorDraft>>;
   creatorPhotos: DayPhoto[];
@@ -684,13 +805,7 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
                         />
                       </div>
                       <div className="hotel-choice-grid" role="radiogroup" aria-label="Available hotels">
-                        {p.availableHotels.map((hotel, index) => (index < 3 || p.moreHotelsOpen) && <button key={hotel.hotel_id ?? hotel.hotel_name ?? index} type="button" role="radio" aria-checked={p.selectedHotelIndex === index} title={hotel.star_rating != null ? formatHotelStarRating(hotel.star_rating) : undefined} className={`hotel-choice-card${p.selectedHotelIndex === index ? " selected" : ""}`} onClick={() => p.setSelectedHotelIndex(index)}>
-                          {hotel.star_rating != null && <span className="hotel-choice-rating"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z" /></svg>{hotel.star_rating}</span>}
-                          <span className="hotel-choice-check" aria-hidden="true">{p.selectedHotelIndex === index && <Icon name="check" size={16} />}</span>
-                          <strong>{hotel.hotel_name ?? "Hotel"}</strong>
-                          <small><Icon name="pin" size={12} />{hotel.city ?? "Not provided"}{hotel.room_type ? ` · ${hotel.room_type}` : ""}</small>
-                          <span className="hotel-choice-from"><small>FROM</small><b>{hotel.price_per_night_aud != null ? `$${hotel.price_per_night_aud.toLocaleString("en-US")}/night` : "Price not provided"}</b></span>
-                        </button>)}
+                        {p.availableHotels.map((hotel, index) => (index < 3 || p.moreHotelsOpen) && <HotelChoiceCard key={hotel.hotel_id ?? hotel.hotel_name ?? index} hotel={hotel} selected={p.selectedHotelIndex === index} onSelect={() => p.setSelectedHotelIndex(index)} />)}
                         {p.availableHotels.length === 0 && <p>No hotels found for this destination.</p>}
                       </div>
                       {p.availableHotels.length > 3 && (
@@ -745,7 +860,8 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
                         <label className="full"><span>Notes</span><textarea value={p.hotelNotes} onChange={(event) => p.setHotelNotes(event.target.value)} placeholder="Add check-in or booking details" /></label>
                       </div>
                     </>}
-                    <div className="activity-form-actions"><button className="publish-button" disabled={!p.selectedHotelOption || !p.hotelCheckInDayId} onClick={p.createHotel}>Add hotel</button></div>
+                    {p.hotelConflictMessage && <p className="hotel-stay-conflict" role="alert">{p.hotelConflictMessage}</p>}
+                    <div className="activity-form-actions"><button className="publish-button" disabled={!p.selectedHotelOption || !p.hotelCheckInDayId || Boolean(p.hotelConflictMessage)} onClick={p.createHotel}>Add hotel</button></div>
                   </>}
 
                   {p.addFlow === "creator" && <>
@@ -912,7 +1028,16 @@ export default function ItineraryEditor({
   };
   // Feasibility annotation is a pure function of the day's items, so it's
   // derived here once instead of being re-applied inside every handler.
-  const items = useMemo(() => annotateItems(activeDayData?.items ?? []), [activeDayData]);
+  const landing = useMemo(() => {
+    const arrival = arrivalLanding(days);
+    if (!arrival) return null;
+    const international = deriveFlightType(arrival.flight.originIata, arrival.flight.destinationIata, pkg.destination_country) === "international";
+    return { ...arrival, international, bufferMin: TRANSFER_BUFFER_MIN[international ? "international" : "domestic"] };
+  }, [days, pkg.destination_country]);
+  const items = useMemo(
+    () => annotateItems(activeDayData?.items ?? [], landing?.dayIndex === activeDay ? landing : undefined),
+    [activeDayData, activeDay, landing],
+  );
   const story = activeDayData?.story ?? "";
   const photos = activeDayData?.photos ?? [];
   // Activities carry a plain city name in `address` (buildDaysFromPackage);
@@ -1007,15 +1132,27 @@ export default function ItineraryEditor({
     const hotelItem = days.flatMap((day) => day.items).find((item) => item.type === "HOTEL");
     const hotelName = hotelItem?.hotelName ?? hotelItem?.title.replace(STAY_LABEL_SUFFIX, "") ?? "";
 
+    // Season is set once, in the AI creation wizard, and stashed in sessionStorage
+    // keyed by package_id (no backend field for it yet — see review-draft.ts).
+    // Manually-created packages, or a wizard package opened in a new session,
+    // simply have none stored — travel_season stays undefined rather than guessing.
+    const wizardSeason = typeof window === "undefined"
+      ? null
+      : parseWizardVibesDraft(window.sessionStorage.getItem(wizardVibesStorageKey(pkg.package_id)))?.season;
+    const travelSeason = wizardSeason ? wizardSeason.charAt(0).toUpperCase() + wizardSeason.slice(1) : undefined;
+
     return {
       package_id: pkg.package_id,
       trip_name: packageTitle,
       city: pkg.destination_city,
       country: pkg.destination_country,
-      // ponytail: month/group size have no editor UI yet — wire real inputs when they do
-      travel_month: "April",
+      // No group_size: there's no editor input for it and no rule uses it (R8 removed).
+      // Where the arrival flight lands (overnight flights land the next day) — R2.
+      arrival_landing: landing
+        ? { day_number: landing.dayIndex + 1, time: landing.time, flight_type: landing.international ? "international" : "domestic", title: landing.flight.title }
+        : null,
+      travel_season: travelSeason,
       total_days: days.length,
-      group_size: 2,
       hotel_name: hotelName,
       hotel_stars: hotelItem?.starRating ?? 4,
       // Total photos across the whole package (every day + every item within it) —
@@ -1041,7 +1178,10 @@ export default function ItineraryEditor({
           flights: day.items
             .filter((item) => item.type === "FLIGHT")
             .map((item) => ({
-              arrival_time: item.time,
+              // `time` is the departure on relative flights, so send the real
+              // landing and take-off times (R2 after landing, R21 before departure).
+              arrival_time: item.arrivalTime ?? item.time,
+              departure_time: item.departureTime,
               flight_type: deriveFlightType(item.originIata, item.destinationIata, pkg.destination_country),
               title: item.title,
             })),
@@ -1053,10 +1193,12 @@ export default function ItineraryEditor({
               slot: timeToSlot(item.time),
               category: item.category ?? item.type ?? "Activity",
               duration_hours: Number(item.duration ?? 60) / 60,
-              suitable_for: "Couple",
               address: item.address ?? "",
               description: item.notes ?? "",
               price: item.price, // used by R16 — "$0" is valid (free), only a blank field fails
+              // Catalog activities can't be edited by the creator — the AI is told not
+              // to flag their name/address/duration (see buildSystemPrompt).
+              source: item.type === "CREATOR PICK" ? "creator" : "catalog",
             })),
         }))
       ),
@@ -1082,9 +1224,12 @@ export default function ItineraryEditor({
         // eslint-disable-next-line react-hooks/purity
         setLastCheckedAt(Date.now());
         setResultStale(false);
+      } else {
+        showNotice("Check failed, please try again.");
       }
     } catch (err) {
       console.error("Failed to run feasibility check:", err);
+      showNotice("Check failed, please try again.");
     } finally {
       setFeasLoading(false);
     }
@@ -1734,6 +1879,14 @@ export default function ItineraryEditor({
   const selectedHotelCheckOutDayOption = hotelCheckOutDayOptions.find((option) => option.id === hotelCheckOutDayId) ?? hotelCheckOutDayOptions[0];
   const hotelCheckOutDayIndex = selectedHotelCheckOutDayOption.index;
   const hotelNightsCount = Math.max(1, hotelCheckOutDayIndex - hotelCheckInDayIndex);
+  // Shown in the add-hotel form itself (not a toast) as soon as the chosen days
+  // overlap an existing stay, and it stays until the days or hotel change.
+  const hotelConflict = selectedHotelOption && hotelCheckInDayId
+    ? findStayConflict(days, hotelCheckInDayIndex, hotelNightsCount)
+    : null;
+  const hotelConflictMessage = hotelConflict
+    ? `Day ${hotelConflict.dayIndex + 1} already has a hotel (${hotelConflict.hotelName}). Pick different days or remove that stay first.`
+    : null;
 
   const editStayCheckInIndex = editStayCheckInDayId === NEW_DAY_OPTION_ID
     ? days.length
@@ -1745,6 +1898,18 @@ export default function ItineraryEditor({
     { id: NEW_DAY_OPTION_ID, index: Math.max(days.length, editStayCheckInIndex + 1), title: "New day" },
   ];
   const selectedEditStayCheckOutDayOption = editStayCheckOutDayOptions.find((option) => option.id === editStayCheckOutDayId) ?? editStayCheckOutDayOptions[0];
+  // Same overlap check as the add-hotel form, shown inside the stay being edited.
+  const editStayConflict = editingStayGroupId && editStayCheckInDayId
+    ? findStayConflict(
+        days,
+        editStayCheckInIndex,
+        Math.max(editStayCheckInIndex + 1, selectedEditStayCheckOutDayOption.index) - editStayCheckInIndex,
+        editingStayGroupId,
+      )
+    : null;
+  const editStayConflictMessage = editStayConflict
+    ? `Day ${editStayConflict.dayIndex + 1} already has a hotel (${editStayConflict.hotelName}). Pick different days or remove that stay first.`
+    : null;
 
   const createHotel = () => {
     if (!selectedHotelOption) return;
@@ -1753,6 +1918,8 @@ export default function ItineraryEditor({
     const nights = hotelNightsCount;
     const checkInIndex = hotelCheckInDayIndex;
     const checkOutIndex = hotelCheckOutDayIndex;
+    // The form shows the conflict and disables the button; this is the backstop.
+    if (hotelConflict) return;
     const stayGroupId = `hotel-stay-${nextItemId.current + 1}`;
     setDays((current) => {
       const next = [...current];
@@ -1811,6 +1978,8 @@ export default function ItineraryEditor({
     const template = days.flatMap((day) => day.items).find((it) => it.stayGroupId === stayGroupId);
     if (!template) return;
     const hotelName = template.hotelName ?? "Hotel";
+    // The edit form shows the conflict and disables Save; this is the backstop.
+    if (findStayConflict(days, checkInIndex, nights, stayGroupId)) return;
     setDays((current) => {
       let next = current.map((day) => ({ ...day, items: day.items.filter((it) => it.stayGroupId !== stayGroupId) }));
       while (next.length <= checkOutIndex) {
@@ -1893,19 +2062,17 @@ export default function ItineraryEditor({
   );
   const scorePassing = Boolean(feasResult) && !resultStale && (displayScore ?? 0) >= 70;
 
-  // "Daily schedule has a clear start and end" has no backing rule yet (nothing in
-  // the feasibility check currently validates it), so it's shown whenever a check has
-  // run at all. Every other line below IS backed by a real hard-error rule — each only
+  // Each line is backed by a real hard-error rule — it only
   // counts as passed when its matching error isn't present in this result, so a
   // creator can see exactly which of their own past fixes is still holding and get an
   // early flag the moment an edit accidentally breaks one of them again.
   const passedChecklist = [
-    { label: "Daily schedule has a clear start and end", passed: true },
     { label: "All stops have pricing", passed: hardErrors.every((e) => e.error_code !== "MISSING_PRICE") },
     { label: "Accommodation is included", passed: hardErrors.every((e) => e.error_code !== "MISSING_ACCOMMODATION") },
     { label: "Every day has at least one activity", passed: hardErrors.every((e) => e.error_code !== "EMPTY_DAY") },
-    { label: "Flights have enough transfer time after landing", passed: hardErrors.every((e) => e.error_code !== "SHORT_TRANSFER") },
+    { label: "Flights have enough transfer time after landing", passed: hardErrors.every((e) => e.error_code !== "SHORT_TRANSFER" && e.error_code !== "ACTIVITY_BEFORE_LANDING") },
     { label: "No scheduling conflicts between activities", passed: hardErrors.every((e) => e.error_code !== "TIME_OVERLAP") },
+    { label: "Enough travel time between stops", passed: hardErrors.every((e) => e.error_code !== "SHORT_ACTIVITY_GAP") },
     { label: "Daily schedule leaves room for travel between stops", passed: hardErrors.every((e) => e.error_code !== "SCHEDULE_TOO_PACKED") },
     { label: "Package has at least one photo", passed: hardErrors.every((e) => e.error_code !== "MISSING_PHOTOS") },
     { label: "No banned competitor mentions", passed: hardErrors.every((e) => e.rule !== "BrandSafety") },
@@ -2030,6 +2197,7 @@ export default function ItineraryEditor({
     selectedHotelCheckOutDayOption,
     hotelNotes, setHotelNotes,
     createHotel,
+    hotelConflictMessage,
     creatorDraft, setCreatorDraft,
     creatorPhotos, setCreatorPhotos,
     addCreatorPhotos,
@@ -2189,9 +2357,10 @@ export default function ItineraryEditor({
                           />
                         </label>
                       </div>
+                      {editStayConflictMessage && <p className="hotel-stay-conflict" role="alert">{editStayConflictMessage}</p>}
                       <div className="stay-edit-actions">
                         <button type="button" className="stay-edit-cancel" onClick={() => setEditingStayGroupId(null)}>Cancel</button>
-                        <button type="button" className="stay-edit-save" disabled={!editStayCheckInDayId || !selectedEditStayCheckOutDayOption} onClick={() => updateHotelStayDays(item.stayGroupId!, editStayCheckInDayId!, selectedEditStayCheckOutDayOption.id)}>Save</button>
+                        <button type="button" className="stay-edit-save" disabled={!editStayCheckInDayId || !selectedEditStayCheckOutDayOption || Boolean(editStayConflictMessage)} onClick={() => updateHotelStayDays(item.stayGroupId!, editStayCheckInDayId!, selectedEditStayCheckOutDayOption.id)}>Save</button>
                       </div>
                     </div>
                   </dd> : <dd className="stat-with-action">
