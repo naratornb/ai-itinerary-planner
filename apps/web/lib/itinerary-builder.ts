@@ -428,6 +428,28 @@ export function flightArrivalDayOffset(
   return Math.round((arrivalDate - departureDate) / 86_400_000);
 }
 
+/**
+ * Where and when the traveller lands on the trip's arrival flight: the first flight,
+ * unless it's a lone flight on the last day (that's the trip home). An overnight
+ * flight lands on the following day. Null when there's no arrival flight or no
+ * landing time to go on.
+ */
+export function arrivalLanding(days: BuilderDay[]): { dayIndex: number; time: string; flight: TimelineItem } | null {
+  const flights = days.flatMap((day, dayIndex) =>
+    day.items.filter((item) => item.type === "FLIGHT").map((item) => ({ item, dayIndex })));
+  if (flights.length === 0) return null;
+  const { item, dayIndex } = flights[0];
+  if (flights.length === 1 && dayIndex === days.length - 1) return null;
+  if (!item.arrivalTime) return null;
+  const datedOffset = flightArrivalDayOffset(
+    item.departureDatetime, timezoneForIata(item.originIata),
+    item.arrivalDatetime, timezoneForIata(item.destinationIata),
+  );
+  const offset = datedOffset ?? (item.departureTime && item.arrivalTime < item.departureTime ? 1 : 0);
+  const landingDay = dayIndex + offset;
+  return landingDay < days.length ? { dayIndex: landingDay, time: item.arrivalTime, flight: item } : null;
+}
+
 /** Builds the editor from relative package days, with dated rows as a legacy fallback. */
 export function buildDaysFromPackage(pkg: CreatorPackageDetail): BuilderDay[] {
   const stayDates = [
@@ -488,7 +510,9 @@ export function buildDaysFromPackage(pkg: CreatorPackageDetail): BuilderDay[] {
       : dayIndexFor(activity.activity_date ?? null);
     days[dayIndex].items.push({
       id: nextId,
-      time: activity.start_time || "09:00",
+      // No start_time stays empty here — the ordering pass below slots it
+      // after the previous activity instead of faking a shared 09:00.
+      time: activity.start_time || "",
       type: "ACTIVITY",
       title: activity.activity_name || "Activity",
       price: `$${activity.price_aud ?? 0}`,
@@ -596,19 +620,38 @@ export function buildDaysFromPackage(pkg: CreatorPackageDetail): BuilderDay[] {
 
   // sequenceOrder comes from the DB and can go stale relative to `time` (e.g. after a
   // flight's local time gets corrected without its sequence_order being re-derived) —
-  // so when BOTH items have a genuine clock time, that's trusted as ground truth over
-  // sequenceOrder. sequenceOrder is only the tiebreaker for items that don't have a
-  // real time to compare (hotel Check-in/Overnight stay/Check-out rows), since sorting
-  // "Check-in" vs "Check-out" lexicographically wouldn't reflect their intended order.
-  for (const day of days) day.items.sort((a, b) => {
-    const aReal = REAL_TIME_PATTERN.test(a.time);
-    const bReal = REAL_TIME_PATTERN.test(b.time);
-    if (aReal && bReal) return a.time.localeCompare(b.time);
-    if (a.sequenceOrder !== undefined || b.sequenceOrder !== undefined) {
-      return (a.sequenceOrder ?? Number.MAX_SAFE_INTEGER) - (b.sequenceOrder ?? Number.MAX_SAFE_INTEGER);
+  // so items with a genuine clock time sort chronologically: flight-vs-activity order
+  // drives findTimeConflict/annotateItems downstream. The hotel rows carry no real
+  // clock time, so a band pins check-out to the day's start and the stay row to its
+  // end instead; sequenceOrder is only the tiebreaker for untimed items. Missing
+  // activity times then chain off the previous activity's end rather than all
+  // collapsing onto "09:00".
+  const dayBand = (item: TimelineItem) =>
+    item.type === "HOTEL" ? (item.stayMarker === "check-out" ? 0 : 3) : 1;
+  for (const day of days) {
+    day.items.sort((a, b) => {
+      const band = dayBand(a) - dayBand(b);
+      if (band !== 0) return band;
+      const aReal = REAL_TIME_PATTERN.test(a.time);
+      const bReal = REAL_TIME_PATTERN.test(b.time);
+      if (aReal && bReal) return a.time.localeCompare(b.time);
+      if (a.sequenceOrder !== undefined || b.sequenceOrder !== undefined) {
+        return (a.sequenceOrder ?? Number.MAX_SAFE_INTEGER) - (b.sequenceOrder ?? Number.MAX_SAFE_INTEGER);
+      }
+      return a.time.localeCompare(b.time);
+    });
+    let cursor = "09:00";
+    for (const item of day.items) {
+      if (item.type !== "ACTIVITY") continue;
+      if (REAL_TIME.test(item.time)) {
+        const end = getEndTime(item.time, item.duration ?? "0");
+        if (end > cursor) cursor = end;
+      } else {
+        item.time = cursor;
+        cursor = getEndTime(cursor, item.duration ?? "60");
+      }
     }
-    return a.time.localeCompare(b.time);
-  });
+  }
   return days;
 }
 
