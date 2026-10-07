@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { APP_ROUTES, creatorPackageRoute, routeFor } from "./routes";
+import { adminApprovalRoute, APP_ROUTES, creatorPackageRoute, routeFor } from "./routes";
 
 test("every migrated screen has a stable absolute route", () => {
   assert.deepEqual(APP_ROUTES, {
@@ -33,4 +33,8 @@ test("a package that is neither approved nor live opens in the editor", () => {
   assert.equal(creatorPackageRoute("package-1", "draft"), "/packages/editor/package-1");
   assert.equal(creatorPackageRoute("package-1", "pending_review"), "/packages/editor/package-1");
   assert.equal(creatorPackageRoute("package-1", "rejected"), "/packages/editor/package-1");
+});
+
+test("an administrator review path encodes the package id", () => {
+  assert.equal(adminApprovalRoute("package/id"), "/admin/approvals/package%2Fid");
 });

@@ -20,3 +20,7 @@ export function creatorPackageRoute(packageId: string, status: string): string {
   if (status === "approved") return `/packages/preview/${encodedId}`;
   return `/packages/editor/${encodedId}`;
 }
+
+export function adminApprovalRoute(packageId: string): string {
+  return `/admin/approvals/${encodeURIComponent(packageId)}`;
+}
