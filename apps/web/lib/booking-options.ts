@@ -24,6 +24,20 @@ export type CatalogOptions = {
   hotels: CatalogHotel[];
 };
 
+export function dedupeCatalogHotels(hotels: CatalogHotel[]): CatalogHotel[] {
+  const seen = new Set<string>();
+  return hotels.filter((hotel) => {
+    const key = `${hotel.hotel_name ?? ""}|${hotel.room_type ?? ""}|${hotel.price_per_night_aud ?? ""}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+export function visibleCatalogHotels(hotels: CatalogHotel[], expanded: boolean): CatalogHotel[] {
+  return expanded ? hotels : hotels.slice(0, 6);
+}
+
 /** Catalog flights departing on `date` (YYYY-MM-DD). */
 export function flightsOn(list: CatalogFlight[] | null | undefined, date: string | null): CatalogFlight[] {
   if (!date) return [];
@@ -58,4 +72,23 @@ export function estimateBookingTotal(opts: {
 }): number | null {
   if (opts.basePrice == null) return null;
   return opts.basePrice * opts.travelers + opts.flightDelta * opts.travelers + opts.hotelNightlyDelta * opts.nights;
+}
+
+export function canRequestBooking(summary: {
+  departure: string;
+  estimateTotal: number | null;
+  outboundRequired: boolean;
+  outboundId: string;
+  returnRequired: boolean;
+  returnId: string;
+  hotelRequired: boolean;
+  hotelId: string;
+}): boolean {
+  return Boolean(
+    summary.departure
+    && summary.estimateTotal !== null
+    && (!summary.outboundRequired || summary.outboundId)
+    && (!summary.returnRequired || summary.returnId)
+    && (!summary.hotelRequired || summary.hotelId),
+  );
 }
