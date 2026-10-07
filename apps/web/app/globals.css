@@ -373,9 +373,9 @@ button:focus-visible, textarea:focus-visible { outline: 3px solid var(--fc-focus
 .day-heading .package-title-button small { color: var(--fc-secondary); font-size: 14px; font-weight: 400; }
 .timeline-section > h3 { margin: 0; color: var(--fc-secondary); font-size: 12px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
 .day-photo-single { width: 100%; flex: 1 1 auto; display: flex; min-height: 220px; }
-.day-photo-single figure { position: relative; margin: 0; flex: 1 1 auto; display: flex; }
+.day-photo-single figure { position: relative; margin: 0; flex: 1 1 auto; display: flex; overflow: hidden; }
 .day-photo-single img, .day-photo-single .photo-add { width: 100%; height: 100%; border-radius: 10px; }
-.day-photo-single img { object-fit: cover; display: block; }
+.day-photo-single img { position: absolute; inset: 0; object-fit: cover; display: block; }
 .photo-add { display: grid; place-content: center; justify-items: center; gap: 8px; background: #fff; color: var(--fc-secondary); border: 1px dashed #bdbdbd; border-radius: 10px; cursor: pointer; transition: border-color 140ms ease-out, background 140ms ease-out; }
 .photo-add:hover { border-color: var(--fc-blue); background: var(--fc-info-subtle); }
 .photo-add input { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; }
@@ -452,7 +452,7 @@ button:focus-visible, textarea:focus-visible { outline: 3px solid var(--fc-focus
 .item-action-icon:hover { background: var(--fc-surface-subtle); color: var(--fc-ink); }
 .item-action-icon-delete:hover { background: var(--fc-danger-subtle); color: var(--fc-red); }
 .item-copy { align-self: center; padding: 16px 20px; }
-.item-copy-head { min-height: 24px; margin-left: -12px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.item-copy-head { min-height: 24px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .item-copy-head .stay-marker { margin-left: auto; font-size: 12px; line-height: 16px; font-weight: 500; letter-spacing: .02em; }
 .timeline-detail-panel { margin-top: 10px; border: 1px solid var(--fc-border); border-radius: 12px; background: #fff; overflow: hidden; }
 .timeline-detail-panel .detail-card { padding: 20px; }
@@ -520,6 +520,9 @@ figure .remove-photo-btn { position: absolute; top: 6px; right: 6px; width: 20px
 figure .remove-photo-btn svg { width: 10px; height: 10px; transform: rotate(45deg); }
 .day-photo-single .change-photo-btn { position: absolute; left: 10px; bottom: 10px; min-height: 32px; padding: 0 12px; display: inline-flex; align-items: center; border: 0; border-radius: 7px; background: rgba(15,23,42,.85); box-shadow: 0 1px 4px rgba(0,0,0,.35); color: #fff; font-size: 12px; font-weight: 600; cursor: pointer; }
 .day-photo-single .change-photo-btn input { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; }
+.day-photo-single .remove-photo-btn { top: 10px; right: 10px; width: 28px; height: 28px; background: #fff; color: var(--fc-ink); box-shadow: 0 2px 8px rgba(33,33,33,.2); }
+.day-photo-single .remove-photo-btn svg { width: 16px; height: 16px; }
+.day-photo-single .remove-photo-btn:hover { background: var(--fc-danger-subtle); color: var(--fc-red); }
 figure .remove-photo-btn:hover { background: rgba(15,23,42,.8); }
 figure .remove-photo-btn:focus-visible { outline: 2px solid var(--fc-focus-ring); outline-offset: 1px; }
 .edit-photo label { width: 132px; height: 104px; display: grid; place-content: center; justify-items: center; gap: 6px; border: 1px dashed #bdbdbd; border-radius: 8px; background: #fff; color: var(--fc-secondary); font-size: 12px; cursor: pointer; transition: border-color 140ms ease-out, background 140ms ease-out; }.edit-photo label:hover { border-color: var(--fc-blue); background: var(--fc-info-subtle); color: var(--fc-blue); }.edit-photo label input { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
