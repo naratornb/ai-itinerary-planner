@@ -1,3 +1,5 @@
+import type { CreatorPackageDetail } from "./creator-api";
+
 export type ApprovalSort = "submitted_at_asc" | "submitted_at_desc";
 
 export type AdminApprovalPackage = {
@@ -31,6 +33,59 @@ export type AdminUser = {
   id: string | null;
   username: string;
   email: string;
+};
+
+export type AdminPackageCreator = {
+  full_name: string;
+  avatar_url: string | null;
+  influencer_profiles: Array<{
+    bio?: string | null;
+    instagram_handle?: string | null;
+    tiktok_handle?: string | null;
+    follower_count?: number | null;
+    verified?: boolean;
+  }>;
+};
+
+export type AdminApprovalRecord = {
+  approval_id?: string;
+  package_id?: string;
+  reviewer_id?: string;
+  decision: "approved" | "rejected";
+  rejection_reason?: string | null;
+  reviewed_at?: string;
+};
+
+export type AdminPackagePricing = {
+  flights_total: number;
+  hotels_total: number;
+  activities_total: number;
+  components_total: number;
+  base_price_aud: number | null;
+};
+
+export type AdminPackageDetail = Omit<
+  CreatorPackageDetail,
+  "destination_city" | "destination_country" | "base_price_aud" | "status"
+> & {
+  destination_city: string | null;
+  destination_country: string | null;
+  base_price_aud: number | null;
+  status: string;
+  creator_id: string;
+  created_at: string;
+  submitted_at?: string | null;
+  published_at?: string | null;
+  cover_image_url?: string | null;
+  vibes?: string[];
+  creator?: AdminPackageCreator | null;
+  latest_approval?: AdminApprovalRecord | null;
+  pricing?: AdminPackagePricing | null;
+};
+
+export type AdminDecisionResponse = {
+  package: AdminApprovalPackage;
+  approval: AdminApprovalRecord;
 };
 
 export class AdminApiError extends Error {
@@ -85,6 +140,28 @@ function isApprovalListResponse(value: unknown): value is ApprovalListResponse {
   return ["total", "page", "per_page", "total_pages"].every(
     (key) => typeof meta[key] === "number",
   );
+}
+
+function isAdminPackageDetail(value: unknown): value is AdminPackageDetail {
+  if (!value || typeof value !== "object") return false;
+  const item = value as Record<string, unknown>;
+  return typeof item.package_id === "string"
+    && typeof item.title === "string"
+    && Array.isArray(item.flights)
+    && Array.isArray(item.hotels)
+    && Array.isArray(item.activities)
+    && Array.isArray(item.days);
+}
+
+function isDecisionResponse(value: unknown): value is AdminDecisionResponse {
+  if (!value || typeof value !== "object") return false;
+  const item = value as { package?: unknown; approval?: unknown };
+  if (!item.package || typeof item.package !== "object") return false;
+  if (!item.approval || typeof item.approval !== "object") return false;
+  const pkg = item.package as Record<string, unknown>;
+  const approval = item.approval as Record<string, unknown>;
+  return typeof pkg.package_id === "string"
+    && (approval.decision === "approved" || approval.decision === "rejected");
 }
 
 export async function fetchPendingApprovals(
@@ -152,5 +229,78 @@ export async function fetchAdminUsers(
       username: typeof item.username === "string" ? item.username : "",
       email: typeof item.email === "string" ? item.email : "",
     };
+  });
+}
+
+export async function fetchAdminPackage(
+  fetcher: typeof fetch,
+  apiUrl: string,
+  token: string,
+  packageId: string,
+): Promise<AdminPackageDetail> {
+  const response = await fetcher(`${apiBase(apiUrl)}/packages/${encodeURIComponent(packageId)}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const body = await checkedJson(response, "Unable to load this package for review.");
+  if (!isAdminPackageDetail(body)) {
+    throw new AdminApiError("Unable to load this package for review.", "request", response.status);
+  }
+  return body;
+}
+
+async function postDecision(
+  fetcher: typeof fetch,
+  apiUrl: string,
+  token: string,
+  packageId: string,
+  action: "approve" | "reject",
+  payload: Record<string, string>,
+): Promise<AdminDecisionResponse> {
+  const response = await fetcher(
+    `${apiBase(apiUrl)}/approvals/${encodeURIComponent(packageId)}/${action}`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    },
+  );
+  const body = await checkedJson(response, `Unable to ${action} this package.`);
+  if (!isDecisionResponse(body)) {
+    throw new AdminApiError(`Unable to ${action} this package.`, "request", response.status);
+  }
+  return body;
+}
+
+export function approveAdminPackage(
+  fetcher: typeof fetch,
+  apiUrl: string,
+  token: string,
+  packageId: string,
+  notes: string,
+): Promise<AdminDecisionResponse> {
+  return postDecision(
+    fetcher,
+    apiUrl,
+    token,
+    packageId,
+    "approve",
+    notes.trim() ? { notes: notes.trim() } : {},
+  );
+}
+
+export function rejectAdminPackage(
+  fetcher: typeof fetch,
+  apiUrl: string,
+  token: string,
+  packageId: string,
+  rejectionReason: string,
+  notes: string,
+): Promise<AdminDecisionResponse> {
+  return postDecision(fetcher, apiUrl, token, packageId, "reject", {
+    rejection_reason: rejectionReason.trim(),
+    ...(notes.trim() ? { notes: notes.trim() } : {}),
   });
 }

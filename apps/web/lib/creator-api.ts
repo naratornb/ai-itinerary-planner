@@ -108,6 +108,15 @@ export type CreatorMediaDetail = {
   caption?: string | null;
 };
 
+export type CreatorApprovalRecord = {
+  approval_id?: string;
+  package_id?: string;
+  reviewer_id?: string;
+  decision: "approved" | "rejected";
+  rejection_reason?: string | null;
+  reviewed_at?: string | null;
+};
+
 export type CreatorPackageDetail = {
   package_id: string;
   title: string;
@@ -129,6 +138,7 @@ export type CreatorPackageDetail = {
   activities: CreatorActivityDetail[];
   days: CreatorPackageDay[];
   media?: CreatorMediaDetail[];
+  latest_approval?: CreatorApprovalRecord | null;
 };
 
 type ProfileRow = {

@@ -49,11 +49,13 @@ function render(overrides: Partial<AdminReviewDashboardViewProps> = {}): string 
     packages,
     meta,
     sort: "submitted_at_asc",
+    perPage: 20,
     oldestSubmittedAt: packages[0].submitted_at,
     users: [{ id: "creator-1", username: "Mina Travels", email: "mina@example.com" }],
     now: "2026-10-07T12:00:00Z",
     isUpdating: false,
     onSortChange: noop,
+    onPerPageChange: noop,
     onPageChange: noop,
     onRefresh: noop,
     onSignOut: noop,
@@ -73,8 +75,22 @@ test("updating a ready queue keeps its controls mounted and announces progress",
 
   assert.match(html, /aria-busy="true"/);
   assert.match(html, /Updating review queue/);
-  assert.match(html, /Sort queue/);
-  assert.match(html, />Refresh<\/button>/);
+  assert.match(html, /Sort by/);
+  assert.match(html, /aria-label="Refresh queue"/);
+});
+
+test("queue toolbar exposes only API-supported sort and page-size controls", () => {
+  const html = render();
+
+  assert.match(html, /<span>Sort by<\/span>/);
+  assert.match(html, /<span>Rows<\/span>/);
+  assert.match(html, /<option value="20" selected="">20<\/option>/);
+  assert.match(html, /<option value="50">50<\/option>/);
+  assert.match(html, /<option value="100">100<\/option>/);
+  assert.match(html, /<svg[^>]*aria-hidden="true"[^>]*class="admin-review-refresh-icon"/);
+  assert.match(html, /aria-label="Refresh queue"/);
+  assert.doesNotMatch(html, /<span>Refresh<\/span>/);
+  assert.doesNotMatch(html, /Search packages|Filter by/);
 });
 
 test("empty view teaches the administrator that the queue is clear", () => {

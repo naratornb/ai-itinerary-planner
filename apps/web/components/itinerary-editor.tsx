@@ -45,6 +45,7 @@ import { APP_ROUTES } from "../lib/routes";
 import { iataOf } from "../lib/ai/itinerary";
 import { ACTIVITY_GAP_MIN, minutesToTime, TRANSFER_BUFFER_MIN } from "../lib/feasibility";
 import { supabase } from "../lib/supabase/client";
+import CreatorRevisionFeedback from "./creator-revision-feedback";
 import Icon from "./icon";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -2250,6 +2251,11 @@ export default function ItineraryEditor({
       {isLocked && <div className="locked-status-banner" role="status">
         This package is {(STATUS_LABELS[packageStatus] ?? packageStatus).toLowerCase()} and can no longer be edited here.
       </div>}
+
+      <CreatorRevisionFeedback
+        status={packageStatus}
+        approval={packageDetail.latest_approval}
+      />
 
       <nav className="day-strip" aria-label="Itinerary days">
         <button type="button" className="day-scroll-btn" disabled={!dayScroll.canLeft} onClick={() => scrollDayTabs(-1)} aria-label="Scroll days left"><Icon name="chevron" size={18} /></button>

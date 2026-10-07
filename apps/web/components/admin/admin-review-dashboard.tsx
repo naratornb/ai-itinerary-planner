@@ -28,11 +28,12 @@ import { adminApprovalRoute, APP_ROUTES } from "../../lib/routes";
 import { supabase } from "../../lib/supabase/client";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-const PAGE_SIZE = 20;
+const DEFAULT_PAGE_SIZE = 20;
+const PAGE_SIZE_OPTIONS = [20, 50, 100] as const;
 const EMPTY_META: ApprovalListResponse["meta"] = {
   total: 0,
   page: 1,
-  per_page: PAGE_SIZE,
+  per_page: DEFAULT_PAGE_SIZE,
   total_pages: 0,
 };
 
@@ -43,12 +44,14 @@ export type AdminReviewDashboardViewProps = {
   packages: AdminApprovalPackage[];
   meta: ApprovalListResponse["meta"];
   sort: ApprovalSort;
+  perPage: number;
   oldestSubmittedAt: string | null;
   users: AdminUser[];
   now?: Date | string;
   isUpdating: boolean;
   errorMessage?: string;
   onSortChange: (sort: ApprovalSort) => void;
+  onPerPageChange: (perPage: number) => void;
   onPageChange: (page: number) => void;
   onRefresh: () => void;
   onSignOut: () => void;
@@ -237,12 +240,14 @@ export function AdminReviewDashboardView(props: AdminReviewDashboardViewProps): 
     packages,
     meta,
     sort,
+    perPage,
     oldestSubmittedAt,
     users,
     now,
     isUpdating,
     errorMessage,
     onSortChange,
+    onPerPageChange,
     onPageChange,
     onRefresh,
     onSignOut,
@@ -309,7 +314,7 @@ export function AdminReviewDashboardView(props: AdminReviewDashboardViewProps): 
                   </div>
                   <div className="admin-review-control-actions">
                     <label>
-                      <span>Sort queue</span>
+                      <span>Sort by</span>
                       <select
                         value={sort}
                         onChange={(event) => onSortChange(event.target.value as ApprovalSort)}
@@ -318,7 +323,27 @@ export function AdminReviewDashboardView(props: AdminReviewDashboardViewProps): 
                         <option value="submitted_at_desc">Newest first</option>
                       </select>
                     </label>
-                    <button className="admin-review-secondary-button" type="button" onClick={onRefresh}>Refresh</button>
+                    <label className="admin-review-page-size">
+                      <span>Rows</span>
+                      <select
+                        value={perPage}
+                        onChange={(event) => onPerPageChange(Number(event.target.value))}
+                      >
+                        {PAGE_SIZE_OPTIONS.map((option) => (
+                          <option key={option} value={option}>{option}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <button
+                      aria-label="Refresh queue"
+                      className="admin-review-secondary-button admin-review-refresh-button"
+                      type="button"
+                      onClick={onRefresh}
+                    >
+                      <svg aria-hidden="true" className="admin-review-refresh-icon" viewBox="0 0 24 24" fill="none">
+                        <path d="M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7" />
+                      </svg>
+                    </button>
                   </div>
                 </div>
 
@@ -367,6 +392,7 @@ export default function AdminReviewDashboard() {
   const [isUpdating, setIsUpdating] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [sort, setSort] = useState<ApprovalSort>("submitted_at_asc");
+  const [perPage, setPerPage] = useState(DEFAULT_PAGE_SIZE);
   const [page, setPage] = useState(1);
   const [refreshKey, setRefreshKey] = useState(0);
 
@@ -392,7 +418,7 @@ export default function AdminReviewDashboard() {
       try {
         const response = await fetchPendingApprovals(fetch, API_URL, sessionAction.accessToken, {
           page,
-          perPage: PAGE_SIZE,
+          perPage,
           sort,
         });
         if (cancelled || !requestSequenceIsCurrent(sequence, activeRequest.current)) return;
@@ -446,7 +472,7 @@ export default function AdminReviewDashboard() {
     return () => {
       cancelled = true;
     };
-  }, [page, refreshKey, router, sort]);
+  }, [page, perPage, refreshKey, router, sort]);
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();
@@ -459,6 +485,7 @@ export default function AdminReviewDashboard() {
       packages={packages}
       meta={meta}
       sort={sort}
+      perPage={perPage}
       oldestSubmittedAt={oldestSubmittedAt}
       users={users}
       now={loadedAt ?? undefined}
@@ -469,6 +496,12 @@ export default function AdminReviewDashboard() {
         setErrorMessage("");
         setPage(1);
         setSort(nextSort);
+      }}
+      onPerPageChange={(nextPerPage) => {
+        setIsUpdating(true);
+        setErrorMessage("");
+        setPage(1);
+        setPerPage(nextPerPage);
       }}
       onPageChange={(nextPage) => {
         setIsUpdating(true);
