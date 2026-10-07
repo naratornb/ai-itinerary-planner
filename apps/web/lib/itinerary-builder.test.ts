@@ -10,6 +10,7 @@ import {
   daySubtitle,
   extractClockTimeInZone,
   arrivalLanding,
+  findDuplicateFlight,
   findStayConflict,
   flightArrivalDayOffset,
   flightDurationMinutes,
@@ -27,7 +28,7 @@ import {
   type TimelineItem,
 } from "./itinerary-builder";
 import type { CopilotSuggestionV1 } from "./copilot";
-import type { CreatorPackageDetail } from "./creator-api";
+import type { CreatorFlightDetail, CreatorPackageDetail } from "./creator-api";
 
 const firstItem: TimelineItem = {
   id: 1,
@@ -779,6 +780,55 @@ test("summarizePackageComponents counts a multi-night stay as one hotel, not one
 
 test("summarizePackageComponents of no days is all zero", () => {
   assert.deepEqual(summarizePackageComponents([]), { flightCount: 0, hotelCount: 0, activityCount: 0 });
+});
+
+const qf25Catalog: CreatorFlightDetail = {
+  flight_id: "fl-9",
+  airline: "Qantas",
+  flight_number: "QF25",
+  origin_iata: "SYD",
+  destination_iata: "NRT",
+  departure_datetime: "2026-07-12T20:00:00Z",
+  cabin_class: null,
+  price_aud: 850,
+};
+
+const qf25Item: TimelineItem = {
+  ...firstItem,
+  id: 9,
+  type: "FLIGHT",
+  title: "SYD to NRT",
+  sourceId: "fl-9",
+  airline: "Qantas",
+  flightNumber: "QF25",
+  originIata: "SYD",
+  destinationIata: "NRT",
+  departureDatetime: "2026-07-12T20:00:00Z",
+};
+
+test("findDuplicateFlight catches the same catalog flight already on the day", () => {
+  assert.equal(findDuplicateFlight([firstItem, qf25Item], qf25Catalog)?.id, 9);
+});
+
+test("findDuplicateFlight matches a saved flight by departure timestamp", () => {
+  const item = { ...qf25Item, id: 11, sourceId: undefined };
+  assert.equal(findDuplicateFlight([item], { ...qf25Catalog, flight_id: null })?.id, 11);
+});
+
+test("findDuplicateFlight matches a date-free flight by number and route", () => {
+  const item = { ...qf25Item, id: 12, sourceId: undefined, departureDatetime: undefined };
+  const dateFree = { ...qf25Catalog, flight_id: null, departure_datetime: null };
+  assert.equal(findDuplicateFlight([item], dateFree)?.id, 12);
+});
+
+test("findDuplicateFlight ignores other flights and non-flight items", () => {
+  const other = { ...qf25Catalog, flight_id: "fl-2", departure_datetime: "2026-07-13T09:00:00Z" };
+  assert.equal(findDuplicateFlight([firstItem, qf25Item], other), null);
+});
+
+test("findDuplicateFlight allows the same flight number on a different route", () => {
+  const returnLeg = { ...qf25Catalog, flight_id: null, departure_datetime: null, origin_iata: "NRT", destination_iata: "SYD" };
+  assert.equal(findDuplicateFlight([qf25Item], returnLeg), null);
 });
 
 // A hotel stay as createHotel spreads it: check-in, overnight rows, then a check-out row.

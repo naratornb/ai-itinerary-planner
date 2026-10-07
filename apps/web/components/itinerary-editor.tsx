@@ -14,6 +14,7 @@ import {
   computePackagePrice,
   copilotSuggestionToTimelineItem,
   extractClockTimeInZone,
+  findDuplicateFlight,
   findStayConflict,
   flightArrivalDayOffset,
   flightDurationMinutes,
@@ -239,6 +240,29 @@ export function removeItemPhotoFromDays(days: BuilderDay[], itemId: number, medi
       ? { ...item, photos: item.photos?.filter((photo) => photo.media_id !== mediaId) }
       : item),
   }));
+}
+
+// Flights resolve their detail data from the item itself — both
+// buildDaysFromPackage and addSelectedFlight stamp every field on it. The
+// old flights[Nth-item] positional lookup broke for flights added via
+// "+ Add Stop" (packageDetail.flights never grows): they resolved to
+// nothing and couldn't be opened or edited, and one inserted ahead of a
+// package flight shifted every later card onto the wrong record.
+export function flightForItem(item: TimelineItem): CreatorFlightDetail | undefined {
+  if (item.type !== "FLIGHT") return undefined;
+  return {
+    flight_id: item.sourceId ?? null,
+    airline: item.airline ?? null,
+    flight_number: item.flightNumber ?? null,
+    origin_iata: item.originIata ?? null,
+    destination_iata: item.destinationIata ?? null,
+    departure_datetime: item.departureDatetime ?? null,
+    arrival_datetime: item.arrivalDatetime ?? null,
+    departure_time: item.departureTime ?? null,
+    arrival_time: item.arrivalTime ?? null,
+    cabin_class: item.cabinClass ?? null,
+    price_aud: null,
+  };
 }
 
 // The inverse of getEndTime(): how far back a stop's start time has to move
@@ -703,6 +727,7 @@ type AddStopFlowProps = {
   selectedFlightIndex: number | null;
   setSelectedFlightIndex: Dispatch<SetStateAction<number | null>>;
   addSelectedFlight: () => void;
+  flightDuplicateMessage: string | null;
   availableHotels: CreatorHotelDetail[];
   selectedHotelIndex: number | null;
   setSelectedHotelIndex: Dispatch<SetStateAction<number | null>>;
@@ -799,7 +824,8 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
                       })}
                       {p.matchingFlights.length === 0 && <p>No matching flights found.</p>}
                     </div>
-                    <div className="activity-form-actions"><button className="publish-button" disabled={p.selectedFlightIndex === null} onClick={p.addSelectedFlight}>Add as reference flight</button></div>
+                    {p.flightDuplicateMessage && <p className="field-conflict" role="alert">{p.flightDuplicateMessage}</p>}
+                    <div className="activity-form-actions"><button className="publish-button" disabled={p.selectedFlightIndex === null || Boolean(p.flightDuplicateMessage)} onClick={p.addSelectedFlight}>Add as reference flight</button></div>
                   </>}
 
                   {p.addFlow === "hotel" && <>
@@ -1095,8 +1121,7 @@ export default function ItineraryEditor({
   const hotelForItem = (item: TimelineItem) =>
     item.type === "HOTEL" && item.stayGroupId ? hotelByStayGroup.get(item.stayGroupId) : undefined;
   const routeStopBases = items.map((item, index) => {
-    const flightIdx = items.slice(0, index).filter(({ type }) => type === "FLIGHT").length;
-    const flight = item.type === "FLIGHT" ? flights[flightIdx] : undefined;
+    const flight = flightForItem(item);
     const hotel = hotelForItem(item);
     const hint = [item.address, item.title, flight?.destination_iata, hotel?.address, hotel?.city]
       .filter((part): part is string => Boolean(part))
@@ -1972,6 +1997,7 @@ export default function ItineraryEditor({
             return minutes === undefined ? undefined : String(minutes);
           })(),
       cabinClass: flight.cabin_class ?? undefined,
+      sourceId: flight.flight_id ?? undefined,
     });
     setFlightSearch("");
     setSelectedFlightIndex(null);
@@ -1983,6 +2009,11 @@ export default function ItineraryEditor({
     && (!flightAirlineFilter || flight.airline === flightAirlineFilter),
   );
   const selectedHotelOption = selectedHotelIndex !== null ? (catalogHotels ?? hotels)[selectedHotelIndex] : undefined;
+
+  const selectedFlight = selectedFlightIndex !== null ? matchingFlights[selectedFlightIndex] : undefined;
+  const flightDuplicateMessage = selectedFlight && findDuplicateFlight(activeDayData?.items ?? [], selectedFlight)
+    ? `Day ${activeDayData?.day} already has this flight. Pick a different flight or remove the existing one first.`
+    : null;
 
   const hotelCheckInDayIndex = hotelCheckInDayId === NEW_DAY_OPTION_ID
     ? days.length
@@ -2301,6 +2332,7 @@ export default function ItineraryEditor({
     matchingFlights,
     selectedFlightIndex, setSelectedFlightIndex,
     addSelectedFlight,
+    flightDuplicateMessage,
     availableHotels: catalogHotels ?? hotels,
     selectedHotelIndex, setSelectedHotelIndex,
     moreHotelsOpen, setMoreHotelsOpen,
@@ -2420,8 +2452,7 @@ export default function ItineraryEditor({
             <h3>Timeline</h3>
             <div className={`timeline-list${items.length === 0 ? " is-empty" : ""}`}>
               {items.map((item, index) => {
-                const flightIndex = items.slice(0, index).filter(({ type }) => type === "FLIGHT").length;
-                const flight = item.type === "FLIGHT" ? flights[flightIndex] : undefined;
+                const flight = flightForItem(item);
                 const referenceFlight = item.type === "FLIGHT" ? referenceFlightPresentation(item) : null;
                 const hotel = hotelForItem(item);
                 const hasHotelDetails = item.type === "HOTEL" && (Boolean(hotel) || Boolean(item.roomType));
