@@ -1,0 +1,149 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+
+import { AdminApiError, type AdminApprovalPackage } from "../../lib/admin-api";
+import {
+  AdminReviewDashboardView,
+  dashboardFailure,
+  dashboardSessionAction,
+  nextDashboardPage,
+  type AdminReviewDashboardViewProps,
+} from "./admin-review-dashboard";
+
+const packages: AdminApprovalPackage[] = [
+  {
+    package_id: "package/1",
+    title: "Bali Slow Travel Reset",
+    destination_country: "Indonesia",
+    destination_city: "Denpasar",
+    duration_days: 10,
+    base_price_aud: 3150,
+    status: "pending_review",
+    creator_id: "creator-1",
+    created_at: "2026-09-29T01:00:00Z",
+    submitted_at: "2026-10-04T12:00:00Z",
+  },
+  {
+    package_id: "package-2",
+    title: "Tokyo Street Food Week",
+    destination_country: "Japan",
+    destination_city: "Tokyo",
+    duration_days: 7,
+    base_price_aud: 3890,
+    status: "pending_review",
+    creator_id: "abcdef123456",
+    created_at: "2026-10-01T01:00:00Z",
+    submitted_at: "2026-10-07T07:00:00Z",
+  },
+];
+
+const meta = { total: 2, page: 1, per_page: 20, total_pages: 1 };
+const noop = () => undefined;
+
+function render(overrides: Partial<AdminReviewDashboardViewProps> = {}): string {
+  const props: AdminReviewDashboardViewProps = {
+    status: "ready",
+    packages,
+    meta,
+    sort: "submitted_at_asc",
+    oldestSubmittedAt: packages[0].submitted_at,
+    users: [{ id: "creator-1", username: "Mina Travels", email: "mina@example.com" }],
+    now: "2026-10-07T12:00:00Z",
+    onSortChange: noop,
+    onPageChange: noop,
+    onRefresh: noop,
+    onSignOut: noop,
+    ...overrides,
+  };
+  return renderToStaticMarkup(createElement(AdminReviewDashboardView, props));
+}
+
+test("loading view exposes a busy state and stable skeletons", () => {
+  const html = render({ status: "loading", packages: [] });
+  assert.match(html, /aria-busy="true"/);
+  assert.match(html, /admin-review-skeleton/);
+});
+
+test("empty view teaches the administrator that the queue is clear", () => {
+  assert.match(render({ status: "empty", packages: [], meta: { ...meta, total: 0 } }), /All caught up/);
+});
+
+test("forbidden view explains access and links back to the marketplace", () => {
+  const html = render({ status: "forbidden", packages: [] });
+  assert.match(html, /Administrator access required/);
+  assert.match(html, /href="\/marketplace"/);
+});
+
+test("request failure is announced and provides a retry action", () => {
+  const html = render({ status: "error", packages: [], errorMessage: "Queue unavailable" });
+  assert.match(html, /role="alert"/);
+  assert.match(html, /Queue unavailable/);
+  assert.match(html, />Try again<\/button>/);
+});
+
+test("ready view shows real queue details in accessible desktop and mobile structures", () => {
+  const html = render();
+
+  assert.match(html, /Pending review/);
+  assert.match(html, />2<\/strong>/);
+  assert.match(html, /Oldest waiting/);
+  assert.match(html, /3 days/);
+  assert.match(html, /Bali Slow Travel Reset/);
+  assert.match(html, /Denpasar, Indonesia/);
+  assert.match(html, /Mina Travels/);
+  assert.match(html, /4 Oct 2026/);
+  assert.match(html, /10 days/);
+  assert.match(html, /\$3,150/);
+  assert.match(html, /Tokyo Street Food Week/);
+  assert.match(html, /Creator abcdef12/);
+  assert.match(html, /<caption[^>]*>Packages waiting for review<\/caption>/);
+  assert.match(html, /<th scope="col">Package<\/th>/);
+  assert.match(html, /aria-label="Pending review packages for mobile"/);
+  assert.match(html, /href="\/admin\/approvals\/package%2F1"/);
+  assert.match(html, /aria-label="Review Bali Slow Travel Reset"/);
+  assert.doesNotMatch(html, />Approve<|>Reject</);
+  assert.ok((html.match(/Bali Slow Travel Reset/g) ?? []).length >= 4);
+});
+
+test("ready view presents a missing submission timestamp without a broken waiting label", () => {
+  const html = render({
+    packages: [{ ...packages[0], submitted_at: null }],
+    oldestSubmittedAt: null,
+    meta: { ...meta, total: 1 },
+  });
+
+  assert.match(html, /Not available/);
+  assert.doesNotMatch(html, /Not available waiting/);
+});
+
+test("dashboardSessionAction redirects without a token and loads with one", () => {
+  assert.deepEqual(dashboardSessionAction(null), { type: "redirect" });
+  assert.deepEqual(dashboardSessionAction("access-token"), {
+    type: "load",
+    accessToken: "access-token",
+  });
+});
+
+test("dashboardFailure maps authentication, authorization, and retry outcomes", () => {
+  assert.deepEqual(
+    dashboardFailure(new AdminApiError("Expired", "unauthenticated", 401)),
+    { type: "redirect" },
+  );
+  assert.deepEqual(
+    dashboardFailure(new AdminApiError("Forbidden", "forbidden", 403)),
+    { type: "forbidden" },
+  );
+  assert.deepEqual(dashboardFailure(new Error("Network down")), {
+    type: "error",
+    message: "Network down",
+  });
+});
+
+test("nextDashboardPage backs up from an empty later page only", () => {
+  const emptyResponse = { data: [], meta: { total: 20, page: 2, per_page: 20, total_pages: 1 } };
+  assert.equal(nextDashboardPage(2, emptyResponse), 1);
+  assert.equal(nextDashboardPage(1, { ...emptyResponse, meta: { ...emptyResponse.meta, page: 1 } }), 1);
+  assert.equal(nextDashboardPage(2, { ...emptyResponse, data: packages }), 2);
+});
