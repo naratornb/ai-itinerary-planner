@@ -47,6 +47,11 @@
       "desktop-width": { "$value": "340px", "$type": "dimension", "$description": "Desktop editor sidebar width" },
       "mobile-breakpoint": { "$value": "700px", "$type": "dimension", "$description": "Full-viewport Co-Pilot transition" },
       "composer-min-height": { "$value": "94px", "$type": "dimension", "$description": "Mock request composer height" }
+    },
+    "admin-review": {
+      "summary-card-min-height": { "$value": "112px", "$type": "dimension", "$description": "Minimum height for administrator queue summary cards" },
+      "queue-row-min-height": { "$value": "72px", "$type": "dimension", "$description": "Minimum height for desktop review queue rows" },
+      "mobile-breakpoint": { "$value": "720px", "$type": "dimension", "$description": "Breakpoint where the review queue switches from table rows to cards" }
     }
   },
   "$extensions": {

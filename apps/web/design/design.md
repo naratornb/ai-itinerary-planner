@@ -1,8 +1,8 @@
 ---
 version: anydesign-1
 name: Influencer Travel Marketplace web experience
-source: apps/web
-captured_at: 2026-09-14
+source: apps/web and supplied admin approval dashboard wireframe
+captured_at: 2026-10-07
 description: |
   An energetic travel marketplace and creator workspace built around a strict division of
   colour roles. Saturated red establishes the product environment, blue identifies actions
@@ -109,6 +109,17 @@ components:
     textColor: "{colors.text-primary}"
     rounded: "{rounded.lg}"
     padding: 16px
+  admin-review-summary:
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.text-primary}"
+    rounded: "{rounded.md}"
+    minHeight: 112px
+  admin-review-queue:
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.text-primary}"
+    rounded: "{rounded.md}"
+    rowMinHeight: 72px
+    mobileBreakpoint: 720px
 ---
 
 # Design Analysis — Influencer Travel Marketplace web experience
@@ -121,14 +132,14 @@ components:
 
 ## Source
 
-- **Source type**: Local Next.js application, CSS design tokens, and current routed UI.
-- **Path / URL**: `apps/web`
-- **Capture method**: Source inspection of page routes, component states, global CSS, and focused desktop previews.
-- **Detected limitations**: Desktop creation flows have the strongest visual evidence. Mobile rules are present in CSS but have not received equivalent visual QA. Destination-specific recommended months and temperatures are unavailable.
+- **Source type**: Local Next.js application, CSS design tokens, current routed UI, and supplied administrator dashboard wireframe.
+- **Path / URL**: `apps/web` plus the conversation reference image.
+- **Capture method**: Source inspection of page routes, component states, global CSS, focused desktop previews, and direct visual analysis of the wireframe.
+- **Detected limitations**: The administrator reference shows desktop hierarchy only and includes historical filters and metrics unsupported by the current API. Those unsupported controls are intentionally omitted. Mobile rules are derived from the existing responsive system and require implementation QA.
 
 ## TL;DR
 
-The experience combines an energetic marketplace with a task-focused creator workspace. `{colors.brand}` (#D40119) identifies the environment, `{colors.action}` (#0072EA) marks interaction, and border-first white surfaces preserve clarity across the dashboard, guided builders, editor, and package detail views.
+The experience combines an energetic marketplace with task-focused creator and administrator workspaces. `{colors.brand}` (#D40119) identifies the environment, `{colors.action}` (#0072EA) marks interaction, and border-first white surfaces preserve clarity across the dashboard, guided builders, editor, package detail, and review-queue views.
 
 ## 1. Visual identity
 
@@ -320,6 +331,20 @@ Default boundaries use `{colors.border}` (#E0E0E0) at 1px or 1.5px. Selected car
 - **Composition**: 340px desktop sidebar that becomes a full-viewport mobile sheet below 700px.
 - **Confidence**: ✅ high
 
+#### Admin Review Summary
+
+- **What it is**: Two quiet operational summaries for the real pending-review total and the age of the oldest submission.
+- **Composition**: Border-first `{colors.surface}` (#FFFFFF) cards with `{rounded.md}` (12px) corners, a 112px minimum height, a compact label, and a prominent value.
+- **Usage rule**: These cards summarize current queue pressure; they do not introduce approved-today, rejected, or other historical metrics unavailable from the existing contract.
+- **Confidence**: ✅ high
+
+#### Admin Review Queue
+
+- **What it is**: A text-first pending-package queue with sort, refresh, pagination, and one `Review` action per package.
+- **Composition**: Desktop rows use a 72px minimum height on a neutral white surface with restrained separators. Below 720px, each row becomes a bordered card with the same explicitly labelled metadata and action.
+- **Interaction rule**: `{colors.action}` (#0072EA) is reserved for links, focus, and controls. Approve and reject actions remain on the separate review page.
+- **Confidence**: ✅ high
+
 ## 4. Layout & Composition
 
 ### 4.1 Grid & containers
@@ -337,6 +362,7 @@ Default boundaries use `{colors.border}` (#E0E0E0) at 1px or 1.5px. Selected car
 - Image-led choice grids for destination mood and season
 - Persistent bottom action row within desktop setup views
 - Dashboard summary cards above a package table
+- Administrator queue summaries above a text-first pending-review table
 - Timeline editor beside continuous validation and pricing context
 
 Desktop setup pages are designed to complete within one viewport where practical. The content area, not an internal modal, owns each step.
@@ -348,7 +374,7 @@ Desktop setup pages are designed to complete within one viewport where practical
 | Name | Width | Key changes |
 |---|---|---|
 | Mobile | < 600px | Progress copy hides; nodes remain; fields and cards stack |
-| Tablet | 600–800px | Creation viewport becomes page-scrolling; progress spacing tightens |
+| Tablet | 600–800px | Creation viewport becomes page-scrolling; the administrator queue switches from table to labelled cards below 720px |
 | Desktop | 801–1279px | 960px guided-flow container and multi-column option grids |
 | Wide | ≥ 1280px | Containers remain capped and centred |
 
@@ -362,6 +388,7 @@ Primary and secondary actions use at least 44px height. Creation navigation uses
 - Desktop overflow locking is removed below 800px so the document scrolls naturally.
 - Editor sidebars collapse below 1100px and become a single column below 700px.
 - Creation footer actions may wrap on narrow screens.
+- The administrator queue hides its desktop table below 720px and presents the same information as stacked cards without horizontal page scrolling.
 
 ### 4.4 Image behavior
 
@@ -398,6 +425,7 @@ Use the repository's Next.js App Router, React, TypeScript, CSS custom propertie
 - Session-expired redirects and retry actions
 - Submission in progress and locked non-draft packages
 - No-season creation and clear-season behavior
+- Administrator queue loading skeletons, all-caught-up empty state, access-required state, retry state, and late-response protection
 
 ### Confidence map
 
@@ -423,6 +451,8 @@ Use the repository's Next.js App Router, React, TypeScript, CSS custom propertie
 - Keep title and description grouped, then separate tags or metadata with a larger vertical gap.
 - Use explicit workflow language: `Submit for review`, `Approved`, creator preview, and `Live` must remain distinct.
 - Keep alternative creation actions consequence-specific, such as `Build without season` and `Clear season`.
+- Keep administrator queue surfaces neutral and text-first; reserve `{colors.action}` (#0072EA) for review links, sorting, refresh, pagination, and visible focus.
+- Preserve desktop/mobile information parity when the administrator table becomes cards below 720px.
 
 ### Don't
 
@@ -433,6 +463,8 @@ Use the repository's Next.js App Router, React, TypeScript, CSS custom propertie
 - Do not show `Build without season` when a season is selected; use `Clear season` to prevent accidental omission.
 - Do not describe reference flights as booked, guaranteed, or purchaser-specific inventory.
 - Do not treat approval as publication or route an approved package directly to the public marketplace detail page.
+- Do not add approved-today, rejected, historical, or reviewer-performance metrics without an API source.
+- Do not place approve or reject controls in the administrator queue; open the dedicated review route instead.
 
 ## 7. Open Questions
 
@@ -440,10 +472,11 @@ Use the repository's Next.js App Router, React, TypeScript, CSS custom propertie
 - What event moves an approved package to live, and should that transition remain automatic or require an explicit administrative action?
 - Mobile creation layouts need a dedicated visual QA pass at common phone widths and 200% zoom.
 - Booking, earnings, and analytics navigation remains outside the focused creation-flow design until those destinations are implemented.
+- The dedicated administrator review-detail surface remains a separate frontend slice.
 
 ## 8. Companion files
 
-- [x] `design-tokens.json` — canonical W3C DTCG token data; no token values changed in this update.
+- [x] `design-tokens.json` — canonical W3C DTCG token data, extended only with administrator component dimensions.
 - [ ] `design-a11y.md` — not regenerated in this documentation-only update.
 - [ ] Multi-viewport screenshots — desktop creation screens have been previewed; tablet and mobile captures remain open.
 
