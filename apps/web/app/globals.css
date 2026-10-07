@@ -695,6 +695,7 @@ figure .remove-photo-btn:focus-visible { outline: 2px solid var(--fc-focus-ring)
 .hotel-confirm-rating > span { color: var(--fc-secondary); font-size: 13px; }
 .hotel-confirm-stats { padding: 24px; border-top: 1px solid var(--fc-border); }
 .price-input { display: grid; grid-template-columns: 36px 1fr; }.price-input b { display: grid; place-items: center; border: 1px solid var(--fc-border); border-right: 0; border-radius: 8px 0 0 8px; background: var(--fc-surface-subtle); }.price-input input { border-radius: 0 8px 8px 0; }
+.field-conflict { margin: 12px 0 0; padding: 10px 12px; border-radius: 8px; background: #fdecee; color: var(--fc-red); font-size: 13px; font-weight: 600; line-height: 1.4; }
 .activity-form-actions { margin-top: 20px; display: flex; justify-content: flex-end; }
 .activity-form-actions .publish-button:disabled { border-color: var(--fc-disabled); background: var(--fc-disabled); cursor: not-allowed; }
 
