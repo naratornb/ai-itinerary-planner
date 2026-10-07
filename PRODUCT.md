@@ -44,4 +44,3 @@ The product uses the existing marketplace identity and design tokens. Structural
 - Preserve access and error outcomes as intentional product states.
 - Keep queue actions focused on opening a review; reserve decisions for the review surface.
 - Reuse established contracts and visual language before adding new concepts.
-

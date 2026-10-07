@@ -8,6 +8,7 @@ test("every migrated screen has a stable absolute route", () => {
     login: "/login",
     marketplace: "/marketplace",
     dashboard: "/dashboard",
+    admin: "/admin",
     builder: "/packages/new",
     manualBuilder: "/packages/new/manual",
     wizard: "/packages/new/ai",

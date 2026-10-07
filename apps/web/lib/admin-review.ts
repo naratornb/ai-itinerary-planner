@@ -85,4 +85,3 @@ export function requestSequenceIsCurrent(sequence: number, activeSequence: numbe
 export async function optionalAdminUsers(request: Promise<AdminUser[]>): Promise<AdminUser[]> {
   return request.catch(() => []);
 }
-

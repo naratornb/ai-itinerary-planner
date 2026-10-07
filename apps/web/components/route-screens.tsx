@@ -19,6 +19,7 @@ const SCREEN_ROUTES: Record<Screen, string> = {
   login: APP_ROUTES.login,
   marketplace: APP_ROUTES.marketplace,
   dashboard: APP_ROUTES.dashboard,
+  admin: APP_ROUTES.admin,
   builder: APP_ROUTES.builder,
   "manual-builder": APP_ROUTES.manualBuilder,
   "ai-wizard": APP_ROUTES.wizard,

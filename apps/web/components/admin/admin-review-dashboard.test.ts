@@ -8,6 +8,7 @@ import {
   AdminReviewDashboardView,
   dashboardFailure,
   dashboardSessionAction,
+  loadQueueEnhancements,
   nextDashboardPage,
   type AdminReviewDashboardViewProps,
 } from "./admin-review-dashboard";
@@ -51,6 +52,7 @@ function render(overrides: Partial<AdminReviewDashboardViewProps> = {}): string 
     oldestSubmittedAt: packages[0].submitted_at,
     users: [{ id: "creator-1", username: "Mina Travels", email: "mina@example.com" }],
     now: "2026-10-07T12:00:00Z",
+    isUpdating: false,
     onSortChange: noop,
     onPageChange: noop,
     onRefresh: noop,
@@ -64,6 +66,15 @@ test("loading view exposes a busy state and stable skeletons", () => {
   const html = render({ status: "loading", packages: [] });
   assert.match(html, /aria-busy="true"/);
   assert.match(html, /admin-review-skeleton/);
+});
+
+test("updating a ready queue keeps its controls mounted and announces progress", () => {
+  const html = render({ isUpdating: true });
+
+  assert.match(html, /aria-busy="true"/);
+  assert.match(html, /Updating review queue/);
+  assert.match(html, /Sort queue/);
+  assert.match(html, />Refresh<\/button>/);
 });
 
 test("empty view teaches the administrator that the queue is clear", () => {
@@ -146,4 +157,32 @@ test("nextDashboardPage backs up from an empty later page only", () => {
   assert.equal(nextDashboardPage(2, emptyResponse), 1);
   assert.equal(nextDashboardPage(1, { ...emptyResponse, meta: { ...emptyResponse.meta, page: 1 } }), 1);
   assert.equal(nextDashboardPage(2, { ...emptyResponse, data: packages }), 2);
+});
+
+test("queue enhancements settle independently without blocking one another", async () => {
+  let resolveUsers!: (users: AdminReviewDashboardViewProps["users"]) => void;
+  let resolveOldest!: (submittedAt: string | null) => void;
+  const usersRequest = new Promise<AdminReviewDashboardViewProps["users"]>((resolve) => {
+    resolveUsers = resolve;
+  });
+  const oldestRequest = new Promise<string | null>((resolve) => {
+    resolveOldest = resolve;
+  });
+  const updates: string[] = [];
+
+  loadQueueEnhancements(
+    usersRequest,
+    oldestRequest,
+    () => true,
+    (users) => updates.push(`users:${users.length}`),
+    (oldest) => updates.push(`oldest:${oldest}`),
+  );
+
+  resolveUsers([{ id: "creator-1", username: "Mina", email: "mina@example.com" }]);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.deepEqual(updates, ["users:1"]);
+
+  resolveOldest("2026-10-04T12:00:00Z");
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.deepEqual(updates, ["users:1", "oldest:2026-10-04T12:00:00Z"]);
 });

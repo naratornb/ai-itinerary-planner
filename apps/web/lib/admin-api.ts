@@ -113,6 +113,24 @@ export async function fetchPendingApprovals(
   return body;
 }
 
+export async function hasAdminApprovalAccess(
+  fetcher: typeof fetch,
+  apiUrl: string,
+  token: string,
+): Promise<boolean> {
+  try {
+    await fetchPendingApprovals(fetcher, apiUrl, token, {
+      page: 1,
+      perPage: 1,
+      sort: "submitted_at_asc",
+    });
+    return true;
+  } catch (error) {
+    if (error instanceof AdminApiError && error.kind === "forbidden") return false;
+    throw error;
+  }
+}
+
 export async function fetchAdminUsers(
   fetcher: typeof fetch,
   apiUrl: string,
@@ -136,4 +154,3 @@ export async function fetchAdminUsers(
     };
   });
 }
-

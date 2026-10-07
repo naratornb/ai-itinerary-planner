@@ -5,6 +5,7 @@ import {
   AdminApiError,
   fetchAdminUsers,
   fetchPendingApprovals,
+  hasAdminApprovalAccess,
 } from "./admin-api";
 
 const approvalResponse = {
@@ -121,3 +122,38 @@ test("fetchAdminUsers requests the existing users endpoint and keeps label field
   );
 });
 
+test("hasAdminApprovalAccess recognizes an administrator through the approvals endpoint", async () => {
+  const fetcher: typeof fetch = async (input, init) => {
+    assert.equal(
+      String(input),
+      "http://localhost:8000/approvals?page=1&per_page=1&sort=submitted_at_asc",
+    );
+    assert.deepEqual(init?.headers, { Authorization: "Bearer admin-token" });
+    return Response.json({ ...approvalResponse, meta: { ...approvalResponse.meta, page: 1, per_page: 1 } });
+  };
+
+  assert.equal(
+    await hasAdminApprovalAccess(fetcher, "http://localhost:8000", "admin-token"),
+    true,
+  );
+});
+
+test("hasAdminApprovalAccess sends a non-admin to the creator workspace", async () => {
+  const fetcher: typeof fetch = async () =>
+    Response.json({ message: "Administrator access required" }, { status: 403 });
+
+  assert.equal(
+    await hasAdminApprovalAccess(fetcher, "http://localhost:8000", "creator-token"),
+    false,
+  );
+});
+
+test("hasAdminApprovalAccess does not hide authentication or network failures", async () => {
+  const fetcher: typeof fetch = async () =>
+    Response.json({ message: "Service unavailable" }, { status: 503 });
+
+  await assert.rejects(
+    hasAdminApprovalAccess(fetcher, "http://localhost:8000", "admin-token"),
+    (error: unknown) => error instanceof AdminApiError && error.kind === "request",
+  );
+});

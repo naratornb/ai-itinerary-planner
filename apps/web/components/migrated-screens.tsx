@@ -30,11 +30,13 @@ import { wizardVibesStorageKey } from "../lib/review-draft";
 import { VIBES } from "../lib/vibes";
 import { supabase } from "../lib/supabase/client";
 import { creatorPackageRoute } from "../lib/routes";
+import { hasAdminApprovalAccess } from "../lib/admin-api";
 import { creatorDashboardBackLink, dashboardActionAlignment } from "./navigation-model";
 const creatorBannerImg = "/creator-banner.png";
+const LOGIN_API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 
-export type Screen = "login" | "marketplace" | "dashboard" | "builder" | "manual-builder" | "ai-wizard";
+export type Screen = "login" | "marketplace" | "dashboard" | "admin" | "builder" | "manual-builder" | "ai-wizard";
 
 export function nextRecommendationInfoOpen(
   open: boolean,
@@ -484,8 +486,9 @@ export function LoginScreen({ onNav }: { onNav: (s: Screen) => void }) {
     setErrorMessage("");
     setIsSubmitting(true);
     try {
-      await signInWithEmail(supabase.auth, email, password);
-      onNav("dashboard");
+      const session = await signInWithEmail(supabase.auth, email, password);
+      const isAdmin = await hasAdminApprovalAccess(fetch, LOGIN_API_URL, session.access_token);
+      onNav(isAdmin ? "admin" : "dashboard");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Unable to sign in. Please try again.");
     } finally {

@@ -2,6 +2,7 @@ export const APP_ROUTES = {
   login: "/login",
   marketplace: "/marketplace",
   dashboard: "/dashboard",
+  admin: "/admin",
   builder: "/packages/new",
   manualBuilder: "/packages/new/manual",
   wizard: "/packages/new/ai",

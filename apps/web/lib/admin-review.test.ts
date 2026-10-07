@@ -80,4 +80,3 @@ test("requestSequenceIsCurrent accepts only the active request", () => {
   assert.equal(requestSequenceIsCurrent(3, 3), true);
   assert.equal(requestSequenceIsCurrent(2, 3), false);
 });
-

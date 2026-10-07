@@ -46,6 +46,7 @@ export type AdminReviewDashboardViewProps = {
   oldestSubmittedAt: string | null;
   users: AdminUser[];
   now?: Date | string;
+  isUpdating: boolean;
   errorMessage?: string;
   onSortChange: (sort: ApprovalSort) => void;
   onPageChange: (page: number) => void;
@@ -77,6 +78,21 @@ export function nextDashboardPage(
   response: ApprovalListResponse,
 ): number {
   return response.data.length === 0 && currentPage > 1 ? currentPage - 1 : currentPage;
+}
+
+export function loadQueueEnhancements(
+  usersRequest: Promise<AdminUser[]>,
+  oldestRequest: Promise<string | null>,
+  isCurrent: () => boolean,
+  onUsers: (users: AdminUser[]) => void,
+  onOldest: (submittedAt: string | null) => void,
+) {
+  void optionalAdminUsers(usersRequest).then((creatorUsers) => {
+    if (isCurrent()) onUsers(creatorUsers);
+  });
+  void oldestRequest.catch(() => null).then((oldest) => {
+    if (isCurrent()) onOldest(oldest);
+  });
 }
 
 function SummaryCards({
@@ -224,6 +240,7 @@ export function AdminReviewDashboardView(props: AdminReviewDashboardViewProps): 
     oldestSubmittedAt,
     users,
     now,
+    isUpdating,
     errorMessage,
     onSortChange,
     onPageChange,
@@ -244,6 +261,15 @@ export function AdminReviewDashboardView(props: AdminReviewDashboardViewProps): 
           <h1>Review dashboard</h1>
           <p>Open the oldest submissions first, or change the order when another package needs attention.</p>
         </div>
+        <p className="admin-review-sr-only" role="status" aria-live="polite">
+          {status === "loading"
+            ? "Loading review queue."
+            : isUpdating
+              ? "Updating review queue."
+              : status === "ready" || status === "empty"
+                ? "Review queue updated."
+                : ""}
+        </p>
 
         {status === "loading" ? <LoadingState /> : null}
 
@@ -271,7 +297,11 @@ export function AdminReviewDashboardView(props: AdminReviewDashboardViewProps): 
                 <button className="admin-review-secondary-button" type="button" onClick={onRefresh}>Refresh queue</button>
               </StatePanel>
             ) : (
-              <section className="admin-review-queue" aria-labelledby="admin-review-queue-title">
+              <section
+                className="admin-review-queue"
+                aria-labelledby="admin-review-queue-title"
+                aria-busy={isUpdating}
+              >
                 <div className="admin-review-controls">
                   <div>
                     <h2 id="admin-review-queue-title">Packages waiting for review</h2>
@@ -334,6 +364,7 @@ export default function AdminReviewDashboard() {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [oldestSubmittedAt, setOldestSubmittedAt] = useState<string | null>(null);
   const [loadedAt, setLoadedAt] = useState<string | null>(null);
+  const [isUpdating, setIsUpdating] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [sort, setSort] = useState<ApprovalSort>("submitted_at_asc");
   const [page, setPage] = useState(1);
@@ -378,22 +409,27 @@ export default function AdminReviewDashboard() {
               page: 1,
               perPage: 1,
               sort: "submitted_at_asc",
-            }).then((oldestResponse) => oldestResponse.data[0]?.submitted_at ?? null).catch(() => null)
+            }).then((oldestResponse) => oldestResponse.data[0]?.submitted_at ?? null)
           : Promise.resolve(response.data[0]?.submitted_at ?? null);
-        const [creatorUsers, oldest] = await Promise.all([
-          optionalAdminUsers(fetchAdminUsers(fetch, API_URL, sessionAction.accessToken)),
-          oldestRequest,
-        ]);
-        if (cancelled || !requestSequenceIsCurrent(sequence, activeRequest.current)) return;
 
         setPackages(response.data);
         setMeta(response.meta);
-        setUsers(creatorUsers);
-        setOldestSubmittedAt(oldest);
+        setUsers([]);
+        if (!needsOldestRequest) setOldestSubmittedAt(response.data[0]?.submitted_at ?? null);
         setLoadedAt(new Date().toISOString());
         setStatus(response.data.length ? "ready" : "empty");
+        setIsUpdating(false);
+
+        loadQueueEnhancements(
+          fetchAdminUsers(fetch, API_URL, sessionAction.accessToken),
+          oldestRequest,
+          () => !cancelled && requestSequenceIsCurrent(sequence, activeRequest.current),
+          setUsers,
+          setOldestSubmittedAt,
+        );
       } catch (error) {
         if (cancelled || !requestSequenceIsCurrent(sequence, activeRequest.current)) return;
+        setIsUpdating(false);
         const failure = dashboardFailure(error);
         if (failure.type === "redirect") {
           router.replace(APP_ROUTES.login);
@@ -426,20 +462,21 @@ export default function AdminReviewDashboard() {
       oldestSubmittedAt={oldestSubmittedAt}
       users={users}
       now={loadedAt ?? undefined}
+      isUpdating={isUpdating}
       errorMessage={errorMessage}
       onSortChange={(nextSort) => {
-        setStatus("loading");
+        setIsUpdating(true);
         setErrorMessage("");
         setPage(1);
         setSort(nextSort);
       }}
       onPageChange={(nextPage) => {
-        setStatus("loading");
+        setIsUpdating(true);
         setErrorMessage("");
         setPage(nextPage);
       }}
       onRefresh={() => {
-        setStatus("loading");
+        setIsUpdating(true);
         setErrorMessage("");
         setRefreshKey((current) => current + 1);
       }}

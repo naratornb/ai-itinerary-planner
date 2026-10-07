@@ -412,7 +412,6 @@ body {
 .admin-review-submitted small { color: var(--fc-secondary); font-size: 12px; line-height: 16px; }
 .admin-review-price { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .admin-review-action-cell { text-align: right; }
-.admin-review-action-cell .admin-review-link { min-height: 40px; }
 
 .admin-review-cards { display: none; }
 
