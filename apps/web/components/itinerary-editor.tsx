@@ -2216,10 +2216,9 @@ export default function ItineraryEditor({
 
   const hardErrors = feasResult?.hard_errors ?? [];
   const softWarnings = feasResult?.soft_warnings ?? [];
-  const hasEmptyDay = days.some((day) => day.items.length === 0);
   // No score while critical issues block submission — the check leaves it out too.
   const scoreWithheld = Boolean(feasResult) && hardErrors.length > 0;
-  const displayScore = scoreWithheld ? undefined : hasEmptyDay ? 0 : feasResult?.quality_score;
+  const displayScore = scoreWithheld ? undefined : feasResult?.quality_score;
 
   const isReadyToSubmit = Boolean(
     feasResult &&
@@ -2237,7 +2236,6 @@ export default function ItineraryEditor({
   const passedChecklist = [
     { label: "All stops have pricing", passed: hardErrors.every((e) => e.error_code !== "MISSING_PRICE") },
     { label: "Accommodation is included", passed: hardErrors.every((e) => e.error_code !== "MISSING_ACCOMMODATION") },
-    { label: "Every day has at least one activity", passed: hardErrors.every((e) => e.error_code !== "EMPTY_DAY") },
     { label: "Flights have enough transfer time after landing", passed: hardErrors.every((e) => e.error_code !== "SHORT_TRANSFER" && e.error_code !== "ACTIVITY_BEFORE_LANDING") },
     { label: "No scheduling conflicts between activities", passed: hardErrors.every((e) => e.error_code !== "TIME_OVERLAP") },
     { label: "Enough travel time between stops", passed: hardErrors.every((e) => e.error_code !== "SHORT_ACTIVITY_GAP" && e.error_code !== "SHORT_TRAVEL_TIME") },

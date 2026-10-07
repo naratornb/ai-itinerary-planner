@@ -169,17 +169,20 @@ test("R16: a free stop priced at $0 is NOT flagged — 0 is a valid price", () =
   assert.ok(hard.every((issue) => issue.error_code !== "MISSING_PRICE"));
 });
 
-test("R9: an empty middle day is still a hard error", () => {
+test("R9: an empty middle day is a suggestion asking to confirm it, e.g. as a free day", () => {
   const days = [
     day(1, [activity("Arrival Transfer")]),
     day(2, []),
     day(3, [activity("Departure Transfer")]),
   ];
   const { hard, soft } = runCodeChecks(days);
-  assert.ok(soft.every((i) => i.error_code !== "EMPTY_DAY"));
-  const issue = hard.find((i) => i.error_code === "EMPTY_DAY");
-  assert.ok(issue, "expected a hard EMPTY_DAY error for the empty middle day");
+  assert.ok(hard.every((i) => i.error_code !== "EMPTY_DAY"), "an empty middle day must not block submission");
+  const issue = soft.find((i) => i.error_code === "EMPTY_DAY");
+  assert.ok(issue, "expected an EMPTY_DAY suggestion for the empty middle day");
+  assert.equal(issue?.severity, "warning");
   assert.equal(issue?.field, "Day 2");
+  assert.match(issue!.message, /confirm this is intentional/);
+  assert.match(issue!.message, /free day.*day summary/);
 });
 
 test("R9: an empty first day is a soft warning, not a hard block — arrival days often have no activity", () => {

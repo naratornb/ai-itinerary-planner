@@ -97,29 +97,24 @@ export function runCodeChecks(days: any[], arrival?: ArrivalLanding | null): { h
     }
 
     if (acts.length === 0) {
-      // Arrival/departure days are commonly all-travel with no scheduled activity —
-      // day_number is re-numbered 1..N on every add/delete (see removeDay()), so
-      // this stays correct as the trip's first/last day shifts.
+      // Never blocks: arrival/departure days are often all travel, and a middle day
+      // can be a deliberate free day. day_number is re-numbered 1..N on every
+      // add/delete (see removeDay()), so first/last stays correct as days shift.
       const isFirstOrLastDay = day.day_number === 1 || day.day_number === days.length;
-      const issue: CodeIssue = {
+      soft.push({
         error_code: "EMPTY_DAY",
         rule: "R9 – Completeness",
-        severity: isFirstOrLastDay ? "warning" : "error",
+        severity: "warning",
         field: dayLabel,
         field_value: "0 activities",
         affected_item: dayLabel,
         message: isFirstOrLastDay
           ? `${dayLabel} has no activities scheduled. As this is an arrival or departure day, please confirm this is intentional.`
-          : `${dayLabel} has no activities scheduled. Please add at least one activity.`,
+          : `${dayLabel} has no activities scheduled. Please confirm this is intentional. If it's a free day, say so in the day summary (e.g. "Free day to relax or explore at your own pace") so travellers know what to expect.`,
         action: isFirstOrLastDay
           ? `If ${dayLabel} involves more than arrival/departure travel, please add an activity.`
-          : `Add at least one activity to ${dayLabel}.`,
-      };
-      if (isFirstOrLastDay) {
-        soft.push(issue);
-      } else {
-        hard.push(issue);
-      }
+          : `Add an activity to ${dayLabel}, or describe it as a free day in its summary.`,
+      });
     }
 
     // ── R17 – Accommodation: per day, not package-wide — so a creator can jump
@@ -533,7 +528,8 @@ from the numbered rules.
 - completeness_score — every day has at least one activity and a hotel night (except the last day),
   each day's summary matches the activities scheduled that day, and every activity has a duration:
   subtract 0.1 for each day missing an activity or hotel, each day whose summary doesn't match its
-  activities, and each activity without a duration.
+  activities, and each activity without a duration. A day with no activities whose summary
+  describes it as a free day is complete, not missing an activity.
 - feasibility_score — whether a real traveller can actually do the schedule on time: subtract 0.1
   for each gap too short to travel between activities, each activity too soon after landing, and
   each activity scheduled outside the venue's opening hours or on a day it's closed.
