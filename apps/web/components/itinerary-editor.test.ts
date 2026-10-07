@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { annotateItems, deriveFlightType, findTimeConflict, referenceFlightPresentation } from "./itinerary-editor";
+import { annotateItems, deriveFlightType, findTimeConflict, flightForItem, referenceFlightPresentation } from "./itinerary-editor";
 import type { TimelineItem } from "../lib/itinerary-builder";
 
 function item(overrides: Partial<TimelineItem> & { id: number; time: string }): TimelineItem {
@@ -222,6 +223,46 @@ test("deriveFlightType: known limitation — a genuine domestic hop in a non-AU 
 test("deriveFlightType: missing IATA codes fall back to destination_country", () => {
   assert.equal(deriveFlightType(undefined, undefined, "Australia"), "domestic");
   assert.equal(deriveFlightType(undefined, undefined, "Indonesia"), "international");
+});
+
+test("flightForItem resolves details for a flight added via Add Stop, which never lands in pkg.flights", () => {
+  // Regression: the editor mapped the Nth FLIGHT item to flights[N] of the
+  // package. A flight added via "+ Add Stop" isn't in that array, so it
+  // resolved to undefined — no details, no edit affordance — and a flight
+  // inserted ahead of a package flight shifted every later card onto the
+  // wrong record.
+  const flight = flightForItem(item({
+    id: 1001,
+    time: "09:30",
+    type: "FLIGHT",
+    title: "SYD to HND",
+    price: "$850",
+    icon: "plane",
+    originIata: "SYD",
+    destinationIata: "HND",
+    airline: "Qantas",
+    flightNumber: "QF25",
+    cabinClass: "economy",
+    departureDatetime: "2026-03-01T09:30:00+11:00",
+    arrivalDatetime: "2026-03-01T17:00:00+09:00",
+  }));
+
+  assert.equal(flight?.airline, "Qantas");
+  assert.equal(flight?.flight_number, "QF25");
+  assert.equal(flight?.origin_iata, "SYD");
+  assert.equal(flight?.destination_iata, "HND");
+});
+
+test("flightForItem returns undefined for non-flight items", () => {
+  assert.equal(flightForItem(item({ id: 2, time: "10:00", type: "ACTIVITY" })), undefined);
+});
+
+test("the editor resolves flight details from the item, never a positional flights[N] lookup", () => {
+  // Same regression guard as above, at the render site: indexing into
+  // packageDetail.flights by item position is what made added flights
+  // uneditable and mislabelled the rest.
+  const source = readFileSync(new URL("./itinerary-editor.tsx", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /flights\[flightIndex\]|flights\[flightIdx\]/);
 });
 
 test("an activity starting before the arrival flight lands gets a warning on its card", () => {
