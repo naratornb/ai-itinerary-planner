@@ -165,6 +165,29 @@ test("isTransferTimeIssue recognizes an R2 duplicate by error_code or rule, so i
   assert.equal(isTransferTimeIssue(undefined), false);
 });
 
+test("an AI claim about the arrival flight is R2's job whatever rule the AI files it under", () => {
+  // Regression: "before the flight arrival (08:00)" for an 08:30 stop came through under
+  // R15, next to R2's correct "only 30 min later" critical issue.
+  const r15 = { rule: "R15 – General Feasibility", message: "The itinerary schedules an activity (Melbourne Laneways City Tour) before the flight arrival (08:00) on the same day." };
+  const r3 = { rule: "R3 – Opening Hours", message: "The 'Historic Bangkok City Walking Tour' is scheduled to start at 14:00, but the flight arrives at 18:31." };
+  const landed = { rule: "R15 – General Feasibility", message: "Dinner is booked 20 minutes after the plane lands." };
+  for (const issue of [r15, r3, landed]) assert.equal(isTransferTimeIssue(issue), true, issue.message);
+  const unrelated = { rule: "R15 – General Feasibility", message: "An activity named 'Night Market' is scheduled for the morning." };
+  const arriveEarly = { rule: "R3 – Opening Hours", message: "Arrive early: the museum closes at 17:00." };
+  for (const issue of [unrelated, arriveEarly]) assert.equal(isTransferTimeIssue(issue), false, issue.message);
+});
+
+test("an AI travel-time claim is dropped once the gap is an hour or more — no trip across one city takes longer", () => {
+  // Regression: two Melbourne venues ~2 km apart with a 270-min gap got "the trip takes
+  // about 300 min" (the creator pick has no catalog coordinates to check against).
+  const days = [{ day_number: 1, activities: [
+    { activity_name: "Melbourne Laneways City Tour", start_time: "08:30", duration_hours: 1 },
+    { activity_name: "Melbourne Street Food Walking Tour", start_time: "14:00", duration_hours: 2.7 },
+  ] }];
+  const issue = { rule: "R12 – Activity Transfer Time", message: 'Not enough time to get from "Melbourne Laneways City Tour" to "Melbourne Street Food Walking Tour": 270 min between them, but the trip takes about 300 min.' };
+  assert.deepEqual(verifyTransferGaps([issue], days), { blocks: [], warnings: [] });
+});
+
 test("partitionAiHardErrors keeps R3 and R4 as hard errors, demoting everything else to a warning", () => {
   // Agreed requirement: travel time between activities, opening hours and day-specific
   // closures are hard blocks. Every other AI rule stays a warning — e.g. a hard error

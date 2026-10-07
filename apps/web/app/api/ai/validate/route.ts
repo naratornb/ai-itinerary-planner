@@ -187,8 +187,17 @@ export function findDayContainingText(days: any[], needle: string | undefined): 
  * tells the model never to flag this itself, but that's not a hard guarantee, so
  * entries matching it are filtered out of the AI's output as a safety net.
  */
+// "the flight arrives at 18:31", "before the flight arrival", "after the plane lands"
+const ARRIVAL_FLIGHT_CLAIM = /\b(?:lands?|landed|landing)\b|\b(?:flight|plane)\b[^.]*\barriv|\barriv\w*\b[^.]*\b(?:flight|plane)\b/i;
+
+/**
+ * R2 (arrival timing) is fully owned by the code check, so an AI issue about it is
+ * dropped — by code or rule, or by wording when the AI files it under another rule
+ * (an 08:30 stop came back under R15 as "before the flight arrival (08:00)").
+ */
 export function isTransferTimeIssue(issue: any): boolean {
-  return issue?.error_code === "SHORT_TRANSFER" || issue?.rule === "R2 – Transfer Time";
+  return issue?.error_code === "SHORT_TRANSFER" || issue?.rule === "R2 – Transfer Time"
+    || ARRIVAL_FLIGHT_CLAIM.test(String(issue?.message ?? ""));
 }
 
 /**
@@ -280,9 +289,13 @@ function splitByVerdict(issues: any[], verdict: (issue: any) => Verdict): { bloc
  * activities is worked out from coordinates instead (checkTravelTimes), because the
  * AI's estimate kept rising with the gap. Find the two activities it names on one
  * day: drop it when coordinates already cover that pair, when the gap is under
- * ACTIVITY_GAP_MIN (R22 blocks it), or when the gap covers the AI's own estimate
- * ("about N min", or the top of a range); otherwise it's a warning.
+ * ACTIVITY_GAP_MIN (R22 blocks it), when the gap is MAX_CITY_TRANSFER_MIN or more
+ * (a 270-min gap got "about 300 min" across Melbourne), or when the gap covers the
+ * AI's own estimate ("about N min", or the top of a range); otherwise it's a warning.
  */
+// The R12 prompt's own ceiling: "allow up to 60 minutes across a large, congested city".
+const MAX_CITY_TRANSFER_MIN = 60;
+
 export function verifyTransferGaps(
   issues: any[],
   days: any[],
@@ -301,7 +314,7 @@ export function verifyTransferGaps(
         if (text.includes(acts[k - 1].name) && text.includes(acts[k].name)) {
           const gap = acts[k].start - acts[k - 1].end;
           if (coveredByCoordinates(acts[k - 1].name, acts[k].name)) return "drop";
-          if (gap < ACTIVITY_GAP_MIN) return "drop";
+          if (gap < ACTIVITY_GAP_MIN || gap >= MAX_CITY_TRANSFER_MIN) return "drop";
           return Number.isNaN(estimate) || gap < estimate ? "warn" : "drop";
         }
       }
