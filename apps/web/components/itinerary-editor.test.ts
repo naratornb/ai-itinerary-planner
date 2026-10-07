@@ -284,3 +284,14 @@ test("an activity starting after the full buffer is fine", () => {
   ] as TimelineItem[];
   assert.equal(annotateItems(items, { time: "18:31", bufferMin: 90, international: true })[0].problem, undefined);
 });
+
+test("on a day before the arrival flight lands, every stop gets the before-landing warning", () => {
+  const items = [
+    { id: 1, time: "09:09", type: "ACTIVITY", title: "Museum", price: "$0", icon: "star", status: "pass", duration: "258" },
+    { id: 2, time: "15:00", type: "FLIGHT", title: "SYD to BKK", price: "$0", icon: "plane", status: "pass" },
+  ] as TimelineItem[];
+  const [museum, flight] = annotateItems(items, { time: "00:31", departureTime: "15:00", bufferMin: 90, international: true, landsOnLaterDay: 2 });
+  assert.equal(museum.problem, "Starts before your flight lands");
+  assert.equal(museum.problemDetail, "Your flight leaves at 15:00 and lands at 00:31 the next day (Day 2), so you're still travelling. Move this to after you arrive.");
+  assert.notEqual(flight.problem, "Starts before your flight lands");
+});

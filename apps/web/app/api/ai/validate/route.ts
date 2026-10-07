@@ -9,6 +9,7 @@ import {
   buildUserPrompt,
   checkPackagePhotos,
   isValidClockTime,
+  minutesToTime,
   runCodeChecks,
   toMinutes,
 } from "../../../../lib/feasibility";
@@ -275,13 +276,18 @@ function splitByVerdict(issues: any[], verdict: (issue: any) => Verdict): { bloc
 }
 
 /**
- * R12 can hard-block, so its claim is checked in code: find the two activities it
- * names on one day and the real gap between them. Under ACTIVITY_GAP_MIN, R22 already
- * blocks it (dropped); at least the AI's own estimate ("about N min", or the top of a
- * range), it's false (dropped); shorter, it's confirmed (block). If the pair or the
- * estimate can't be read, it can't be confirmed (warning).
+ * The AI's R12 travel-time claim only ever warns — travel time between catalog
+ * activities is worked out from coordinates instead (checkTravelTimes), because the
+ * AI's estimate kept rising with the gap. Find the two activities it names on one
+ * day: drop it when coordinates already cover that pair, when the gap is under
+ * ACTIVITY_GAP_MIN (R22 blocks it), or when the gap covers the AI's own estimate
+ * ("about N min", or the top of a range); otherwise it's a warning.
  */
-export function verifyTransferGaps(issues: any[], days: any[]): { blocks: any[]; warnings: any[] } {
+export function verifyTransferGaps(
+  issues: any[],
+  days: any[],
+  coveredByCoordinates: (first: string, second: string) => boolean = () => false,
+): { blocks: any[]; warnings: any[] } {
   return splitByVerdict(issues, (issue): Verdict => {
     const text = `${issue.affected_item ?? ""} ${issue.message ?? ""}`.toLowerCase();
     const range = String(issue.message ?? "").match(/about (\d+)(?:\s*[-–]\s*(\d+))?\s*min/i);
@@ -294,14 +300,105 @@ export function verifyTransferGaps(issues: any[], days: any[]): { blocks: any[];
       for (let k = 1; k < acts.length; k += 1) {
         if (text.includes(acts[k - 1].name) && text.includes(acts[k].name)) {
           const gap = acts[k].start - acts[k - 1].end;
+          if (coveredByCoordinates(acts[k - 1].name, acts[k].name)) return "drop";
           if (gap < ACTIVITY_GAP_MIN) return "drop";
-          if (Number.isNaN(estimate)) return "warn";
-          return gap < estimate ? "block" : "drop";
+          return Number.isNaN(estimate) || gap < estimate ? "warn" : "drop";
         }
       }
     }
     return "warn";
   });
+}
+
+// ─── R12 travel time from coordinates ─────────────────────────────────────────
+// Assumed mode: taxi / ride-share in city traffic — 10 min to get going, then about
+// 20 km/h door to door (traffic, and roads ~30% longer than a straight line).
+const TAXI_BASE_MIN = 10;
+const TAXI_MIN_PER_KM = 3;
+
+type LatLng = { lat: number; lng: number };
+
+export function taxiMinutes(km: number): number {
+  return Math.ceil(TAXI_BASE_MIN + TAXI_MIN_PER_KM * km - 1e-9);
+}
+
+/** Straight-line (great-circle) distance in km. */
+export function distanceKm(a: LatLng, b: LatLng): number {
+  const rad = (d: number) => (d * Math.PI) / 180;
+  const dLat = rad(b.lat - a.lat);
+  const dLng = rad(b.lng - a.lng);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLng / 2) ** 2;
+  return 2 * 6371 * Math.asin(Math.sqrt(h));
+}
+
+/** Coordinates for an activity: by its catalog id, else by its name. */
+function coordsFor(act: any, coords: Map<string, LatLng>): LatLng | undefined {
+  return (act.source_id && coords.get(String(act.source_id))) || coords.get(String(act.activity_name || "").toLowerCase());
+}
+
+/**
+ * R12 – Activity Transfer Time: for back-to-back activities that both have catalog
+ * coordinates, the gap must cover the taxi time between them. Gaps under
+ * ACTIVITY_GAP_MIN are left to R22.
+ */
+export function checkTravelTimes(days: any[], coords: Map<string, LatLng>): any[] {
+  const issues: any[] = [];
+  for (const day of days) {
+    const acts = (day.activities || [])
+      .filter((a: any) => a.activity_name && isValidClockTime(a.start_time))
+      .map((a: any) => ({ act: a, start: toMinutes(a.start_time), end: toMinutes(a.start_time) + (Number(a.duration_hours) || 1) * 60 }))
+      .sort((a: any, b: any) => a.start - b.start);
+    for (let k = 1; k < acts.length; k += 1) {
+      const prev = acts[k - 1];
+      const next = acts[k];
+      const from = coordsFor(prev.act, coords);
+      const to = coordsFor(next.act, coords);
+      const gap = next.start - prev.end;
+      if (!from || !to || gap < ACTIVITY_GAP_MIN) continue;
+      const km = distanceKm(from, to);
+      const needed = taxiMinutes(km);
+      if (gap >= needed) continue;
+      issues.push({
+        error_code: "SHORT_TRAVEL_TIME",
+        rule: "R12 – Activity Transfer Time",
+        severity: "error",
+        field: `Day ${day.day_number}`,
+        field_value: `${gap} min gap, ${needed} min by taxi`,
+        affected_item: next.act.activity_name,
+        message: `Not enough time to get from "${prev.act.activity_name}" to "${next.act.activity_name}": they're ${km.toFixed(1)} km apart, about ${needed} min by taxi, but you've left ${gap} min.`,
+        action: `Start "${next.act.activity_name}" at ${minutesToTime(prev.end + needed)} or later.`,
+      });
+    }
+  }
+  return issues;
+}
+
+/**
+ * Catalog coordinates for the package's activities, keyed by activity id and by
+ * lower-cased name (looked up within the trip's city). Empty on any error, so the
+ * travel-time rule simply doesn't apply rather than breaking the check.
+ */
+async function fetchActivityCoordinates(days: any[], city: string): Promise<Map<string, LatLng>> {
+  const acts = days.flatMap((d: any) => d.activities || []);
+  const ids = [...new Set(acts.map((a: any) => a.source_id).filter(Boolean))] as string[];
+  const names = [...new Set(acts.map((a: any) => a.activity_name).filter(Boolean))] as string[];
+  const coords = new Map<string, LatLng>();
+  const add = (rows: any[] | null) => {
+    for (const r of rows ?? []) {
+      if (typeof r.latitude !== "number" || typeof r.longitude !== "number") continue;
+      const point = { lat: r.latitude, lng: r.longitude };
+      coords.set(String(r.activity_id), point);
+      coords.set(String(r.activity_name).toLowerCase(), point);
+    }
+  };
+  try {
+    const select = "activity_id, activity_name, latitude, longitude";
+    if (ids.length) add((await supabase.from("activities").select(select).in("activity_id", ids)).data);
+    if (names.length && city) add((await supabase.from("activities").select(select).eq("city", city).in("activity_name", names)).data);
+  } catch (err: any) {
+    console.warn("Couldn't load activity coordinates — travel-time check skipped:", err?.message);
+  }
+  return coords;
 }
 
 /**
@@ -325,15 +422,25 @@ export function keepRealAiRules(issues: any[]): any[] {
  * "unusually early", say — it can't be confirmed (warning).
  */
 export function verifyOpeningHours(issues: any[], days: any[]): { blocks: any[]; warnings: any[] } {
-  const acts = days.flatMap((d: any) => (d.activities || []))
+  const acts = days.flatMap((d: any) => (d.activities || []).map((a: any) => ({ ...a, day_number: d.day_number })))
     .filter((a: any) => a.activity_name && isValidClockTime(a.start_time))
     .sort((a: any, b: any) => String(b.activity_name).length - String(a.activity_name).length);
   const times = (m: RegExpMatchArray | null) => (m ? [m[1], m[2] ?? m[1]].map(toMinutes) : null);
   return splitByVerdict(issues, (issue): Verdict => {
     const message = String(issue.message ?? "");
-    const act = acts.find((a: any) => `${issue.affected_item ?? ""} ${message}`.toLowerCase().includes(String(a.activity_name).toLowerCase()));
-    const open = times(message.match(/open\w*[^.]*?(\d{1,2}:\d{2})(?:\s*[-–]\s*(\d{1,2}:\d{2}))?/i));
-    const close = times(message.match(/clos\w*[^.]*?(\d{1,2}:\d{2})(?:\s*[-–]\s*(\d{1,2}:\d{2}))?/i));
+    const named = acts.filter((a: any) => `${issue.affected_item ?? ""} ${message}`.toLowerCase().includes(String(a.activity_name).toLowerCase()));
+    // The same activity can appear on several days: prefer the one on the issue's
+    // day, then the one whose start time the message quotes.
+    const longest = named.filter((a: any) => String(a.activity_name).length === String(named[0]?.activity_name ?? "").length);
+    const issueDay = Number(String(issue.field ?? "").match(/^Day (\d+)/)?.[1]);
+    const onDay = longest.filter((a: any) => a.day_number === issueDay);
+    const pool = onDay.length ? onDay : longest;
+    const act = pool.find((a: any) => message.includes(a.start_time)) ?? pool[0];
+    // "opening hours are 09:00 to 17:00" names both ends; otherwise read opening and
+    // closing separately ("open around 09:00-10:00 … close by 17:00-18:00").
+    const span = message.match(/hours[^.]*?(\d{1,2}:\d{2})\s*(?:to|–|-)\s*(\d{1,2}:\d{2})/i);
+    const open = span ? [toMinutes(span[1]), toMinutes(span[1])] : times(message.match(/open\w*[^.]*?(\d{1,2}:\d{2})(?:\s*[-–]\s*(\d{1,2}:\d{2}))?/i));
+    const close = span ? [toMinutes(span[2]), toMinutes(span[2])] : times(message.match(/clos\w*[^.]*?(\d{1,2}:\d{2})(?:\s*[-–]\s*(\d{1,2}:\d{2}))?/i));
     if (!act || (!open && !close)) return "warn";
     const start = toMinutes(act.start_time);
     const end = start + (Number(act.duration_hours) || 1) * 60;
@@ -342,9 +449,21 @@ export function verifyOpeningHours(issues: any[], days: any[]): { blocks: any[];
   });
 }
 
+/**
+ * R10 (Daily Range) is only about far out-of-city trips or a second city in one day.
+ * The AI also used it for "different parts of the city" — distance within a city is
+ * the coordinate-based travel-time check's job — so an R10 issue that doesn't
+ * mention a day trip, an excursion, leaving the city or another city is dropped.
+ */
+export function keepOutOfCityDailyRange(issues: any[]): any[] {
+  const outOfCity = /day[- ]trip|excursion|outside (?:the |of )?(?:the )?city|out[- ]of[- ]city|another city|different cities|other city|countryside|hours? (?:away|from the city)/i;
+  return issues.filter((issue) =>
+    !String(issue?.rule ?? "").startsWith("R10") || outOfCity.test(`${issue.message ?? ""} ${issue.affected_item ?? ""}`));
+}
+
 // Agreed hard blocks among the AI rules: opening hours, day closures and travel
 // time between activities. Every other AI rule is demoted to a warning.
-const AI_HARD_RULES = ["R3", "R4", "R12"];
+const AI_HARD_RULES = ["R3", "R4"];
 
 export function partitionAiHardErrors(hardErrors: any[], softWarnings: any[] = []): { allowed: any[]; downgraded: any[] } {
   const isHardRule = (issue: any) =>
@@ -605,6 +724,8 @@ export async function POST(req: NextRequest) {
 
     // 2. Code-based deterministic checks (see runCodeChecks) — always consistent
     const codeResults = runCodeChecks(days, pkg.arrival_landing);
+    const coords = await fetchActivityCoordinates(days, pkg.city || "");
+    const travelTimeErrors = checkTravelTimes(days, coords);
     const photosError = checkPackagePhotos(pkg); // R18 — package-level, not per-day
 
 
@@ -696,17 +817,19 @@ export async function POST(req: NextRequest) {
       .map((issue: any) => withDayField(issue, days));
     const { allowed: aiBlockCandidates, downgraded: aiSoftWarnings } =
       partitionAiHardErrors(cleanAi(aiResult.hard_errors), cleanAi(aiResult.soft_warnings));
-    // R3 and R12 only block once code confirms them (see verifyOpeningHours/verifyTransferGaps).
+    // R3 only blocks once code confirms it (verifyOpeningHours). The AI's R12 only
+    // warns, and not for pairs whose travel time came from coordinates.
     const r3 = verifyOpeningHours(aiBlockCandidates.filter((i: any) => i.rule.startsWith("R3")), days);
-    const r12 = verifyTransferGaps(aiBlockCandidates.filter((i: any) => i.rule.startsWith("R12")), days);
-    const allowedAiHardErrors = [
-      ...aiBlockCandidates.filter((i: any) => !i.rule.startsWith("R3") && !i.rule.startsWith("R12")),
-      ...r3.blocks,
-      ...r12.blocks,
-    ];
-    const aiWarnings = [...aiSoftWarnings, ...r3.warnings, ...r12.warnings];
+    const r12 = verifyTransferGaps(
+      aiSoftWarnings.filter((i: any) => i.rule.startsWith("R12")),
+      days,
+      (first, second) => coords.has(first) && coords.has(second),
+    );
+    const allowedAiHardErrors = [...aiBlockCandidates.filter((i: any) => !i.rule.startsWith("R3")), ...r3.blocks];
+    const aiWarnings = [...aiSoftWarnings.filter((i: any) => !i.rule.startsWith("R12")), ...r3.warnings, ...r12.warnings];
     const mergedHardErrors = [
       ...codeResults.hard,
+      ...travelTimeErrors,
       ...(photosError ? [photosError] : []),
       ...allowedAiHardErrors,
       ...(hardBlockError ? [hardBlockError] : []),
@@ -717,10 +840,10 @@ export async function POST(req: NextRequest) {
       ...codeResults.soft,
       ...wordingWarnings,
       ...dedupeSimilarPairs(
-        dropSingleActivityDailyRange(
+        keepOutOfCityDailyRange(dropSingleActivityDailyRange(
           dropRepeatedDuplicates(dropIllegalActDuplicates(aiWarnings, illegalActError), codeResults.soft, days),
           days,
-        ),
+        )),
         days,
       ),
       ...(aiAvailable ? [] : [AI_UNAVAILABLE_WARNING]),

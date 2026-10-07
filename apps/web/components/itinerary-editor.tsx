@@ -449,7 +449,7 @@ function detectGibberish(text: string): boolean {
  */
 export function annotateItems(
   raw: TimelineItem[],
-  landing?: { time: string; bufferMin: number; international: boolean },
+  landing?: { time: string; departureTime?: string; bufferMin: number; international: boolean; landsOnLaterDay?: number },
 ): TimelineItem[] {
   const isTimedStop = (item: TimelineItem) =>
     item.type !== "FLIGHT" && item.type !== "HOTEL" && REAL_TIME_PATTERN.test(item.time);
@@ -460,6 +460,17 @@ export function annotateItems(
     : undefined;
 
   return raw.map((item, i) => {
+    if (landing?.landsOnLaterDay && isTimedStop(item)) {
+      // A day before the arrival flight lands (an overnight flight lands the next day).
+      return {
+        ...item,
+        status: "critical" as const,
+        problem: "Starts before your flight lands",
+        problemDetail: landing.departureTime
+          ? `Your flight leaves at ${landing.departureTime} and lands at ${landing.time} the next day (Day ${landing.landsOnLaterDay}), so you're still travelling. Move this to after you arrive.`
+          : `Your flight lands at ${landing.time} on Day ${landing.landsOnLaterDay}, so you're still travelling. Move this to after you arrive.`,
+      };
+    }
     if (landing && isTimedStop(item) && toMinutes(item.time) < landingMin) {
       return {
         ...item,
@@ -468,7 +479,7 @@ export function annotateItems(
         problemDetail: `Your flight lands at ${landing.time}. Move this to after you arrive.`,
       };
     }
-    if (landing && item === firstAfterLanding && toMinutes(item.time) < landingMin + landing.bufferMin) {
+    if (landing && !landing.landsOnLaterDay && item === firstAfterLanding && toMinutes(item.time) < landingMin + landing.bufferMin) {
       return {
         ...item,
         status: "critical" as const,
@@ -1009,10 +1020,15 @@ export default function ItineraryEditor({
     const arrival = arrivalLanding(days);
     if (!arrival) return null;
     const international = deriveFlightType(arrival.flight.originIata, arrival.flight.destinationIata, pkg.destination_country) === "international";
-    return { ...arrival, international, bufferMin: TRANSFER_BUFFER_MIN[international ? "international" : "domestic"] };
+    return { ...arrival, departureTime: arrival.flight.departureTime, international, bufferMin: TRANSFER_BUFFER_MIN[international ? "international" : "domestic"] };
   }, [days, pkg.destination_country]);
   const items = useMemo(
-    () => annotateItems(activeDayData?.items ?? [], landing?.dayIndex === activeDay ? landing : undefined),
+    () => annotateItems(
+      activeDayData?.items ?? [],
+      !landing || activeDay > landing.dayIndex ? undefined
+        : activeDay === landing.dayIndex ? landing
+        : { ...landing, landsOnLaterDay: landing.dayIndex + 1 },
+    ),
     [activeDayData, activeDay, landing],
   );
   const story = activeDayData?.story ?? "";
@@ -1127,7 +1143,7 @@ export default function ItineraryEditor({
       // No group_size: there's no editor input for it and no rule uses it (R8 removed).
       // Where the arrival flight lands (overnight flights land the next day) — R2.
       arrival_landing: landing
-        ? { day_number: landing.dayIndex + 1, time: landing.time, flight_type: landing.international ? "international" : "domestic", title: landing.flight.title }
+        ? { day_number: landing.dayIndex + 1, time: landing.time, departure_time: landing.departureTime, flight_type: landing.international ? "international" : "domestic", title: landing.flight.title }
         : null,
       travel_season: travelSeason,
       total_days: days.length,
@@ -1177,6 +1193,8 @@ export default function ItineraryEditor({
               // Catalog activities can't be edited by the creator — the AI is told not
               // to flag their name/address/duration (see buildSystemPrompt).
               source: item.type === "CREATOR PICK" ? "creator" : "catalog",
+              // Catalog id, so R12 can look up the activity's coordinates.
+              source_id: item.type === "CREATOR PICK" ? undefined : item.sourceId,
             })),
         }))
       ),
@@ -2049,7 +2067,7 @@ export default function ItineraryEditor({
     { label: "Every day has at least one activity", passed: hardErrors.every((e) => e.error_code !== "EMPTY_DAY") },
     { label: "Flights have enough transfer time after landing", passed: hardErrors.every((e) => e.error_code !== "SHORT_TRANSFER" && e.error_code !== "ACTIVITY_BEFORE_LANDING") },
     { label: "No scheduling conflicts between activities", passed: hardErrors.every((e) => e.error_code !== "TIME_OVERLAP") },
-    { label: "Enough travel time between stops", passed: hardErrors.every((e) => e.error_code !== "SHORT_ACTIVITY_GAP") },
+    { label: "Enough travel time between stops", passed: hardErrors.every((e) => e.error_code !== "SHORT_ACTIVITY_GAP" && e.error_code !== "SHORT_TRAVEL_TIME") },
     { label: "Daily schedule leaves room for travel between stops", passed: hardErrors.every((e) => e.error_code !== "SCHEDULE_TOO_PACKED") },
     { label: "Package has at least one photo", passed: hardErrors.every((e) => e.error_code !== "MISSING_PHOTOS") },
     { label: "No banned competitor mentions", passed: hardErrors.every((e) => e.rule !== "BrandSafety") },
