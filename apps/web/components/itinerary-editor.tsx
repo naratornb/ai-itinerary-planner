@@ -2113,7 +2113,53 @@ export default function ItineraryEditor({
             <div className={`timeline-list${items.length === 0 ? " is-empty" : ""}`}>
               {items.map((item, index) => {
                 const flightIndex = items.slice(0, index).filter(({ type }) => type === "FLIGHT").length;
-                const flight = item.type === "FLIGHT" ? flights[flightIndex] : undefined;
+                // The timeline row is the source of truth for a flight, not
+                // packageDetail.flights. That array is matched here by position,
+                // and its order does not track the timeline, so the second
+                // FLIGHT row was rendering the first flight's record: a
+                // KIX->SYD return showed "SYD to KIX" in its detail panel.
+                // It is now only consulted for a field the row does not carry,
+                // and only when it is demonstrably the same leg.
+                const flightRecord = item.type === "FLIGHT" ? flights[flightIndex] : undefined;
+                const flightRecordIsSameLeg = Boolean(
+                  flightRecord
+                  && (!item.originIata || !flightRecord.origin_iata
+                      || flightRecord.origin_iata === item.originIata)
+                  && (!item.destinationIata || !flightRecord.destination_iata
+                      || flightRecord.destination_iata === item.destinationIata),
+                );
+                const flightFallback = flightRecordIsSameLeg ? flightRecord : undefined;
+                const flightOriginIata = item.originIata || flightFallback?.origin_iata || "";
+                const flightDestinationIata = item.destinationIata || flightFallback?.destination_iata || "";
+                const flightDepartureDatetime = item.departureDatetime ?? flightFallback?.departure_datetime ?? null;
+                const flightArrivalDatetime = item.arrivalDatetime ?? flightFallback?.arrival_datetime ?? null;
+                const flight = item.type === "FLIGHT"
+                  ? {
+                      airline: item.airline || flightFallback?.airline || "",
+                      flight_number: item.flightNumber || flightFallback?.flight_number || "",
+                      cabin_class: item.cabinClass || flightFallback?.cabin_class || "",
+                      origin_iata: flightOriginIata,
+                      destination_iata: flightDestinationIata,
+                      departure_datetime: flightDepartureDatetime,
+                      arrival_datetime: flightArrivalDatetime,
+                      // Only from a record that is the same leg. A mismatched
+                      // one would put the outbound's fare on the return row,
+                      // which is the bug this whole block exists to stop. Null
+                      // lets itemPrice fall through to the row's own price.
+                      price_aud: flightFallback?.price_aud ?? null,
+                      // Already a local clock time, resolved when the row was
+                      // built. A saved reference flight carries departure_time
+                      // but no departure_datetime, so deriving the panel's
+                      // value from the datetime alone rendered "Not provided"
+                      // under a row that was showing the time correctly.
+                      departure_display: item.departureTime
+                        || extractClockTimeInZone(flightDepartureDatetime, timezoneForIata(flightOriginIata))
+                        || "",
+                      arrival_display: item.arrivalTime
+                        || extractClockTimeInZone(flightArrivalDatetime, timezoneForIata(flightDestinationIata))
+                        || "",
+                    }
+                  : undefined;
                 const referenceFlight = item.type === "FLIGHT" ? referenceFlightPresentation(item) : null;
                 const hotel = hotelForItem(item);
                 const hasHotelDetails = item.type === "HOTEL" && (Boolean(hotel) || Boolean(item.roomType));
@@ -2258,8 +2304,8 @@ export default function ItineraryEditor({
                       <div><dt>Cabin</dt><dd>{flight.cabin_class || "Not provided"}</dd></div>
                       <div><dt>From</dt><dd>{flight.origin_iata || "Not provided"}</dd></div>
                       <div><dt>To</dt><dd>{flight.destination_iata || "Not provided"}</dd></div>
-                      <div><dt>Departure</dt><dd>{extractClockTimeInZone(flight.departure_datetime, timezoneForIata(flight.origin_iata)) ?? "Not provided"}</dd></div>
-                      <div><dt>Arrival</dt><dd>{extractClockTimeInZone(flight.arrival_datetime, timezoneForIata(flight.destination_iata)) ?? "Not provided"}{(() => { const offset = flightArrivalDayOffset(flight.departure_datetime, timezoneForIata(flight.origin_iata), flight.arrival_datetime, timezoneForIata(flight.destination_iata)); return offset ? <sup className="flight-day-offset" title={`Arrives ${offset} day${offset === 1 ? "" : "s"} later`}>+{offset}</sup> : null; })()}</dd></div>
+                      <div><dt>Departure</dt><dd>{flight.departure_display || "Not provided"}</dd></div>
+                      <div><dt>Arrival</dt><dd>{flight.arrival_display || "Not provided"}{(() => { const offset = flightArrivalDayOffset(flight.departure_datetime, timezoneForIata(flight.origin_iata), flight.arrival_datetime, timezoneForIata(flight.destination_iata)); return offset ? <sup className="flight-day-offset" title={`Arrives ${offset} day${offset === 1 ? "" : "s"} later`}>+{offset}</sup> : null; })()}</dd></div>
                     </dl>
                   </div>
                 </section>}
