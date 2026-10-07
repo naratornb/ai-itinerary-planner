@@ -112,4 +112,32 @@ test("the stay picker reveals a short list before the traveler asks for more", a
   const hotels = Array.from({ length: 8 }, (_, index) => ({ hotel_id: String(index + 1) }));
   assert.deepEqual((visibleCatalogHotels(hotels, false) as typeof hotels).map((hotel) => hotel.hotel_id), ["1", "2", "3", "4", "5", "6"]);
   assert.equal((visibleCatalogHotels(hotels, true) as typeof hotels).length, 8);
+  assert.deepEqual(
+    (visibleCatalogHotels(hotels, false, "8") as typeof hotels).map((hotel) => hotel.hotel_id),
+    ["1", "2", "3", "4", "5", "8"],
+  );
+});
+
+test("curated booking choices get stable IDs when catalog IDs are missing", async () => {
+  const bookingOptions = await import("./booking-options");
+  const bookingOptionId = (bookingOptions as Record<string, unknown>).bookingOptionId;
+
+  assert.equal(typeof bookingOptionId, "function");
+  if (typeof bookingOptionId !== "function") return;
+
+  assert.equal(bookingOptionId("catalog-id", "component-id", "fallback-id"), "catalog-id");
+  assert.equal(bookingOptionId(null, "component-id", "fallback-id"), "component-id");
+  assert.equal(bookingOptionId(null, null, "fallback-id"), "fallback-id");
+});
+
+test("hotel stay total uses the nightly price and actual night count", async () => {
+  const bookingOptions = await import("./booking-options");
+  const estimateHotelStayTotal = (bookingOptions as Record<string, unknown>).estimateHotelStayTotal;
+
+  assert.equal(typeof estimateHotelStayTotal, "function");
+  if (typeof estimateHotelStayTotal !== "function") return;
+
+  assert.equal(estimateHotelStayTotal(824, 4), 3296);
+  assert.equal(estimateHotelStayTotal(null, 4), null);
+  assert.equal(estimateHotelStayTotal(824, 0), 0);
 });

@@ -2,11 +2,13 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
+import * as Dialog from "@radix-ui/react-dialog";
 
 import { fetchMarketplacePackage, type MarketplacePackageDetail } from "../lib/marketplace-api";
 import { formatHotelStarRating } from "./hotel-catalog";
+import Icon from "./icon";
 import { supabase } from "../lib/supabase/client";
-import { canRequestBooking, dateAfter, dedupeCatalogHotels, estimateBookingTotal, flightsOn, iataPattern, visibleCatalogHotels, type CatalogOptions } from "../lib/booking-options";
+import { bookingOptionId, canRequestBooking, dateAfter, dedupeCatalogHotels, estimateBookingTotal, estimateHotelStayTotal, flightsOn, iataPattern, visibleCatalogHotels, type CatalogHotel, type CatalogOptions } from "../lib/booking-options";
 import {
   CheckIcon, color, DepartureDatePicker, detailPrice, displayFont, eyebrowStyle,
   fieldStyle, formatDateLabel, radius, SectionTitle,
@@ -26,11 +28,12 @@ type FlightOption = {
 
 // Radiogroup of flight rows: arrow keys move focus AND selection (native
 // radio-group behaviour), with roving tabindex so the list is one Tab stop.
-function BookingOptionGroup({ label, options, value, onChange }: {
+export function BookingOptionGroup({ label, options, value, onChange, onViewDetails }: {
   label: string;
   options: FlightOption[];
   value: string;
   onChange: (id: string) => void;
+  onViewDetails?: (id: string) => void;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -42,6 +45,7 @@ function BookingOptionGroup({ label, options, value, onChange }: {
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
+    if ((e.target as HTMLElement).getAttribute("role") !== "radio") return;
     const idx = options.findIndex((o) => o.id === value);
     if (e.key === "ArrowDown" || e.key === "ArrowRight") { e.preventDefault(); move(Math.min(idx + 1, options.length - 1)); }
     else if (e.key === "ArrowUp" || e.key === "ArrowLeft") { e.preventDefault(); move(Math.max(idx - 1, 0)); }
@@ -61,36 +65,116 @@ function BookingOptionGroup({ label, options, value, onChange }: {
       }}
     >
       {options.map((o) => (
-        <button
-          key={o.id}
-          type="button"
-          role="radio"
-          aria-checked={o.id === value}
-          tabIndex={o.id === value ? 0 : -1}
-          className="booking-option"
-          onClick={() => onChange(o.id)}
-          style={{
-            display: "flex", alignItems: "center", gap: 12, width: "100%",
-            padding: "12px 14px", border: 0, borderRadius: radius.sm,
-            background: "none", fontSize: 14, fontWeight: 600,
-            color: color.textPrimary, cursor: "pointer", fontFamily: "inherit",
-          }}
-        >
-          <span style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
-            <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{o.title}</span>
-            {o.meta && (
-              <span style={{ display: "block", marginTop: 2, fontSize: 12, fontWeight: 400, color: color.textSecondary, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{o.meta}</span>
-            )}
-          </span>
-          {o.priceLabel && <span style={{ flexShrink: 0, fontSize: 13 }}>{o.priceLabel}</span>}
-          {o.id === value && (
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={color.action} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }} aria-hidden="true">
-              <path d="M20 6 9 17l-5-5" />
-            </svg>
+        <div className="booking-option-row" key={o.id}>
+          <button
+            type="button"
+            role="radio"
+            aria-checked={o.id === value}
+            tabIndex={o.id === value ? 0 : -1}
+            className="booking-option"
+            onClick={() => onChange(o.id)}
+            style={{
+              display: "flex", alignItems: "center", gap: 12, width: "100%",
+              padding: "12px 14px", border: 0, borderRadius: radius.sm,
+              background: "none", fontSize: 14, fontWeight: 600,
+              color: color.textPrimary, cursor: "pointer", fontFamily: "inherit",
+            }}
+          >
+            <span style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
+              <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{o.title}</span>
+              {o.meta && (
+                <span style={{ display: "block", marginTop: 2, fontSize: 12, fontWeight: 400, color: color.textSecondary, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{o.meta}</span>
+              )}
+            </span>
+            {o.priceLabel && <span style={{ flexShrink: 0, fontSize: 13 }}>{o.priceLabel}</span>}
+            {o.id === value && <span className="booking-option-check" aria-hidden="true"><Icon name="check" size={16} /></span>}
+          </button>
+          {onViewDetails && (
+            <button type="button" className="booking-option-detail" onClick={() => onViewDetails(o.id)}>
+              View details
+            </button>
           )}
-        </button>
+        </div>
       ))}
     </div>
+  );
+}
+
+export function HotelDetailDrawer({
+  hotel,
+  checkIn,
+  checkOut,
+  nights,
+  selected,
+  providerUrl,
+  onClose,
+  onSelect,
+}: {
+  hotel: CatalogHotel;
+  checkIn: string;
+  checkOut: string;
+  nights: number;
+  selected: boolean;
+  providerUrl?: string | null;
+  onClose: () => void;
+  onSelect: () => void;
+}) {
+  const returnFocusRef = useRef<HTMLElement | null>(
+    typeof document === "undefined" ? null : document.activeElement as HTMLElement,
+  );
+  const amenities = (hotel.amenities ?? "").split(",").map((item) => item.trim()).filter(Boolean);
+  const stayTotal = estimateHotelStayTotal(hotel.price_per_night_aud, nights);
+  const location = hotel.address || [hotel.city, hotel.country].filter(Boolean).join(", ");
+
+  return (
+    <Dialog.Root open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <Dialog.Overlay className="hotel-detail-backdrop" />
+      <Dialog.Content
+        className="hotel-detail-drawer"
+        aria-describedby={undefined}
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          returnFocusRef.current?.focus();
+        }}
+      >
+        <div className="hotel-detail-header">
+          <div>
+            <Dialog.Title>{hotel.hotel_name ?? "Hotel details"}</Dialog.Title>
+            {hotel.star_rating != null && <p>{formatHotelStarRating(hotel.star_rating)}</p>}
+          </div>
+          <Dialog.Close asChild><button type="button" className="hotel-detail-close">Close</button></Dialog.Close>
+        </div>
+
+        <div className="hotel-detail-photo-placeholder" role="img" aria-label="No property image available">
+          <Icon name="hotel" size={34} />
+          <span>No property image available</span>
+        </div>
+
+        <dl className="hotel-detail-facts">
+          <div><dt>Address</dt><dd>{location || "Not provided"}</dd></div>
+          <div><dt>Room</dt><dd>{hotel.room_type || "Not provided"}</dd></div>
+          <div><dt>Stay</dt><dd>{checkIn} – {checkOut}<small>{nights} {nights === 1 ? "night" : "nights"}</small></dd></div>
+          <div><dt>Nightly price</dt><dd>{hotel.price_per_night_aud == null ? "Not provided" : `${detailPrice(hotel.price_per_night_aud)}/night`}</dd></div>
+          <div><dt>Estimated stay total</dt><dd>{stayTotal == null ? "Not provided" : detailPrice(stayTotal)}</dd></div>
+        </dl>
+
+        <section className="hotel-detail-amenities" aria-labelledby="hotel-amenities-title">
+          <h3 id="hotel-amenities-title">Amenities</h3>
+          {amenities.length ? <ul>{amenities.map((amenity) => <li key={amenity}>{amenity}</li>)}</ul> : <p>Not provided</p>}
+        </section>
+
+        <div className="hotel-detail-actions">
+          <button type="button" className="booking-primary-action" disabled={selected} onClick={onSelect}>
+            {selected ? "Selected stay" : "Select this stay"}
+          </button>
+          {providerUrl ? (
+            <a className="hotel-provider-action" href={providerUrl} target="_blank" rel="noreferrer">View on provider site</a>
+          ) : (
+            <button type="button" className="hotel-provider-action" disabled title="Provider link not available yet">View on provider site</button>
+          )}
+        </div>
+      </Dialog.Content>
+    </Dialog.Root>
   );
 }
 
@@ -156,9 +240,8 @@ export function BookingRequestConfirmation({
   return (
     <section className="booking-complete" aria-labelledby="booking-complete-title">
       <span className="booking-complete-icon" aria-hidden="true"><CheckIcon /></span>
-      <p style={eyebrowStyle}>Front-end demo</p>
       <h1 id="booking-complete-title">Booking request complete</h1>
-      <p className="booking-complete-lead">Your trip summary is ready. Nothing was submitted or charged in this demo.</p>
+      <p className="booking-complete-lead">Your trip summary is ready. Review the details below.</p>
 
       <div className="booking-complete-summary">
         <div><span>Trip</span><strong>{title}</strong>{destination && <small>{destination}</small>}</div>
@@ -184,15 +267,26 @@ function BookingDetail({ pkg }: { pkg: MarketplacePackageDetail }) {
     ? primaryHotel.check_out_day - primaryHotel.check_in_day
     : null;
 
+  const outboundChoiceId = outboundFlight
+    ? bookingOptionId(outboundFlight.flight_id, outboundFlight.package_component_id, `package-outbound-${pkg.package_id}`)
+    : "";
+  const returnChoiceId = returnFlight
+    ? bookingOptionId(returnFlight.flight_id, returnFlight.package_component_id, `package-return-${pkg.package_id}`)
+    : "";
+  const primaryHotelChoiceId = primaryHotel
+    ? bookingOptionId(primaryHotel.hotel_id, primaryHotel.package_component_id, `package-hotel-${pkg.package_id}`)
+    : "";
+
   const [departure, setDeparture] = useState(outboundFlight?.departure_datetime?.slice(0, 10) ?? "");
   const [travelers, setTravelers] = useState(2);
-  const [outboundSel, setOutboundSel] = useState(outboundFlight?.flight_id ?? "");
-  const [returnSel, setReturnSel] = useState(returnFlight?.flight_id ?? "");
-  const [hotelSel, setHotelSel] = useState(primaryHotel?.hotel_id ?? "");
+  const [outboundSel, setOutboundSel] = useState(outboundChoiceId);
+  const [returnSel, setReturnSel] = useState(returnChoiceId);
+  const [hotelSel, setHotelSel] = useState(primaryHotelChoiceId);
   const [catalog, setCatalog] = useState<CatalogOptions | null>(null);
   const [editingFlights, setEditingFlights] = useState(false);
   const [editingStay, setEditingStay] = useState(false);
   const [showAllHotels, setShowAllHotels] = useState(false);
+  const [detailHotelId, setDetailHotelId] = useState<string | null>(null);
   const [requestComplete, setRequestComplete] = useState(false);
   const maxTravelers = pkg.max_group_size ?? 8;
 
@@ -211,7 +305,7 @@ function BookingDetail({ pkg }: { pkg: MarketplacePackageDetail }) {
         ? supabase.from("flights").select(flightCols).ilike("origin", iataPattern(returnFlight.origin_iata)).ilike("destination", iataPattern(returnFlight.destination_iata)).gte("departure_datetime", today).order("departure_datetime").limit(200)
         : Promise.resolve({ data: null }),
       pkg.destination_city
-        ? supabase.from("hotels").select("hotel_id,hotel_name,star_rating,room_type,city,price_per_night_aud").eq("city", pkg.destination_city).order("price_per_night_aud")
+        ? supabase.from("hotels").select("hotel_id,hotel_name,star_rating,room_type,city,country,address,amenities,price_per_night_aud").eq("city", pkg.destination_city).order("price_per_night_aud")
         : Promise.resolve({ data: null }),
     ]).then(([outRes, retRes, hotelRes]) => {
       if (!active) return;
@@ -232,8 +326,8 @@ function BookingDetail({ pkg }: { pkg: MarketplacePackageDetail }) {
     : (returnFlight?.day_number ?? pkg.duration_days ?? 1) - 1;
   const returnDate = dateAfter(departure, returnDayOffset);
 
-  const flightOption = (f: { airline?: string | null; flight_number?: string | null; flight_id?: string | null; cabin_class?: string | null; departure_datetime?: string | null; price_aud?: number | null }): FlightOption => ({
-    id: f.flight_id ?? "",
+  const flightOption = (f: { airline?: string | null; flight_number?: string | null; flight_id?: string | null; package_component_id?: string | null; cabin_class?: string | null; departure_datetime?: string | null; price_aud?: number | null }, fallback: string): FlightOption => ({
+    id: bookingOptionId(f.flight_id, f.package_component_id, fallback),
     title: [f.airline, f.flight_number ?? f.flight_id?.split("-")[0]].filter(Boolean).join(" "),
     meta: f.cabin_class ? f.cabin_class.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase()) : null,
     price: f.price_aud ?? 0,
@@ -242,17 +336,29 @@ function BookingDetail({ pkg }: { pkg: MarketplacePackageDetail }) {
 
   const outboundOnDate = flightsOn(catalog?.outbound, departure);
   const outAll = outboundOnDate.length ? outboundOnDate : outboundFlight ? [outboundFlight] : [];
-  const outboundOptions = outAll.map((f) => {
-    const o = flightOption(f);
+  const outboundOptions = outAll.map((f, index) => {
+    const o = flightOption(f, f === outboundFlight ? outboundChoiceId : `outbound-${pkg.package_id}-${index}`);
     const d = f.departure_datetime?.slice(0, 10);
     return { ...o, meta: [d ? formatDateLabel(d) : null, o.meta].filter(Boolean).join(" · ") };
   });
   const retOnDate = flightsOn(catalog?.returnLeg, returnDate);
   const returnOptions = retOnDate.length
-    ? retOnDate.map(flightOption)
-    : returnFlight ? [flightOption(returnFlight)] : [];
+    ? retOnDate.map((flight, index) => flightOption(flight, `return-${pkg.package_id}-${index}`))
+    : returnFlight ? [flightOption(returnFlight, returnChoiceId)] : [];
+  const primaryCatalogHotel = (catalog?.hotels ?? []).find((hotel) => hotel.hotel_id === primaryHotel?.hotel_id);
+  const primaryHotelOption: CatalogHotel | null = primaryHotel ? {
+    hotel_id: primaryHotelChoiceId,
+    hotel_name: primaryHotel.hotel_name,
+    star_rating: primaryHotel.star_rating,
+    room_type: primaryHotel.room_type,
+    city: primaryHotel.city,
+    country: primaryCatalogHotel?.country ?? pkg.destination_country,
+    address: primaryHotel.address ?? primaryCatalogHotel?.address ?? null,
+    amenities: primaryCatalogHotel?.amenities ?? null,
+    price_per_night_aud: primaryHotel.price_per_night_aud,
+  } : null;
   const hotelOptions = dedupeCatalogHotels([
-    ...(primaryHotel ? [primaryHotel] : []),
+    ...(primaryHotelOption ? [primaryHotelOption] : []),
     ...(catalog?.hotels ?? []).filter((h) => h.hotel_id !== primaryHotel?.hotel_id),
   ]);
   const departureDates = [...new Set([departure, ...(catalog?.outbound ?? []).map((f) => f.departure_datetime.slice(0, 10))].filter(Boolean))].sort();
@@ -273,8 +379,9 @@ function BookingDetail({ pkg }: { pkg: MarketplacePackageDetail }) {
   const selOutbound = outboundOptions.find((o) => o.id === outboundSel);
   const selReturn = returnOptions.find((o) => o.id === returnSel);
   const selHotel = hotelOptions.find((o) => o.hotel_id === hotelSel);
-  const hotelChoiceOptions: FlightOption[] = visibleCatalogHotels(hotelOptions, showAllHotels).map((hotel) => ({
-    id: hotel.hotel_id ?? "",
+  const detailHotel = hotelOptions.find((o) => o.hotel_id === detailHotelId);
+  const hotelChoiceOptions: FlightOption[] = visibleCatalogHotels(hotelOptions, showAllHotels, hotelSel).map((hotel) => ({
+    id: hotel.hotel_id,
     title: hotel.hotel_name ?? "Hotel",
     meta: [
       hotel.star_rating != null ? formatHotelStarRating(hotel.star_rating) : null,
@@ -294,6 +401,8 @@ function BookingDetail({ pkg }: { pkg: MarketplacePackageDetail }) {
   });
 
   const destination = [pkg.destination_city, pkg.destination_country].filter(Boolean).join(", ");
+  const stayCheckIn = dateAfter(departure, Math.max(0, (primaryHotel?.check_in_day ?? 1) - 1));
+  const stayCheckOut = dateAfter(departure, Math.max(0, (primaryHotel?.check_out_day ?? ((primaryHotel?.check_in_day ?? 1) + (hotelNights ?? 1))) - 1));
   const requestReady = canRequestBooking({
     departure,
     estimateTotal,
@@ -329,31 +438,24 @@ function BookingDetail({ pkg }: { pkg: MarketplacePackageDetail }) {
   return (
     <main className="booking-page">
       <div className="booking-page-shell">
-        <button
-          type="button"
-          onClick={() => router.push(`/marketplace/packages/${pkg.package_id}`)}
-          style={{
-            display: "inline-flex", alignItems: "center", gap: 8,
-            border: `1px solid ${color.border}`, borderRadius: radius.pill, padding: "10px 16px",
-            background: color.surface, color: color.textPrimary,
-            fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
-          }}
-        >
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="M19 12H5M12 19l-7-7 7-7" />
-          </svg>
-          Back to trip
-        </button>
+        <header className="booking-intro">
+          <button
+            type="button"
+            className="booking-back-action"
+            onClick={() => router.push(`/marketplace/packages/${pkg.package_id}`)}
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M19 12H5M12 19l-7-7 7-7" />
+            </svg>
+            Back to trip
+          </button>
+          <h1 style={{ fontFamily: displayFont }}>{pkg.title}</h1>
+          {destination && <p>{destination}</p>}
+        </header>
 
-        <p style={{ ...eyebrowStyle, marginTop: 32 }}>Booking</p>
-        <h1 style={{ margin: "8px 0 0", fontFamily: displayFont, fontSize: 32, fontWeight: 800, letterSpacing: "-0.01em" }}>
-          {pkg.title}
-        </h1>
-        {destination && <p style={{ margin: "8px 0 0", fontSize: 15, color: color.textSecondary }}>{destination}</p>}
-
-        <section style={{ marginTop: 40 }}>
+        <section className="booking-trip-section">
           <SectionTitle>Trip dates</SectionTitle>
-          <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 2fr) minmax(0, 2fr) minmax(0, 1fr)", gap: 16, marginTop: 16 }}>
+          <div className="booking-trip-grid">
             <div>
               <p style={eyebrowStyle}>Departure</p>
               {departureDates.length > 1 ? (
@@ -434,14 +536,14 @@ function BookingDetail({ pkg }: { pkg: MarketplacePackageDetail }) {
             }]}
           >
             <h3>Choose your stay</h3>
-            <BookingOptionGroup label="Hotel options" options={hotelChoiceOptions} value={hotelSel} onChange={setHotelSel} />
+            <BookingOptionGroup label="Hotel options" options={hotelChoiceOptions} value={hotelSel} onChange={setHotelSel} onViewDetails={setDetailHotelId} />
             {hotelOptions.length > 6 && <button type="button" className="booking-more-action" onClick={() => setShowAllHotels((showAll) => !showAll)}>
               {showAllHotels ? "Show fewer hotels" : `See ${hotelOptions.length - 6} more hotels`}
             </button>}
           </BookingSelectionSummary>
         )}
 
-        <section style={{ marginTop: 40, border: `1px solid ${color.border}`, borderRadius: radius.lg, background: color.surfaceSubtle, padding: 28 }}>
+        <section className="booking-request-card">
           {estimateTotal != null && (
             <p style={{ margin: 0, fontSize: 14, color: color.textSecondary }}>
               Estimated total for {travelers} {travelers === 1 ? "traveler" : "travelers"}:{" "}
@@ -458,7 +560,7 @@ function BookingDetail({ pkg }: { pkg: MarketplacePackageDetail }) {
             Request booking
           </button>
           <p style={{ margin: "8px 0 0", fontSize: 11, textAlign: "center", color: color.textDisabled }}>
-            {requestReady ? "Demo only — nothing will be submitted or charged" : "Complete the trip summary to continue"}
+            {requestReady ? "Review your selections before requesting" : "Complete the trip summary to continue"}
           </p>
           {pkg.status === "live" && (
             <p style={{ margin: "16px 0 0", fontSize: 12, color: color.textSecondary, display: "flex", alignItems: "center", gap: 8 }}>
@@ -468,6 +570,21 @@ function BookingDetail({ pkg }: { pkg: MarketplacePackageDetail }) {
           )}
         </section>
       </div>
+      {detailHotel && (
+        <HotelDetailDrawer
+          hotel={detailHotel}
+          checkIn={stayCheckIn ? formatDateLabel(stayCheckIn) : "Not provided"}
+          checkOut={stayCheckOut ? formatDateLabel(stayCheckOut) : "Not provided"}
+          nights={hotelNights ?? 1}
+          selected={detailHotel.hotel_id === hotelSel}
+          providerUrl={null}
+          onClose={() => setDetailHotelId(null)}
+          onSelect={() => {
+            setHotelSel(detailHotel.hotel_id);
+            setDetailHotelId(null);
+          }}
+        />
+      )}
     </main>
   );
 }

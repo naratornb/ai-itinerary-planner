@@ -15,6 +15,9 @@ export type CatalogHotel = {
   star_rating: number | null;
   room_type: string | null;
   city: string | null;
+  country?: string | null;
+  address?: string | null;
+  amenities?: string | null;
   price_per_night_aud: number | null;
 };
 
@@ -34,8 +37,23 @@ export function dedupeCatalogHotels(hotels: CatalogHotel[]): CatalogHotel[] {
   });
 }
 
-export function visibleCatalogHotels(hotels: CatalogHotel[], expanded: boolean): CatalogHotel[] {
-  return expanded ? hotels : hotels.slice(0, 6);
+export function visibleCatalogHotels(hotels: CatalogHotel[], expanded: boolean, selectedId?: string): CatalogHotel[] {
+  if (expanded || hotels.length <= 6) return hotels;
+  const visible = hotels.slice(0, 6);
+  const selected = selectedId ? hotels.find((hotel) => hotel.hotel_id === selectedId) : null;
+  return selected && !visible.includes(selected) ? [...visible.slice(0, 5), selected] : visible;
+}
+
+export function bookingOptionId(
+  catalogId: string | null | undefined,
+  componentId: string | null | undefined,
+  fallback: string,
+): string {
+  return catalogId || componentId || fallback;
+}
+
+export function estimateHotelStayTotal(nightlyPrice: number | null, nights: number): number | null {
+  return nightlyPrice == null ? null : nightlyPrice * nights;
 }
 
 /** Catalog flights departing on `date` (YYYY-MM-DD). */

@@ -4,12 +4,14 @@ import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { Session } from "@supabase/supabase-js";
+import * as Dialog from "@radix-ui/react-dialog";
 
 import {
   createPackage,
   deletePackage,
   fetchOwnPackages,
   formatCreatorPackage,
+  publishPackage,
   resolveCreatorProfile,
   signInWithEmail,
   type CreatePackageInput,
@@ -29,7 +31,7 @@ import {
 import { wizardVibesStorageKey } from "../lib/review-draft";
 import { VIBES } from "../lib/vibes";
 import { supabase } from "../lib/supabase/client";
-import { creatorPackageRoute } from "../lib/routes";
+import { creatorPackageRoute, creatorPackageShareRoute } from "../lib/routes";
 import { creatorDashboardBackLink, dashboardActionAlignment } from "./navigation-model";
 const creatorBannerImg = "/creator-banner.png";
 
@@ -1198,16 +1200,22 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
   const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string } | null>(null);
   const [deleteError, setDeleteError] = useState("");
   const [isDeleting, setIsDeleting] = useState(false);
+  const [pendingPublish, setPendingPublish] = useState<{ id: string; name: string } | null>(null);
+  const [publishError, setPublishError] = useState("");
+  const [isPublishing, setIsPublishing] = useState(false);
+  const [dashboardNotice, setDashboardNotice] = useState("");
+  const publishTriggerRef = useRef<HTMLButtonElement | null>(null);
   const tabs = ["All", "Approved", "Under review", "Drafts"];
 
   useEffect(() => {
     if (!pendingDelete) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setPendingDelete(null);
+      if (event.key !== "Escape" || isDeleting) return;
+      setPendingDelete(null);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [pendingDelete]);
+  }, [isDeleting, pendingDelete]);
 
   const confirmDeletePackage = async () => {
     if (!pendingDelete) return;
@@ -1251,6 +1259,56 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
       if (message.includes("sign in again")) router.replace("/login");
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const showDashboardNotice = (message: string) => {
+    setDashboardNotice(message);
+    window.setTimeout(() => setDashboardNotice(""), 2000);
+  };
+
+  const handleSharePackage = async (pkg: { id: string; name: string; statusKey: string }) => {
+    const sharePath = creatorPackageShareRoute(pkg.id, pkg.statusKey);
+    if (!sharePath) return;
+    const url = new URL(sharePath, window.location.origin).toString();
+
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: pkg.name, url });
+        return;
+      }
+      await navigator.clipboard.writeText(url);
+      showDashboardNotice("Link copied");
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      showDashboardNotice("Unable to share link");
+    }
+  };
+
+  const confirmPublishPackage = async () => {
+    if (!pendingPublish) return;
+    setIsPublishing(true);
+    setPublishError("");
+    try {
+      const { data } = await supabase.auth.getSession();
+      const accessToken = data.session?.access_token;
+      if (!accessToken) {
+        router.replace("/login");
+        return;
+      }
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const published = await publishPackage(fetch, apiUrl, accessToken, pendingPublish.id);
+      setPackages((current) => current.map((pkg) => (
+        pkg.package_id === published.package_id ? { ...pkg, ...published } : pkg
+      )));
+      setPendingPublish(null);
+      showDashboardNotice("Package is live");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to publish this package.";
+      setPublishError(message);
+      if (message.includes("sign in again")) router.replace("/login");
+    } finally {
+      setIsPublishing(false);
     }
   };
 
@@ -1508,6 +1566,35 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
                       ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>
                       : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z" /><circle cx="12" cy="12" r="3" /></svg>}
                   </Link>
+                  {pkg.statusKey === "approved" && (
+                    <button
+                      className="dashboard-row-publish"
+                      type="button"
+                      onClick={(event) => {
+                        publishTriggerRef.current = event.currentTarget;
+                        setPublishError("");
+                        setPendingPublish({ id: pkg.id, name: pkg.name });
+                      }}
+                    >
+                      Publish
+                    </button>
+                  )}
+                  {pkg.statusKey === "live" && (
+                    <button
+                      className="dashboard-row-action"
+                      type="button"
+                      aria-label={`Share ${pkg.name}`}
+                      title="Share"
+                      onClick={() => void handleSharePackage(pkg)}
+                    >
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <circle cx="18" cy="5" r="3" />
+                        <circle cx="6" cy="12" r="3" />
+                        <circle cx="18" cy="19" r="3" />
+                        <path d="m8.6 10.5 6.8-4M8.6 13.5l6.8 4" />
+                      </svg>
+                    </button>
+                  )}
                   {pkg.statusKey === "draft" && (
                     <button className="dashboard-row-action dashboard-row-action-delete"
                       aria-label={`Delete ${pkg.name}`} title="Delete"
@@ -1546,6 +1633,29 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
           </section>
         </div>
       )}
+      {pendingPublish && (
+        <Dialog.Root open onOpenChange={(open) => { if (!open && !isPublishing) setPendingPublish(null); }}>
+          <Dialog.Overlay className="delete-day-backdrop" />
+          <Dialog.Content
+            className="delete-day-dialog"
+            onCloseAutoFocus={(event) => {
+              event.preventDefault();
+              publishTriggerRef.current?.focus();
+            }}
+          >
+            <Dialog.Title>Publish &ldquo;{pendingPublish.name}&rdquo;?</Dialog.Title>
+            <Dialog.Description>This package will become publicly visible and shareable in the marketplace.</Dialog.Description>
+            {publishError && <p role="alert" style={{ color: "#B42318", margin: "12px 0 0", fontSize: 14 }}>{publishError}</p>}
+            <div className="delete-day-actions">
+              <Dialog.Close asChild><button className="quiet-button" disabled={isPublishing}>Cancel</button></Dialog.Close>
+              <button className="confirm-publish-button" disabled={isPublishing} onClick={() => void confirmPublishPackage()}>
+                {isPublishing ? "Publishing…" : "Publish package"}
+              </button>
+            </div>
+          </Dialog.Content>
+        </Dialog.Root>
+      )}
+      {dashboardNotice && <div className="editor-toast" role="status">{dashboardNotice}</div>}
     </div>
   );
 }
