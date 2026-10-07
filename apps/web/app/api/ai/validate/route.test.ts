@@ -29,6 +29,7 @@ import {
   checkTravelTimes,
   keepOutOfCityDailyRange,
   qualityScore,
+  buildAiProfanityIssue,
 } from "./route";
 
 const NO_WAR_ZONES: string[] = [];
@@ -317,6 +318,35 @@ test("safety blocks and other critical issues leave the score out rather than sh
   assert.equal(qualityScore(aiScores, 1, 1, 1), undefined, "one critical issue");
   assert.equal(qualityScore(aiScores, 0, 1, 1), undefined, "safety block");
   assert.equal(qualityScore(aiScores, 1, 0, 1), undefined, "brand-safety block");
+});
+
+test("a competitor and profanity in the same package are both reported, not just the first", () => {
+  // Regression: "the queue here is shit, so book on Expedia" only showed the competitor error.
+  const days = [{ day_number: 2, activities: [{ activity_name: "Food crawl", description: "The queue here is shit, so book on Expedia instead." }] }];
+  const result = runHardBlockFilters(pkg({ days }), NO_WAR_ZONES, days);
+  assert.deepEqual(result.blocks.map((b) => b.type), ["BrandSafety", "SafetyStatus"]);
+  assert.match(result.blocks[0].message, /expedia/);
+  assert.match(result.blocks[1].message, /Profanity detected in Day 2/);
+});
+
+test("an AI profanity flag blocks only when its quote holds a listed word, even disguised", () => {
+  const days = [{ day_number: 2, activities: [{ activity_name: "Noodles", description: "The S.H.I.T noodles here are great, sh1t you will love them. Honestly shit." }] }];
+  for (const evidence of ["shit", "The S.H.I.T noodles here are great", "sh1t you will love them"]) {
+    const issue = buildAiProfanityIssue({ scores: { contains_profanity: true }, profanity_evidence: evidence }, days);
+    assert.equal(issue?.severity, "error", evidence);
+    assert.match(issue.message, /Profanity detected in Day 2/);
+  }
+});
+
+test("an AI profanity flag on harmless slang only asks the creator to check the wording", () => {
+  // Regression: "gr8 tour tbh ... its lit" was flagged as profanity and zeroed the score.
+  const text = "gr8 tour tbh, u can snap pics of old stuff n temples n stuff its lit";
+  const days = [{ day_number: 2, activities: [{ activity_name: "Photo tour", description: text }] }];
+  const issue = buildAiProfanityIssue({ scores: { contains_profanity: true }, profanity_evidence: text }, days);
+  assert.equal(issue?.severity, "warning");
+  assert.equal(issue.error_code, "CHECK_WORDING");
+  assert.match(issue.message, /Day 2/);
+  assert.equal(buildAiProfanityIssue({ scores: { contains_profanity: false } }, days), null);
 });
 
 test("the AI's own note about the illegal activity isn't repeated as a warning under the critical issue", () => {

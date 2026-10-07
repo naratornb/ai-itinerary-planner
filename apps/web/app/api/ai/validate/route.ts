@@ -529,6 +529,54 @@ export function buildIllegalActError(aiResult: any, days: any[]): any | null {
   };
 }
 
+const LEET: Record<string, string> = { "0": "o", "1": "i", "3": "e", "4": "a", "5": "s", "7": "t", "@": "a", $: "s" };
+
+/** PROFANITY_WORDS match after undoing spacing ("S.H.I.T") and leetspeak ("sh1t"). */
+function hasDisguisedProfanity(text: string): boolean {
+  const lower = text.toLowerCase();
+  const joined = lower.replace(/\b(?:[a-z0-9][.\-_*\s]){2,}[a-z0-9]\b/g, (m) => m.replace(/[^a-z0-9]/g, ""));
+  const unleet = joined.replace(/[013457@$]/g, (c) => LEET[c]);
+  return PROFANITY_WORDS.some((word) => hasWord(lower, word) || hasWord(unleet, word));
+}
+
+/**
+ * The AI's profanity flag is a second pass behind PROFANITY_WORDS for disguised
+ * words. It blocks only when its quote holds a listed word once spacing and leetspeak
+ * are undone; otherwise (slang like "gr8 tour tbh ... its lit" was flagged) it only
+ * asks the creator to check the wording.
+ */
+export function buildAiProfanityIssue(aiResult: any, days: any[]): any | null {
+  if (!aiResult?.scores?.contains_profanity) return null;
+  const evidence = String(aiResult.profanity_evidence || "").trim();
+  const evidenceDay = findDayContainingText(days, evidence);
+  const field = evidenceDay !== null ? `Day ${evidenceDay}` : "package_content";
+  const where = evidenceDay !== null ? `Day ${evidenceDay}` : "package content";
+  if (hasDisguisedProfanity(evidence)) {
+    return {
+      error_code: "POLICY_VIOLATION",
+      rule: "SafetyStatus",
+      severity: "error",
+      field,
+      field_value: evidence || "N/A",
+      affected_item: "Entire Package",
+      message: `Profanity detected in ${where} (AI-detected).`,
+      action: "Remove prohibited content to proceed.",
+    };
+  }
+  return {
+    error_code: "CHECK_WORDING",
+    rule: "SafetyStatus",
+    severity: "warning",
+    field,
+    field_value: evidence || "N/A",
+    affected_item: evidenceDay !== null ? `Day ${evidenceDay}` : "Entire Package",
+    message: evidence
+      ? `Check the wording in ${where}: "${evidence}" may read as offensive (AI-flagged).`
+      : `Check the wording in ${where}: some text may read as offensive (AI-flagged).`,
+    action: "Make sure it reads as intended. A reviewer may ask about it.",
+  };
+}
+
 const AI_UNAVAILABLE_WARNING = {
   error_code: "AI_CHECKS_UNAVAILABLE",
   rule: "System",
@@ -595,65 +643,38 @@ export function dropIllegalActDuplicates(issues: any[], illegalActError: any | n
   return issues.filter((issue) => String(issue?.affected_item ?? "").trim().toLowerCase() !== evidence);
 }
 
+type HardBlock = { type: "SafetyStatus" | "BrandSafety"; message: string; field?: string };
+
+/**
+ * Every hard block in the package, one per category (conflict destination, competitor,
+ * profanity), so a creator sees all of them at once instead of fixing one, re-checking
+ * and only then meeting the next. The first block is also spread onto the result.
+ */
 export function runHardBlockFilters(pkg: any, warZones: string[], days: any[] = []) {
   const fullText = JSON.stringify(pkg).toLowerCase();
   const country = (pkg.country || "").toLowerCase();
+  const blocks: HardBlock[] = [];
 
   // Only the destination itself blocks; a mention in the text is a warning
   // (see findWordingWarnings).
-  for (const zone of warZones) {
-    if (country.trim() === zone) {
-      return {
-        blocked: true,
-        type: "SafetyStatus",
-        message: `Geopolitical Safety: Packages to ${zone} are restricted.`,
-      };
-    }
-  }
+  const zone = warZones.find((z) => country.trim() === z);
+  if (zone) blocks.push({ type: "SafetyStatus", message: `Geopolitical Safety: Packages to ${zone} are restricted.` });
+
   // Check per-day first (in day order) so a match can be attributed to a specific
   // day; a match that only shows up in a package-level field (trip name, hotel name)
-  // falls through to the whole-package scan below with no day to point to.
-  for (const day of days) {
-    const dayText = dayTextBlob(day);
-    for (const comp of BANNED_COMPETITORS) {
-      if (hasWord(dayText, comp)) {
-        return {
-          blocked: true,
-          type: "BrandSafety",
-          message: `Brand Safety: Mentions of competitor '${comp}' are blocked, in Day ${day.day_number}.`,
-          field: `Day ${day.day_number}`,
-        };
-      }
+  // falls through to the whole-package scan with no day to point to.
+  const firstMatch = (words: string[], type: HardBlock["type"], message: (word: string, day?: number) => string) => {
+    for (const day of days) {
+      const word = words.find((w) => hasWord(dayTextBlob(day), w));
+      if (word) return blocks.push({ type, message: message(word, day.day_number), field: `Day ${day.day_number}` });
     }
-  }
-  for (const comp of BANNED_COMPETITORS) {
-    if (hasWord(fullText, comp)) {
-      return {
-        blocked: true,
-        type: "BrandSafety",
-        message: `Brand Safety: Mentions of competitor '${comp}' are blocked.`,
-      };
-    }
-  }
-  for (const day of days) {
-    const dayText = dayTextBlob(day);
-    for (const word of PROFANITY_WORDS) {
-      if (hasWord(dayText, word)) {
-        return {
-          blocked: true,
-          type: "SafetyStatus",
-          message: `Profanity detected in Day ${day.day_number}.`,
-          field: `Day ${day.day_number}`,
-        };
-      }
-    }
-  }
-  for (const word of PROFANITY_WORDS) {
-    if (hasWord(fullText, word)) {
-      return { blocked: true, type: "SafetyStatus", message: "Profanity detected in package content." };
-    }
-  }
-  return { blocked: false };
+    const word = words.find((w) => hasWord(fullText, w));
+    if (word) blocks.push({ type, message: message(word) });
+  };
+  firstMatch(BANNED_COMPETITORS, "BrandSafety", (comp, day) => `Brand Safety: Mentions of competitor '${comp}' are blocked${day ? `, in Day ${day}` : ""}.`);
+  firstMatch(PROFANITY_WORDS, "SafetyStatus", (_, day) => (day ? `Profanity detected in Day ${day}.` : "Profanity detected in package content."));
+
+  return { blocked: blocks.length > 0, blocks, ...blocks[0] };
 }
 
 /**
@@ -723,22 +744,20 @@ export async function POST(req: NextRequest) {
     const wordingWarnings = findWordingWarnings(pkg, CONFLICT_COUNTRIES, days);
     let brandSafety = 1;
     let safetyStatus = 1;
-    let hardBlockError: any = null;
-
-    if (blockCheck.blocked) {
-      if (blockCheck.type === "BrandSafety") brandSafety = 0;
-      if (blockCheck.type === "SafetyStatus") safetyStatus = 0;
-      hardBlockError = {
+    const hardBlockErrors = blockCheck.blocks.map((block) => {
+      if (block.type === "BrandSafety") brandSafety = 0;
+      if (block.type === "SafetyStatus") safetyStatus = 0;
+      return {
         error_code: "POLICY_VIOLATION",
-        rule: blockCheck.type,
+        rule: block.type,
         severity: "error",
-        field: blockCheck.field || "package_content",
+        field: block.field || "package_content",
         field_value: "N/A",
         affected_item: "Entire Package",
-        message: blockCheck.message,
+        message: block.message,
         action: "Remove prohibited content to proceed.",
       };
-    }
+    });
 
     // 2. Code-based deterministic checks (see runCodeChecks) — always consistent
     const codeResults = runCodeChecks(days, pkg.arrival_landing);
@@ -801,26 +820,12 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 3b. AI profanity recheck — a semantic second pass behind the static PROFANITY_WORDS
-    //     list, catching misspellings/leetspeak/evasions the fixed list would miss.
-    let aiProfanityError: any = null;
-    if (!hardBlockError && Boolean(aiResult.scores?.contains_profanity)) {
-      safetyStatus = 0;
-      const evidenceDay = findDayContainingText(days, aiResult.profanity_evidence);
-      aiProfanityError = {
-        error_code: "POLICY_VIOLATION",
-        rule: "SafetyStatus",
-        severity: "error",
-        field: evidenceDay !== null ? `Day ${evidenceDay}` : "package_content",
-        field_value: aiResult.profanity_evidence || "N/A",
-        affected_item: "Entire Package",
-        message:
-          evidenceDay !== null
-            ? `Profanity detected in Day ${evidenceDay} (AI-detected).`
-            : "Profanity detected in package content (AI-detected).",
-        action: "Remove prohibited content to proceed.",
-      };
-    }
+    // 3b. AI profanity recheck — a second pass behind PROFANITY_WORDS for disguised
+    //     words; skipped when the list already found profanity (see buildAiProfanityIssue).
+    const listFoundProfanity = blockCheck.blocks.some((block) => block.message.startsWith("Profanity"));
+    const aiProfanityIssue = listFoundProfanity ? null : buildAiProfanityIssue(aiResult, days);
+    const aiProfanityError = aiProfanityIssue?.severity === "error" ? aiProfanityIssue : null;
+    if (aiProfanityError) safetyStatus = 0;
 
     const illegalActError = buildIllegalActError(aiResult, days);
 
@@ -850,13 +855,14 @@ export async function POST(req: NextRequest) {
       ...travelTimeErrors,
       ...(photosError ? [photosError] : []),
       ...allowedAiHardErrors,
-      ...(hardBlockError ? [hardBlockError] : []),
+      ...hardBlockErrors,
       ...(aiProfanityError ? [aiProfanityError] : []),
       ...(illegalActError ? [illegalActError] : []),
     ];
     const mergedSoftWarnings = [
       ...codeResults.soft,
       ...wordingWarnings,
+      ...(aiProfanityIssue && !aiProfanityError ? [aiProfanityIssue] : []),
       ...dedupeSimilarPairs(
         keepOutOfCityDailyRange(dropSingleActivityDailyRange(
           dropRepeatedDuplicates(dropIllegalActDuplicates(aiWarnings, illegalActError), codeResults.soft, days),
