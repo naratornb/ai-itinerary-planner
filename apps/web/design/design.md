@@ -2,7 +2,7 @@
 version: anydesign-1
 name: Influencer Travel Marketplace web experience
 source: apps/web
-captured_at: 2026-09-14
+captured_at: 2026-10-07
 description: |
   An energetic travel marketplace and creator workspace built around a strict division of
   colour roles. Saturated red establishes the product environment, blue identifies actions
@@ -109,6 +109,12 @@ components:
     textColor: "{colors.text-primary}"
     rounded: "{rounded.lg}"
     padding: 16px
+  hotel-detail-drawer:
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.text-primary}"
+    width: 440px
+    rounded: "{rounded.lg}"
+    padding: 24px
 ---
 
 # Design Analysis — Influencer Travel Marketplace web experience
@@ -253,6 +259,15 @@ Default boundaries use `{colors.border}` (#E0E0E0) at 1px or 1.5px. Selected car
 - Search results remain connected to the input through a listbox; typing alone does not count as choosing a destination.
 - **Confidence**: ✅ high
 
+#### Hotel Detail Drawer
+
+- Opens from a hotel row without changing the selected stay, so travellers can compare properties without losing booking context.
+- Uses a fixed 440px right-side panel on desktop and a full-width sheet on mobile, with a dimmed backdrop and visible `Close` action.
+- Displays only catalog-backed facts: hotel name, rating, address, room type, amenities, stay dates, nightly price, and estimated stay total.
+- The media region uses a neutral placeholder until a real hotel image source exists. It must not imply photography is available.
+- `Select this stay` is the primary action. `View on provider site` remains disabled until that hotel's own provider URL exists.
+- **Confidence**: ✅ high — scoped from the approved booking comparison flow and current catalog fields.
+
 #### Card
 
 - Destination, package, setup choice, editor panel, and timeline variants.
@@ -297,6 +312,9 @@ Default boundaries use `{colors.border}` (#E0E0E0) at 1px or 1.5px. Selected car
 
 - **What it is**: A creator package summary row with aligned destination, duration, formatted AUD price, status, and centred actions.
 - **Routing rule**: Draft and rejected packages open the editor; approved packages open creator preview; live packages open the marketplace detail page.
+- Approved rows pair Preview with a labelled `Publish` action. Publishing requires confirmation before the package becomes publicly visible.
+- Live rows place a share action beside the view action. It shares the public marketplace detail URL and falls back to copying the link when native sharing is unavailable.
+- Approved rows do not expose a share action; after publishing, the row changes to Live and replaces Publish with Share.
 - Delete is available only for drafts and requires confirmation.
 - **Confidence**: ✅ high
 
@@ -362,6 +380,7 @@ Primary and secondary actions use at least 44px height. Creation navigation uses
 - Desktop overflow locking is removed below 800px so the document scrolls naturally.
 - Editor sidebars collapse below 1100px and become a single column below 700px.
 - Creation footer actions may wrap on narrow screens.
+- Hotel details use a 440px right-side drawer on desktop and a full-width, vertically scrolling sheet below 640px.
 
 ### 4.4 Image behavior
 
@@ -370,6 +389,7 @@ Primary and secondary actions use at least 44px height. Creation navigation uses
 - Package cover imagery uses wide cover crops and a maximum displayed height.
 - Inline SVG icons use 16–24px sizing and mostly stroked geometry; selection checks use high-contrast filled circles.
 - Informative images require descriptive alternative text; decorative imagery should use empty alternative text.
+- Hotel details use a clearly labelled neutral placeholder when no property image exists; never substitute unrelated stock photography.
 
 ## 5. Reconstruction Notes
 
@@ -423,6 +443,8 @@ Use the repository's Next.js App Router, React, TypeScript, CSS custom propertie
 - Keep title and description grouped, then separate tags or metadata with a larger vertical gap.
 - Use explicit workflow language: `Submit for review`, `Approved`, creator preview, and `Live` must remain distinct.
 - Keep alternative creation actions consequence-specific, such as `Build without season` and `Clear season`.
+- Keep hotel comparison in booking context: opening details must not select a hotel, while `Select this stay` must update the choice and close the drawer.
+- Show `View on provider site` only as an enabled link when the selected property has its own verified provider URL.
 
 ### Don't
 
@@ -433,13 +455,14 @@ Use the repository's Next.js App Router, React, TypeScript, CSS custom propertie
 - Do not show `Build without season` when a season is selected; use `Clear season` to prevent accidental omission.
 - Do not describe reference flights as booked, guaranteed, or purchaser-specific inventory.
 - Do not treat approval as publication or route an approved package directly to the public marketplace detail page.
+- Do not invent hotel photos, reviews, policies, or provider destinations when catalog data is absent.
 
 ## 7. Open Questions
 
 - Should recommended season become persistent package metadata? If so, define an API field before enabling multiple seasons or destination-specific month ranges.
-- What event moves an approved package to live, and should that transition remain automatic or require an explicit administrative action?
 - Mobile creation layouts need a dedicated visual QA pass at common phone widths and 200% zoom.
 - Booking, earnings, and analytics navigation remains outside the focused creation-flow design until those destinations are implemented.
+- Hotel provider URLs are not present in the current catalog schema; the provider action remains disabled until that contract exists.
 
 ## 8. Companion files
 
