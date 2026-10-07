@@ -1,19 +1,23 @@
+import { createHash } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "../../../../lib/supabase/client";
 import {
+  ACTIVITY_GAP_MIN,
   FALLBACK_RULES,
   FeasibilityRule,
   buildSystemPrompt,
   buildUserPrompt,
   checkPackagePhotos,
+  isValidClockTime,
   runCodeChecks,
+  toMinutes,
 } from "../../../../lib/feasibility";
 
 const GEMINI_KEY = process.env.GEMINI_API_KEY!;
 const MODEL_NAME = process.env.MODEL_NAME || "gemini-2.5-flash";
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent?key=${GEMINI_KEY}`;
 
-// ─── Feasibility rules (R2, R3, R4, R6, R8, R10, R11, R12) ────────────────────
+// ─── AI rules (R3, R4, R6, R10, R11, R12, R14, R15) ─────────────────────────
 // Contextual rules that require real-world knowledge are sent to the AI. Rule
 // wording lives in the `feasibility_rules` table so it can be edited without a
 // deploy; falls back to FALLBACK_RULES if the table is empty or unreachable.
@@ -25,11 +29,63 @@ async function fetchActiveRules(): Promise<FeasibilityRule[]> {
     .eq("is_active", true)
     .order("rule_priority");
 
-  if (error || !data || data.length === 0) {
+  const rules = keepKnownRules((data ?? []) as FeasibilityRule[]);
+  if (error || rules.length === 0) {
     if (error) console.warn("Failed to fetch feasibility_rules, using fallback:", error.message);
     return FALLBACK_RULES;
   }
-  return data as FeasibilityRule[];
+  return rules;
+}
+
+/**
+ * The table supplies each rule's wording, but only for rule codes the code knows
+ * (FALLBACK_RULES). A retired rule — or an old uncoded row — still marked active in
+ * the database then can't keep reaching the AI before a migration switches it off.
+ */
+export function keepKnownRules(rows: FeasibilityRule[]): FeasibilityRule[] {
+  const known = new Set(FALLBACK_RULES.map((r) => r.rule_code));
+  return rows.filter((r) => known.has(r.rule_code));
+}
+
+// ─── AI result consistency ─────────────────────────────────────────────────────
+// Gemini isn't fully deterministic even at temperature 0, so the same package could
+// score 80 on one check and 64 on the next. A successful AI result is cached by the
+// exact prompt it answered: re-checking unchanged content returns the same result,
+// and any edit (or a rule/model change) asks again. Per server instance, in memory.
+
+const AI_CACHE_MAX = 500;
+const aiResultCache = new Map<string, unknown>();
+
+export function aiCacheKey(model: string, systemPrompt: string, userPrompt: string): string {
+  return createHash("sha256").update(`${model}\n${systemPrompt}\n${userPrompt}`).digest("hex");
+}
+
+export function getCachedAiResult(key: string): any | undefined {
+  const hit = aiResultCache.get(key);
+  return hit === undefined ? undefined : structuredClone(hit);
+}
+
+export function putCachedAiResult(key: string, result: unknown): void {
+  aiResultCache.delete(key);
+  aiResultCache.set(key, structuredClone(result));
+  // Map keeps insertion order — drop the oldest entries past the cap.
+  while (aiResultCache.size > AI_CACHE_MAX) aiResultCache.delete(aiResultCache.keys().next().value!);
+}
+
+/**
+ * temperature 0 + fixed seed + topK 1 for the most repeatable answers. Gemini 2.5
+ * Flash's thinking is capped at a small fixed budget: with none, it stopped catching
+ * things like a museum booked at 06:00; unlimited, its answers varied run to run.
+ * Only set on 2.5 Flash models, so switching MODEL_NAME can't break the request.
+ */
+export function geminiGenerationConfig(model: string) {
+  return {
+    responseMimeType: "application/json",
+    temperature: 0,
+    seed: 42,
+    topK: 1,
+    ...(model.startsWith("gemini-2.5-flash") ? { thinkingConfig: { thinkingBudget: 1024 } } : {}),
+  };
 }
 
 // ─── Hard text-based block filters ────────────────────────────────────────────
@@ -39,69 +95,13 @@ const BANNED_COMPETITORS = [
   "tripadvisor", "agoda", "hotels.com", "airbnb", "klook", "getyourguide",
 ];
 
-// Fallback war zone list used when the AI fetch fails or is unavailable.
-const FALLBACK_WAR_ZONES = [
+// Fixed list, not fetched from the AI daily: an AI-regenerated list let the same
+// package pass one day and fail the next. The destination picker already keeps these
+// out of new packages; this is the backstop plus the source for text-mention warnings.
+export const CONFLICT_COUNTRIES = [
   "russia", "ukraine", "belarus", "syria", "yemen", "somalia",
   "sudan", "myanmar", "afghanistan", "iran", "north korea",
 ];
-
-// Module-level cache so we hit Gemini at most once per 24 hours per server instance.
-let warZoneCache: { list: string[]; fetchedAt: number } | null = null;
-const WAR_ZONE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
-
-/**
- * Asks Gemini for the current list of active conflict / war-zone countries,
- * caches the result for 24 hours, and falls back to FALLBACK_WAR_ZONES on any error.
- * The actual hard-block check is still deterministic (no AI in the hot path).
- */
-async function getWarZones(): Promise<string[]> {
-  const now = Date.now();
-  if (warZoneCache && now - warZoneCache.fetchedAt < WAR_ZONE_CACHE_TTL_MS) {
-    return warZoneCache.list;
-  }
-
-  try {
-    const res = await fetch(GEMINI_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        system_instruction: {
-          parts: [{
-            text:
-              "You are a geopolitical risk analyst. " +
-              "Return ONLY a valid JSON array of lowercase country name strings (including common aliases, e.g. \"north korea\") " +
-              "for countries currently experiencing active armed conflict, civil war, or where civilian travel is " +
-              "considered extremely dangerous due to ongoing military operations. " +
-              "No markdown, no explanation — just the JSON array.",
-          }],
-        },
-        contents: [{ parts: [{ text: "List all current war zones and active conflict countries." }] }],
-        generationConfig: {
-          responseMimeType: "application/json",
-          temperature: 0,
-          seed: 42,
-        },
-      }),
-    });
-
-    if (res.ok) {
-      const data = await res.json();
-      const raw: string = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "[]";
-      const parsed: unknown = JSON.parse(raw.replace(/```json|```/g, "").trim());
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        const list = (parsed as string[]).map((s) => s.toLowerCase());
-        warZoneCache = { list, fetchedAt: now };
-        return list;
-      }
-    }
-  } catch {
-    // Network or parse error — fall through to fallback
-  }
-
-  // Cache the fallback too so we don't hammer Gemini on every request when it's down.
-  warZoneCache = { list: FALLBACK_WAR_ZONES, fetchedAt: now };
-  return FALLBACK_WAR_ZONES;
-}
 
 // `\bword\b` only matches the exact standalone word — it does NOT match
 // inflected/suffixed forms (e.g. \bfuck\b misses "fucking", "fucked", "fucker").
@@ -118,32 +118,44 @@ export const PROFANITY_WORDS = [
   "cunt", "cunts",
   "bastard", "bastards",
   "dickhead", "dickheads",
-  "prick", "pricks",
   "wanker", "wankers", "wanking",
-  "arsehole", "arseholes", "arse", "arses",
+  "arsehole", "arseholes",
   "twat", "twats",
-  "cock", "pussy", "pussies",
+  "pussy", "pussies",
   "slut", "sluts", "slutty",
   "whore", "whores", "whoring",
   // Slurs (racial / ethnic / identity)
   "nigger", "niggers", "nigga", "niggas",
   "chink", "chinks", "spic", "spics", "kike", "kikes", "gook", "gooks", "wetback", "wetbacks",
-  "cracker", "crackers",
   "faggot", "faggots", "fag", "fags",
   "dyke", "dykes", "tranny", "trannies",
   "retard", "retards", "retarded",
   // Leetspeak / evasion variants
   "b4dw0rd",
   // Drug / illegal references
-  "cocaine", "heroin", "meth", "methamphetamine", "ecstasy", "mdma",
-  "crack", "fentanyl",
+  "cocaine", "heroin", "methamphetamine", "mdma", "fentanyl",
   // Violence / threat language
-  "kill", "kills", "killed", "killing", "killer",
-  "murder", "murders", "murdered", "murdering", "murderer",
   "rape", "raped", "raping", "rapist",
   "pedophile", "pedophiles", "paedophile", "paedophiles",
   "molest", "molested", "molesting", "molester",
 ];
+
+// Words with an everyday travel meaning ("killer whale", "crack of dawn", "prawn
+// crackers", "murder mystery dinner", "cock-a-leekie") — a match only warns, so the
+// creator can check the wording without being blocked.
+export const SENSITIVE_WORDS = [
+  "kill", "kills", "killed", "killing", "killer",
+  "murder", "murders", "murdered", "murdering", "murderer",
+  "crack", "cracker", "crackers",
+  "ecstasy", "meth",
+  "cock", "prick", "pricks", "arse", "arses",
+];
+
+/** Whole-word, case-insensitive match — so "iran" misses "Tirana" and "agoda" misses "Pagoda". */
+function hasWord(text: string, word: string): boolean {
+  const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`\\b${escaped}\\b`, "i").test(text);
+}
 
 // A day's own text — summary plus every activity's name/description — used to
 // localize a profanity or banned-competitor match to a specific day so the UI can
@@ -179,33 +191,281 @@ export function isTransferTimeIssue(issue: any): boolean {
 }
 
 /**
- * R12 is the only contextual rule the system prompt allows to hard-block (a genuinely
- * impossible activity-to-activity transfer, which the creator CAN fix by moving
- * something). Every other AI hard_error is a judgment call about content the creator
- * often can't act on (e.g. flight data is read-only, catalog-selected) — this splits
+ * R3, R4 and R12 are the contextual rules allowed to hard-block (opening hours, day
+ * closures, travel time between activities — all fixable by moving something). Every
+ * other AI hard_error is a judgment call about content the creator often can't act
+ * on (e.g. flight data is read-only, catalog-selected) — this splits
  * the AI's hard_errors into ones that are allowed through as-is and ones that get
  * demoted to a warning, independent of whether the model actually followed that
  * instruction in the prompt.
  */
-export function partitionAiHardErrors(issues: any[]): { allowed: any[]; downgraded: any[] } {
+/**
+ * R13 (code) already reports activities with exactly the same name. Drop an AI R14
+ * issue that only names those activities, so the same repeat isn't shown twice; an
+ * R14 issue that also names a differently worded activity is a real near-duplicate
+ * and stays.
+ */
+export function dropRepeatedDuplicates(aiIssues: any[], codeSoft: any[], days: any[]): any[] {
+  const repeated = new Set(
+    codeSoft.filter((i) => i.error_code === "DUPLICATE_ACTIVITY").map((i) => String(i.affected_item).toLowerCase()),
+  );
+  if (repeated.size === 0) return aiIssues;
+  const names = [...new Set(days.flatMap((d: any) => (d.activities || []).map((a: any) => String(a.activity_name || "").toLowerCase())))]
+    .filter(Boolean)
+    // Longest first, so "X — Premium Edition" is matched before plain "X".
+    .sort((a, b) => b.length - a.length);
+  return aiIssues.filter((issue) => {
+    if (!String(issue?.rule ?? "").startsWith("R14")) return true;
+    let text = `${issue.affected_item ?? ""} ${issue.field_value ?? ""} ${issue.message ?? ""}`.toLowerCase();
+    const mentioned: string[] = [];
+    for (const name of names) {
+      if (text.includes(name)) {
+        mentioned.push(name);
+        text = text.split(name).join(" ");
+      }
+    }
+    return !(mentioned.length > 0 && mentioned.every((name) => repeated.has(name)));
+  });
+}
+
+/**
+ * The editor's Go to Day button needs `field` to start with "Day N". The AI sometimes
+ * writes something else there (once, the prompt's own placeholder text), so fall back
+ * to the first "Day N" anywhere in the issue, then to the day containing an activity
+ * it names.
+ */
+export function withDayField(issue: any, days: any[]): any {
+  if (/^Day \d+/.test(String(issue?.field ?? ""))) return issue;
+  const text = `${issue?.field_value ?? ""} ${issue?.affected_item ?? ""} ${issue?.message ?? ""}`;
+  const mentioned = text.match(/\bDay (\d+)/);
+  if (mentioned) return { ...issue, field: `Day ${mentioned[1]}` };
+  for (const name of String(issue?.affected_item ?? "").split(/[;,]/)) {
+    const day = findDayContainingText(days, name);
+    if (day !== null) return { ...issue, field: `Day ${day}` };
+  }
+  return issue;
+}
+
+/**
+ * R10 (Daily Range) is about combining a far excursion with other activities, so it
+ * can't apply to a day with a single activity — drop it there, whatever the AI says.
+ * Runs after withDayField, so `field` names the day.
+ */
+export function dropSingleActivityDailyRange(issues: any[], days: any[]): any[] {
+  return issues.filter((issue) => {
+    if (!String(issue?.rule ?? "").startsWith("R10")) return true;
+    const dayNumber = Number(String(issue.field ?? "").match(/^Day (\d+)/)?.[1]);
+    const day = days.find((d: any) => d.day_number === dayNumber);
+    return !day || (day.activities || []).length >= 2;
+  });
+}
+
+type Verdict = "block" | "drop" | "warn";
+
+/** Splits AI issues by a code verdict: confirmed → block, disproved → dropped, can't tell → warning. */
+function splitByVerdict(issues: any[], verdict: (issue: any) => Verdict): { blocks: any[]; warnings: any[] } {
+  const blocks: any[] = [];
+  const warnings: any[] = [];
+  for (const issue of issues) {
+    const v = verdict(issue);
+    if (v === "block") blocks.push(issue);
+    else if (v === "warn") warnings.push({ ...issue, severity: "warning" });
+  }
+  return { blocks, warnings };
+}
+
+/**
+ * R12 can hard-block, so its claim is checked in code: find the two activities it
+ * names on one day and the real gap between them. Under ACTIVITY_GAP_MIN, R22 already
+ * blocks it (dropped); at least the AI's own estimate ("about N min", or the top of a
+ * range), it's false (dropped); shorter, it's confirmed (block). If the pair or the
+ * estimate can't be read, it can't be confirmed (warning).
+ */
+export function verifyTransferGaps(issues: any[], days: any[]): { blocks: any[]; warnings: any[] } {
+  return splitByVerdict(issues, (issue): Verdict => {
+    const text = `${issue.affected_item ?? ""} ${issue.message ?? ""}`.toLowerCase();
+    const range = String(issue.message ?? "").match(/about (\d+)(?:\s*[-–]\s*(\d+))?\s*min/i);
+    const estimate = range ? Number(range[2] ?? range[1]) : NaN;
+    for (const day of days) {
+      const acts = (day.activities || [])
+        .filter((a: any) => a.activity_name && isValidClockTime(a.start_time))
+        .map((a: any) => ({ name: String(a.activity_name).toLowerCase(), start: toMinutes(a.start_time), end: toMinutes(a.start_time) + (Number(a.duration_hours) || 1) * 60 }))
+        .sort((a: any, b: any) => a.start - b.start);
+      for (let k = 1; k < acts.length; k += 1) {
+        if (text.includes(acts[k - 1].name) && text.includes(acts[k].name)) {
+          const gap = acts[k].start - acts[k - 1].end;
+          if (gap < ACTIVITY_GAP_MIN) return "drop";
+          if (Number.isNaN(estimate)) return "warn";
+          return gap < estimate ? "block" : "drop";
+        }
+      }
+    }
+    return "warn";
+  });
+}
+
+/**
+ * Only issues under a real AI rule (the FALLBACK_RULES codes) reach the editor. The
+ * AI has invented rules before — e.g. "Completeness Score" warnings repeating what
+ * R9 already reported — and those are dropped.
+ */
+export function keepRealAiRules(issues: any[]): any[] {
+  const codes = FALLBACK_RULES.map((r) => r.rule_code);
+  return issues.filter((issue) => {
+    const rule = String(issue?.rule ?? "");
+    return codes.some((code) => rule === code || rule.startsWith(`${code} `));
+  });
+}
+
+/**
+ * R3 can hard-block, so its claim is checked against the hours the AI itself quotes
+ * ("open around 09:00-10:00 … close by 17:00-18:00", most generous reading of each
+ * range): the named activity outside them is confirmed (block); inside them it's only
+ * a hedge like "might be rushed" (dropped). With no activity or no hours to check —
+ * "unusually early", say — it can't be confirmed (warning).
+ */
+export function verifyOpeningHours(issues: any[], days: any[]): { blocks: any[]; warnings: any[] } {
+  const acts = days.flatMap((d: any) => (d.activities || []))
+    .filter((a: any) => a.activity_name && isValidClockTime(a.start_time))
+    .sort((a: any, b: any) => String(b.activity_name).length - String(a.activity_name).length);
+  const times = (m: RegExpMatchArray | null) => (m ? [m[1], m[2] ?? m[1]].map(toMinutes) : null);
+  return splitByVerdict(issues, (issue): Verdict => {
+    const message = String(issue.message ?? "");
+    const act = acts.find((a: any) => `${issue.affected_item ?? ""} ${message}`.toLowerCase().includes(String(a.activity_name).toLowerCase()));
+    const open = times(message.match(/open\w*[^.]*?(\d{1,2}:\d{2})(?:\s*[-–]\s*(\d{1,2}:\d{2}))?/i));
+    const close = times(message.match(/clos\w*[^.]*?(\d{1,2}:\d{2})(?:\s*[-–]\s*(\d{1,2}:\d{2}))?/i));
+    if (!act || (!open && !close)) return "warn";
+    const start = toMinutes(act.start_time);
+    const end = start + (Number(act.duration_hours) || 1) * 60;
+    const fits = (!open || start >= open[0]) && (!close || end <= close[1]);
+    return fits ? "drop" : "block";
+  });
+}
+
+// Agreed hard blocks among the AI rules: opening hours, day closures and travel
+// time between activities. Every other AI rule is demoted to a warning.
+const AI_HARD_RULES = ["R3", "R4", "R12"];
+
+export function partitionAiHardErrors(hardErrors: any[], softWarnings: any[] = []): { allowed: any[]; downgraded: any[] } {
+  const isHardRule = (issue: any) =>
+    typeof issue?.rule === "string" && AI_HARD_RULES.some((code) => issue.rule.startsWith(`${code} `) || issue.rule === code);
   const allowed: any[] = [];
   const downgraded: any[] = [];
-  for (const issue of issues) {
-    if (typeof issue?.rule === "string" && issue.rule.startsWith("R12")) {
-      allowed.push(issue);
-    } else {
-      downgraded.push({ ...issue, severity: "warning" });
-    }
+  // An agreed hard rule blocks whichever list the AI filed it in.
+  for (const issue of [...hardErrors, ...softWarnings]) {
+    if (isHardRule(issue)) allowed.push({ ...issue, severity: "error" });
+    else downgraded.push({ ...issue, severity: "warning" });
   }
   return { allowed, downgraded };
+}
+
+/**
+ * The AI sometimes reports one similar pair twice, once from each side ("A is like B",
+ * then "B is like A"). Keep the first R14 issue for each set of activities it names.
+ */
+export function dedupeSimilarPairs(issues: any[], days: any[]): any[] {
+  const names = [...new Set(days.flatMap((d: any) => (d.activities || []).map((a: any) => String(a.activity_name || "").toLowerCase())))]
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length);
+  const seen = new Set<string>();
+  return issues.filter((issue) => {
+    if (!String(issue?.rule ?? "").startsWith("R14")) return true;
+    let text = `${issue.affected_item ?? ""} ${issue.field_value ?? ""} ${issue.message ?? ""}`.toLowerCase();
+    const mentioned: string[] = [];
+    for (const name of names) {
+      if (text.includes(name)) {
+        mentioned.push(name);
+        text = text.split(name).join(" ");
+      }
+    }
+    if (mentioned.length < 2) return true;
+    const key = mentioned.sort().join("|");
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/**
+ * The AI's illegal_act flag used to only zero the score, leaving the creator with a
+ * 0/100 and no reason. It's now a blocking error naming the activity (from the AI's
+ * illegal_evidence quote) and its day, so the creator can see what to change.
+ */
+export function buildIllegalActError(aiResult: any, days: any[]): any | null {
+  if (!aiResult?.scores?.illegal_act) return null;
+  const evidence = String(aiResult.illegal_evidence || "").trim();
+  const evidenceDay = findDayContainingText(days, evidence);
+  const where = evidenceDay !== null ? ` on Day ${evidenceDay}` : "";
+  return {
+    error_code: "POLICY_VIOLATION",
+    rule: "SafetyStatus",
+    severity: "error",
+    field: evidenceDay !== null ? `Day ${evidenceDay}` : "package_content",
+    field_value: evidence || "N/A",
+    affected_item: evidence || "Entire Package",
+    message: evidence
+      ? `"${evidence}"${where} may be illegal or unethical (AI-detected).`
+      : "An activity in this package may be illegal or unethical (AI-detected).",
+    action: "Change or remove this activity to continue.",
+  };
+}
+
+const AI_UNAVAILABLE_WARNING = {
+  error_code: "AI_CHECKS_UNAVAILABLE",
+  rule: "System",
+  severity: "warning",
+  field: "package_content",
+  field_value: "N/A",
+  affected_item: "Entire Package",
+  message: "Some AI checks couldn't run this time, so only the standard checks were applied.",
+  action: "Run Check content again for the full set of checks.",
+};
+
+/**
+ * Returned when the check itself fails. It must never pass: a package nobody could
+ * check stays blocked until a check actually succeeds, and carries no made-up score.
+ */
+export function checkFailedResult() {
+  return {
+    package_id: "package",
+    is_feasible: false,
+    has_warnings: false,
+    hard_errors: [{
+      error_code: "CHECK_FAILED",
+      rule: "System",
+      severity: "error",
+      field: "package_content",
+      field_value: "N/A",
+      affected_item: "Entire Package",
+      message: "We couldn't finish checking your package. Please try again.",
+      action: "Run Check content again. If it keeps failing, contact support.",
+    }],
+    soft_warnings: [],
+    summary: "The check couldn't run.",
+    quality_score: undefined,
+    can_publish: false,
+  };
+}
+
+/**
+ * The AI usually also describes the illegal activity in its own issue list, which
+ * partitionAiHardErrors demotes to a warning — drop that copy so the same activity
+ * isn't shown both as a critical issue and as a warning.
+ */
+export function dropIllegalActDuplicates(issues: any[], illegalActError: any | null): any[] {
+  const evidence = String(illegalActError?.field_value ?? "").trim().toLowerCase();
+  if (!illegalActError || !evidence || evidence === "n/a") return issues;
+  return issues.filter((issue) => String(issue?.affected_item ?? "").trim().toLowerCase() !== evidence);
 }
 
 export function runHardBlockFilters(pkg: any, warZones: string[], days: any[] = []) {
   const fullText = JSON.stringify(pkg).toLowerCase();
   const country = (pkg.country || "").toLowerCase();
 
+  // Only the destination itself blocks; a mention in the text is a warning
+  // (see findWordingWarnings).
   for (const zone of warZones) {
-    if (country.includes(zone) || fullText.includes(zone)) {
+    if (country.trim() === zone) {
       return {
         blocked: true,
         type: "SafetyStatus",
@@ -219,7 +479,7 @@ export function runHardBlockFilters(pkg: any, warZones: string[], days: any[] = 
   for (const day of days) {
     const dayText = dayTextBlob(day);
     for (const comp of BANNED_COMPETITORS) {
-      if (dayText.includes(comp)) {
+      if (hasWord(dayText, comp)) {
         return {
           blocked: true,
           type: "BrandSafety",
@@ -230,7 +490,7 @@ export function runHardBlockFilters(pkg: any, warZones: string[], days: any[] = 
     }
   }
   for (const comp of BANNED_COMPETITORS) {
-    if (fullText.includes(comp)) {
+    if (hasWord(fullText, comp)) {
       return {
         blocked: true,
         type: "BrandSafety",
@@ -241,7 +501,7 @@ export function runHardBlockFilters(pkg: any, warZones: string[], days: any[] = 
   for (const day of days) {
     const dayText = dayTextBlob(day);
     for (const word of PROFANITY_WORDS) {
-      if (new RegExp(`\\b${word}\\b`, "i").test(dayText)) {
+      if (hasWord(dayText, word)) {
         return {
           blocked: true,
           type: "SafetyStatus",
@@ -252,11 +512,52 @@ export function runHardBlockFilters(pkg: any, warZones: string[], days: any[] = 
     }
   }
   for (const word of PROFANITY_WORDS) {
-    if (new RegExp(`\\b${word}\\b`, "i").test(fullText)) {
+    if (hasWord(fullText, word)) {
       return { blocked: true, type: "SafetyStatus", message: "Profanity detected in package content." };
     }
   }
   return { blocked: false };
+}
+
+/**
+ * Non-blocking warnings for text that needs a second look: a context-dependent word
+ * (SENSITIVE_WORDS) or a conflict country named in the text. One warning per word,
+ * pointing at the first day it appears in when there is one.
+ */
+export function findWordingWarnings(pkg: any, warZones: string[], days: any[] = []): any[] {
+  const fullText = JSON.stringify(pkg).toLowerCase();
+  const warnings: any[] = [];
+  const firstDayWith = (word: string) => days.find((day) => hasWord(dayTextBlob(day), word))?.day_number ?? null;
+
+  for (const zone of warZones) {
+    if (!hasWord(fullText, zone)) continue;
+    const day = firstDayWith(zone);
+    warnings.push({
+      error_code: "CONFLICT_ZONE_MENTION",
+      rule: "SafetyStatus",
+      severity: "warning",
+      field: day !== null ? `Day ${day}` : "package_content",
+      field_value: zone,
+      affected_item: day !== null ? `Day ${day}` : "Entire Package",
+      message: `${day !== null ? `Day ${day}` : "This package"} mentions ${zone}, which is on the restricted travel list.`,
+      action: "Make sure the trip doesn't travel there. A reviewer may ask about it.",
+    });
+  }
+  for (const word of SENSITIVE_WORDS) {
+    if (!hasWord(fullText, word)) continue;
+    const day = firstDayWith(word);
+    warnings.push({
+      error_code: "CHECK_WORDING",
+      rule: "SafetyStatus",
+      severity: "warning",
+      field: day !== null ? `Day ${day}` : "package_content",
+      field_value: word,
+      affected_item: day !== null ? `Day ${day}` : "Entire Package",
+      message: `Check the wording of "${word}"${day !== null ? ` on Day ${day}` : ""}.`,
+      action: "Make sure it reads as intended. A reviewer may ask about it.",
+    });
+  }
+  return warnings;
 }
 
 // ─── Route handler ─────────────────────────────────────────────────────────────
@@ -280,10 +581,9 @@ export async function POST(req: NextRequest) {
       days = [];
     }
 
-    // 1. Text-based hard block filters (competitors, war zones, profanity)
-    //    War zone list is fetched from AI once and cached for 24 hours.
-    const warZones = await getWarZones();
-    const blockCheck = runHardBlockFilters(pkg, warZones, days);
+    // 1. Text-based hard block filters (competitors, conflict destination, profanity)
+    const blockCheck = runHardBlockFilters(pkg, CONFLICT_COUNTRIES, days);
+    const wordingWarnings = findWordingWarnings(pkg, CONFLICT_COUNTRIES, days);
     let brandSafety = 1;
     let safetyStatus = 1;
     let hardBlockError: any = null;
@@ -303,18 +603,17 @@ export async function POST(req: NextRequest) {
       };
     }
 
-    // 2. Code-based deterministic checks (R1, R2, R5, R7, R9, R13, R16, R17) — always consistent
-    const codeResults = runCodeChecks(days);
+    // 2. Code-based deterministic checks (see runCodeChecks) — always consistent
+    const codeResults = runCodeChecks(days, pkg.arrival_landing);
     const photosError = checkPackagePhotos(pkg); // R18 — package-level, not per-day
 
-    //console.log("\n========== [AI VALIDATE] CODE CHECK RESULTS ==========");
-    //console.log("Hard errors:", JSON.stringify(codeResults.hard, null, 2));
-    //console.log("Soft warnings:", JSON.stringify(codeResults.soft, null, 2));
-    //console.log("======================================================\n");
 
-    // 3. AI contextual checks (R3, R4, R6, R8, R10, R11, R12, R14, R15)
-    //    temperature: 0 + fixed seed for maximum consistency across repeated calls
+    // 3. AI contextual checks (R3, R4, R6, R10, R11, R12, R14, R15)
+    //    see geminiGenerationConfig and the AI result cache for consistency
     let aiResult: any = { hard_errors: [], soft_warnings: [], scores: {}, summary: "" };
+    // The deterministic checks above still gate when the AI can't run, but that must
+    // show up as a warning rather than a silently thinner check.
+    let aiAvailable = false;
 
     const rules = await fetchActiveRules();
     const systemPrompt = buildSystemPrompt(rules);
@@ -324,27 +623,37 @@ export async function POST(req: NextRequest) {
     console.log(userPrompt);
     console.log("=========================================================\n");
 
-    const res = await fetch(GEMINI_URL, {
+    // The model settings are part of the key, so changing them can't serve old answers.
+    const cacheKey = aiCacheKey(`${MODEL_NAME} ${JSON.stringify(geminiGenerationConfig(MODEL_NAME))}`, systemPrompt, userPrompt);
+    const cached = getCachedAiResult(cacheKey);
+    const res = cached ? null : await fetch(GEMINI_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         system_instruction: { parts: [{ text: systemPrompt }] },
         contents: [{ parts: [{ text: userPrompt }] }],
-        generationConfig: {
-          responseMimeType: "application/json",
-          temperature: 0,
-          seed: 42,
-        },
+        generationConfig: geminiGenerationConfig(MODEL_NAME),
       }),
+    }).catch((err) => {
+      console.warn("Gemini API unreachable — AI checks skipped:", err?.message);
+      return null;
     });
 
-    if (!res.ok) {
+    if (cached) {
+      aiResult = cached;
+      aiAvailable = true;
+      console.log("[AI VALIDATE] Unchanged content — reusing the cached AI result.");
+    } else if (!res) {
+      // Already logged above.
+    } else if (!res.ok) {
       console.warn(`Gemini API returned ${res.status}. Skipping AI contextual checks.`);
     } else {
       try {
         const data = await res.json();
         const raw = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
         aiResult = JSON.parse(raw.replace(/```json|```/g, "").trim());
+        aiAvailable = true;
+        putCachedAiResult(cacheKey, aiResult);
         console.log("\n========== [AI VALIDATE] GEMINI RESPONSE ==========");
         console.log(JSON.stringify(aiResult, null, 2));
         console.log("===================================================\n");
@@ -374,25 +683,47 @@ export async function POST(req: NextRequest) {
       };
     }
 
+    const illegalActError = buildIllegalActError(aiResult, days);
+
     // 4. Merge: code results + AI contextual results + any policy block error
     //    R2 (post-landing transfer time) is fully owned by the deterministic code
     //    check above — the system prompt tells the AI never to flag it too, but that's
     //    not a hard guarantee the model always follows, so entries matching it are
     //    dropped here as well rather than relying on prompt wording alone.
     //    See isTransferTimeIssue/partitionAiHardErrors for why each filter exists.
-    const aiHardErrors: any[] = (aiResult.hard_errors || []).filter((issue: any) => !isTransferTimeIssue(issue));
-    const { allowed: allowedAiHardErrors, downgraded: downgradedAiHardErrors } = partitionAiHardErrors(aiHardErrors);
+    const cleanAi = (list: any[] | undefined) => keepRealAiRules(list || [])
+      .filter((issue: any) => !isTransferTimeIssue(issue))
+      .map((issue: any) => withDayField(issue, days));
+    const { allowed: aiBlockCandidates, downgraded: aiSoftWarnings } =
+      partitionAiHardErrors(cleanAi(aiResult.hard_errors), cleanAi(aiResult.soft_warnings));
+    // R3 and R12 only block once code confirms them (see verifyOpeningHours/verifyTransferGaps).
+    const r3 = verifyOpeningHours(aiBlockCandidates.filter((i: any) => i.rule.startsWith("R3")), days);
+    const r12 = verifyTransferGaps(aiBlockCandidates.filter((i: any) => i.rule.startsWith("R12")), days);
+    const allowedAiHardErrors = [
+      ...aiBlockCandidates.filter((i: any) => !i.rule.startsWith("R3") && !i.rule.startsWith("R12")),
+      ...r3.blocks,
+      ...r12.blocks,
+    ];
+    const aiWarnings = [...aiSoftWarnings, ...r3.warnings, ...r12.warnings];
     const mergedHardErrors = [
       ...codeResults.hard,
       ...(photosError ? [photosError] : []),
       ...allowedAiHardErrors,
       ...(hardBlockError ? [hardBlockError] : []),
       ...(aiProfanityError ? [aiProfanityError] : []),
+      ...(illegalActError ? [illegalActError] : []),
     ];
     const mergedSoftWarnings = [
       ...codeResults.soft,
-      ...downgradedAiHardErrors,
-      ...(aiResult.soft_warnings || []).filter((issue: any) => !isTransferTimeIssue(issue)),
+      ...wordingWarnings,
+      ...dedupeSimilarPairs(
+        dropSingleActivityDailyRange(
+          dropRepeatedDuplicates(dropIllegalActDuplicates(aiWarnings, illegalActError), codeResults.soft, days),
+          days,
+        ),
+        days,
+      ),
+      ...(aiAvailable ? [] : [AI_UNAVAILABLE_WARNING]),
     ];
 
     // 5. Quality score: FinalScore = SafetyStatus x BrandSafety x [(Grammar x 0.2) + (Completeness x 0.3) + (Feasibility x 0.5)] x 100
@@ -403,7 +734,7 @@ export async function POST(req: NextRequest) {
       scores.feasibility_score ?? (mergedHardErrors.length === 0 ? 0.9 : 0.4)
     );
 
-    if (Boolean(scores.illegal_act)) safetyStatus = 0;
+    if (illegalActError) safetyStatus = 0;
 
     const weighted = grammar * 0.2 + completeness * 0.3 + feasibility * 0.5;
     const qualityScore = Math.round(safetyStatus * brandSafety * weighted * 100);
@@ -424,15 +755,6 @@ export async function POST(req: NextRequest) {
     });
   } catch (err: any) {
     console.warn("Validation handler error:", err.message);
-    return NextResponse.json({
-      package_id: "package",
-      is_feasible: true,
-      has_warnings: false,
-      hard_errors: [],
-      soft_warnings: [],
-      summary: "Validation completed with limited checks.",
-      quality_score: 88,
-      can_publish: true,
-    });
+    return NextResponse.json(checkFailedResult());
   }
 }

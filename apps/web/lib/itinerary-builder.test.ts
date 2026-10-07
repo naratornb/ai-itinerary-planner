@@ -9,6 +9,8 @@ import {
   copilotSuggestionToTimelineItem,
   daySubtitle,
   extractClockTimeInZone,
+  arrivalLanding,
+  findStayConflict,
   flightArrivalDayOffset,
   flightDurationMinutes,
   formatMinutes,
@@ -209,6 +211,92 @@ test("a flight lands on its arrival day, at its arrival time in the destination'
   assert.equal(days[0].items[0].type, "ACTIVITY");
   const flightItem = days[1].items.find((item) => item.type === "FLIGHT");
   assert.equal(flightItem?.time, "14:00");
+});
+
+test("day items order check-out → flights → activities → stay, and untimed activities chain instead of sharing 09:00", () => {
+  const pkg: CreatorPackageDetail = {
+    package_id: "pkg-order",
+    title: "Osaka Ten Days",
+    duration_days: 3,
+    days: [],
+    flights: [
+      {
+        flight_id: "fl-out",
+        airline: "Qantas",
+        flight_number: null,
+        origin_iata: "Brisbane (BNE)",
+        destination_iata: "Osaka (KIX)",
+        departure_datetime: "2026-07-12T20:00:00Z",
+        arrival_datetime: "2026-07-13T05:00:00Z",
+        cabin_class: "economy",
+        price_aud: 1022,
+        day_number: 1,
+      },
+      {
+        flight_id: "fl-ret",
+        airline: "JAL",
+        flight_number: null,
+        origin_iata: "Osaka (KIX)",
+        destination_iata: "Brisbane (BNE)",
+        departure_datetime: "2026-07-14T22:00:00Z",
+        arrival_datetime: "2026-07-15T07:00:00Z",
+        cabin_class: "economy",
+        price_aud: 1034,
+        day_number: 3,
+      },
+    ],
+    hotels: [
+      {
+        hotel_id: "HT-1",
+        hotel_name: "Osaka Garden Residence",
+        star_rating: 4.1,
+        city: "Osaka",
+        address: null,
+        check_in_day: 1,
+        check_out_day: 3,
+        price_per_night_aud: 548,
+        room_type: "Standard Double",
+      },
+    ],
+    activities: [
+      {
+        activity_id: "a1",
+        sequence_order: 1,
+        activity_name: "Food Tour",
+        activity_date: null,
+        city: "Osaka",
+        duration_hours: 2,
+        price_aud: 100,
+        description: null,
+        booking_required: null,
+        day_number: 2,
+      },
+      {
+        activity_id: "a2",
+        sequence_order: 2,
+        activity_name: "Canal Cruise",
+        activity_date: null,
+        city: "Osaka",
+        duration_hours: 1,
+        price_aud: 47,
+        description: null,
+        booking_required: null,
+        day_number: 2,
+      },
+    ],
+  };
+
+  const days = buildDaysFromPackage(pkg);
+
+  // Day 1: the outbound flight leads, check-in closes the day.
+  assert.deepEqual(days[0].items.map((item) => item.type), ["FLIGHT", "HOTEL"]);
+  // Day 2: activities keep sequence order and chain times off each other's
+  // duration; the overnight stay row sits at the end, not mid-list.
+  assert.deepEqual(days[1].items.map((item) => item.type), ["ACTIVITY", "ACTIVITY", "HOTEL"]);
+  assert.deepEqual(days[1].items.map((item) => item.time), ["09:00", "11:00", "Overnight stay"]);
+  // Day 3: check-out leads, then the return flight.
+  assert.deepEqual(days[2].items.map((item) => item.type), ["HOTEL", "FLIGHT"]);
+  assert.equal(days[2].items[0].stayMarker, "check-out");
 });
 
 test("items in the same day are ordered by their real clock time, not a stale sequence_order", () => {
@@ -691,4 +779,94 @@ test("summarizePackageComponents counts a multi-night stay as one hotel, not one
 
 test("summarizePackageComponents of no days is all zero", () => {
   assert.deepEqual(summarizePackageComponents([]), { flightCount: 0, hotelCount: 0, activityCount: 0 });
+});
+
+// A hotel stay as createHotel spreads it: check-in, overnight rows, then a check-out row.
+function stayDays(dayCount: number, stays: { hotel: string; group: string; checkIn: number; nights: number }[]): BuilderDay[] {
+  const days: BuilderDay[] = Array.from({ length: dayCount }, (_, i) => ({
+    id: `day-${i + 1}`, day: i + 1, title: "", meta: "", items: [], story: "", photos: [],
+  }));
+  let id = 0;
+  for (const stay of stays) {
+    for (let offset = 0; offset <= stay.nights; offset += 1) {
+      days[stay.checkIn + offset].items.push({
+        id: ++id, time: "", type: "HOTEL", title: stay.hotel, price: "$723/night", icon: "hotel", status: "pass",
+        hotelName: stay.hotel, stayGroupId: stay.group,
+        stayMarker: offset === 0 ? "check-in" : offset === stay.nights ? "check-out" : undefined,
+      } as TimelineItem);
+    }
+  }
+  return days;
+}
+
+test("adding the same hotel again on a night it already covers is a conflict", () => {
+  // Regression: Hilton Kyoto could be added three times on one day, and every copy
+  // was billed — $723 x 3 for a single night.
+  const days = stayDays(3, [{ hotel: "Hilton Kyoto", group: "a", checkIn: 0, nights: 1 }]);
+  assert.deepEqual(findStayConflict(days, 0, 1), { dayIndex: 0, hotelName: "Hilton Kyoto" });
+});
+
+test("a different hotel on a night that already has one is also a conflict", () => {
+  const days = stayDays(4, [{ hotel: "Hilton Kyoto", group: "a", checkIn: 0, nights: 2 }]);
+  assert.deepEqual(findStayConflict(days, 1, 2), { dayIndex: 1, hotelName: "Hilton Kyoto" });
+});
+
+test("checking in on another hotel's check-out day is fine", () => {
+  const days = stayDays(4, [{ hotel: "Hilton Kyoto", group: "a", checkIn: 0, nights: 2 }]);
+  assert.equal(findStayConflict(days, 2, 1), null);
+});
+
+test("returning to the same hotel on later, free nights is fine", () => {
+  const days = stayDays(6, [
+    { hotel: "Hilton Kyoto", group: "a", checkIn: 0, nights: 2 },
+    { hotel: "Osaka Inn", group: "b", checkIn: 2, nights: 1 },
+  ]);
+  assert.equal(findStayConflict(days, 3, 2), null);
+});
+
+test("moving a stay ignores its own nights", () => {
+  const days = stayDays(4, [{ hotel: "Hilton Kyoto", group: "a", checkIn: 0, nights: 2 }]);
+  assert.equal(findStayConflict(days, 1, 2, "a"), null);
+  assert.ok(findStayConflict(days, 1, 2, "other"));
+});
+
+test("nights on days that don't exist yet can't conflict", () => {
+  const days = stayDays(2, [{ hotel: "Hilton Kyoto", group: "a", checkIn: 0, nights: 1 }]);
+  assert.equal(findStayConflict(days, 1, 3), null);
+});
+
+function flightDay(dayNumber: number, items: Partial<TimelineItem>[]): BuilderDay {
+  return {
+    id: `d${dayNumber}`, day: dayNumber, title: "", meta: "", story: "", photos: [],
+    items: items.map((it, i) => ({ id: dayNumber * 100 + i, time: "09:00", title: "x", price: "$0", icon: "star", status: "pass", type: "ACTIVITY", ...it }) as TimelineItem),
+  };
+}
+
+test("arrivalLanding finds when and on which day the arrival flight lands", () => {
+  const days = [
+    flightDay(1, [{ type: "FLIGHT", time: "07:00", departureTime: "07:00", arrivalTime: "16:45" }]),
+    flightDay(2, []),
+    flightDay(3, [{ type: "FLIGHT", time: "18:00", departureTime: "18:00", arrivalTime: "23:30" }]),
+  ];
+  const { dayIndex, time } = arrivalLanding(days)!;
+  assert.deepEqual({ dayIndex, time }, { dayIndex: 0, time: "16:45" });
+});
+
+test("an overnight arrival flight lands on the next day", () => {
+  const days = [
+    flightDay(1, [{ type: "FLIGHT", time: "22:00", departureTime: "22:00", arrivalTime: "06:30" }]),
+    flightDay(2, []),
+    flightDay(3, [{ type: "FLIGHT", time: "18:00", departureTime: "18:00", arrivalTime: "23:30" }]),
+  ];
+  const { dayIndex, time } = arrivalLanding(days)!;
+  assert.deepEqual({ dayIndex, time }, { dayIndex: 1, time: "06:30" });
+});
+
+test("a lone flight on the last day is the trip home, not an arrival", () => {
+  const days = [flightDay(1, []), flightDay(2, [{ type: "FLIGHT", time: "18:00", arrivalTime: "23:30" }])];
+  assert.equal(arrivalLanding(days), null);
+});
+
+test("no flights means no arrival landing", () => {
+  assert.equal(arrivalLanding([flightDay(1, [])]), null);
 });

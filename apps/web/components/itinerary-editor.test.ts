@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { annotateItems, deriveFlightType, findTimeConflict, placeUnassociatedMedia, referenceFlightPresentation } from "./itinerary-editor";
+import { annotateItems, deriveFlightType, findTimeConflict, placeUnassociatedMedia, referenceFlightPresentation, removeItemPhotoFromDays } from "./itinerary-editor";
 import type { BuilderDay, TimelineItem } from "../lib/itinerary-builder";
 
 function item(overrides: Partial<TimelineItem> & { id: number; time: string }): TimelineItem {
@@ -103,6 +103,32 @@ test("annotateItems has the same flight-duration fix — no false 'Overlaps next
   const [, activity] = annotateItems(items);
   assert.equal(activity.status, "pass");
   assert.equal(activity.problem, undefined);
+});
+
+test("annotateItems does not flag ordinary words containing 'y' as consonant runs as gibberish", () => {
+  // Regression: "countryside" has "ntrys" — 5 consecutive letters that are all
+  // non-vowels when "y" is (wrongly) never counted as a vowel — which tripped the
+  // 5-consonant-run gibberish heuristic on completely normal, readable text.
+  const items = [
+    item({
+      id: 1,
+      time: "09:00",
+      notes:
+        "Take in breathtaking winter landscapes and charming rural villages. Enjoy a hearty traditional lunch at a countryside tavern.",
+    }),
+  ];
+
+  const [annotated] = annotateItems(items);
+  assert.equal(annotated.status, "pass");
+  assert.equal(annotated.problem, undefined);
+});
+
+test("annotateItems still flags actual gibberish notes", () => {
+  const items = [item({ id: 1, time: "09:00", notes: "xkjqzwv plrmfnbght vwxzklrq" })];
+
+  const [annotated] = annotateItems(items);
+  assert.equal(annotated.status, "critical");
+  assert.equal(annotated.problem, "Description contains unreadable text");
 });
 
 test("a neighbor without a real clock time (an overnight hotel stay) is ignored", () => {
@@ -246,4 +272,88 @@ test("placeUnassociatedMedia falls back to day 1 when the pending day no longer 
   const placed = placeUnassociatedMedia([builderDay(1)], [{ media_id: "m1", url: "u1" }], { m1: 5 });
 
   assert.equal(placed[0].photos[0]?.media_id, "m1");
+});
+
+test("removing a persisted item photo also clears it from the canonical day state", () => {
+  const days = [
+    builderDay(1, {
+      items: [item({
+        id: 7,
+        time: "09:00",
+        photos: [
+          { src: "target.jpg", alt: "Target", media_id: "m1" },
+          { src: "keep.jpg", alt: "Keep", media_id: "m2" },
+        ],
+      })],
+    }),
+    builderDay(2, {
+      items: [item({ id: 8, time: "10:00", photos: [{ src: "other.jpg", alt: "Other", media_id: "m3" }] })],
+    }),
+  ];
+
+  const updated = removeItemPhotoFromDays(days, 7, "m1");
+
+  assert.deepEqual(updated[0].items[0].photos?.map((photo) => photo.media_id), ["m2"]);
+  assert.deepEqual(updated[1].items[0].photos?.map((photo) => photo.media_id), ["m3"]);
+});
+
+test("an activity starting before the arrival flight lands gets a warning on its card", () => {
+  // Singapore case: the museum was booked for 10:00 but the flight lands at 16:45.
+  const items = [
+    { id: 1, time: "07:00", type: "FLIGHT", title: "SYD to SIN", price: "$0", icon: "plane", status: "pass" },
+    { id: 2, time: "10:00", type: "ACTIVITY", title: "Museum", price: "$0", icon: "star", status: "pass", duration: "60" },
+    { id: 3, time: "18:30", type: "ACTIVITY", title: "Night market", price: "$0", icon: "star", status: "pass", duration: "60" },
+  ] as TimelineItem[];
+  const [, museum, market] = annotateItems(items, { time: "16:45", bufferMin: 90, international: true });
+  assert.equal(museum.status, "critical");
+  assert.equal(museum.problem, "Starts before your flight lands");
+  assert.match(museum.problemDetail ?? "", /16:45/);
+  assert.equal(market.problem, undefined);
+});
+
+test("without a landing time, activities aren't flagged for it", () => {
+  const items = [
+    { id: 2, time: "10:00", type: "ACTIVITY", title: "Museum", price: "$0", icon: "star", status: "pass", duration: "60" },
+  ] as TimelineItem[];
+  assert.equal(annotateItems(items)[0].problem, undefined);
+});
+
+test("a short gap between two stops says which trip there isn't enough time for", () => {
+  const items = [
+    { id: 1, time: "09:00", type: "ACTIVITY", title: "Grand Palace", price: "$0", icon: "star", status: "pass", duration: "60" },
+    { id: 2, time: "10:05", type: "ACTIVITY", title: "Wat Arun", price: "$0", icon: "star", status: "pass", duration: "60" },
+  ] as TimelineItem[];
+  const [palace] = annotateItems(items);
+  assert.equal(palace.problem, "Not enough travel time");
+  assert.match(palace.problemDetail ?? "", /Only 5 min to get from "Grand Palace" to "Wat Arun"/);
+});
+
+test("the first activity too soon after landing gets a card warning with the earliest start", () => {
+  // Was a blocking feasibility error (R2): lands 18:31, night market at 20:00 — 89 min.
+  const items = [
+    { id: 1, time: "13:00", type: "FLIGHT", title: "SYD to BKK", price: "$0", icon: "plane", status: "pass" },
+    { id: 2, time: "20:00", type: "ACTIVITY", title: "Night Market", price: "$0", icon: "star", status: "pass", duration: "120" },
+  ] as TimelineItem[];
+  const [, market] = annotateItems(items, { time: "18:31", bufferMin: 90, international: true });
+  assert.equal(market.status, "critical");
+  assert.equal(market.problem, "Too soon after landing");
+  assert.match(market.problemDetail ?? "", /18:31/);
+  assert.match(market.problemDetail ?? "", /90 min/);
+  assert.match(market.problemDetail ?? "", /20:01/);
+});
+
+test("only the first activity after landing is checked against the buffer", () => {
+  const items = [
+    { id: 2, time: "20:00", type: "ACTIVITY", title: "Dinner", price: "$0", icon: "star", status: "pass", duration: "60" },
+    { id: 3, time: "21:30", type: "ACTIVITY", title: "Rooftop bar", price: "$0", icon: "star", status: "pass", duration: "60" },
+  ] as TimelineItem[];
+  const [, bar] = annotateItems(items, { time: "18:31", bufferMin: 90, international: true });
+  assert.equal(bar.problem, undefined);
+});
+
+test("an activity starting after the full buffer is fine", () => {
+  const items = [
+    { id: 2, time: "20:01", type: "ACTIVITY", title: "Night Market", price: "$0", icon: "star", status: "pass", duration: "60" },
+  ] as TimelineItem[];
+  assert.equal(annotateItems(items, { time: "18:31", bufferMin: 90, international: true })[0].problem, undefined);
 });
