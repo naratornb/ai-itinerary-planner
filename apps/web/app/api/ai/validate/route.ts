@@ -541,6 +541,24 @@ const AI_UNAVAILABLE_WARNING = {
 };
 
 /**
+ * FinalScore = SafetyStatus x BrandSafety x [(Grammar x 0.2) + (Completeness x 0.3) +
+ * (Feasibility x 0.5)] x 100. Left out while anything blocks submission (a critical
+ * issue or a safety block): a blocked package showing 100/100 read as a contradiction.
+ */
+export function qualityScore(
+  scores: { grammar_score?: number; completeness_score?: number; feasibility_score?: number },
+  safetyStatus: number,
+  brandSafety: number,
+  criticalCount = 0,
+): number | undefined {
+  if (criticalCount > 0 || safetyStatus === 0 || brandSafety === 0) return undefined;
+  const grammar = Number(scores.grammar_score ?? 0.8);
+  const completeness = Number(scores.completeness_score ?? 0.8);
+  const feasibility = Number(scores.feasibility_score ?? 0.9);
+  return Math.round((grammar * 0.2 + completeness * 0.3 + feasibility * 0.5) * 100);
+}
+
+/**
  * Returned when the check itself fails. It must never pass: a package nobody could
  * check stays blocked until a check actually succeeds, and carries no made-up score.
  */
@@ -849,18 +867,10 @@ export async function POST(req: NextRequest) {
       ...(aiAvailable ? [] : [AI_UNAVAILABLE_WARNING]),
     ];
 
-    // 5. Quality score: FinalScore = SafetyStatus x BrandSafety x [(Grammar x 0.2) + (Completeness x 0.3) + (Feasibility x 0.5)] x 100
-    const scores = aiResult.scores || {};
-    const grammar = Number(scores.grammar_score ?? 0.8);
-    const completeness = Number(scores.completeness_score ?? 0.8);
-    const feasibility = Number(
-      scores.feasibility_score ?? (mergedHardErrors.length === 0 ? 0.9 : 0.4)
-    );
-
+    // 5. Quality score — none while a critical issue blocks submission (see qualityScore)
     if (illegalActError) safetyStatus = 0;
 
-    const weighted = grammar * 0.2 + completeness * 0.3 + feasibility * 0.5;
-    const qualityScore = Math.round(safetyStatus * brandSafety * weighted * 100);
+    const score = qualityScore(aiResult.scores || {}, safetyStatus, brandSafety, mergedHardErrors.length);
     const isFeasible = mergedHardErrors.length === 0;
 
     return NextResponse.json({
@@ -872,8 +882,8 @@ export async function POST(req: NextRequest) {
       summary:
         aiResult.summary ||
         (isFeasible ? "All checks passed." : "Issues found — review critical errors."),
-      quality_score: qualityScore,
-      can_publish: qualityScore >= 70 && isFeasible,
+      quality_score: score,
+      can_publish: isFeasible && (score ?? 0) >= 70,
       ai_response: aiResult,
     });
   } catch (err: any) {

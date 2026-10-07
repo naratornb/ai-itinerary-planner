@@ -934,6 +934,7 @@ figure .remove-photo-btn:focus-visible { outline: 2px solid var(--fc-focus-ring)
 .feas-score-display strong { color: var(--fc-ink); font-size: 36px; line-height: 1; font-weight: 800; font-variant-numeric: tabular-nums; }
 .feas-score-display span { color: var(--fc-secondary); font-size: 15px; line-height: 1; }
 .feas-score-display-stale strong { color: var(--fc-disabled); }
+.feas-score-hint { margin: -6px 0 14px; color: var(--fc-secondary); font-size: 12px; line-height: 16px; }
 .feas-score-display-pass strong { color: var(--fc-success); }
 .score-track { position: relative; height: 8px; border-radius: 999px; background: var(--fc-border); }
 .score-fill { display: block; width: 0%; height: 100%; border-radius: inherit; background: var(--fc-secondary); transition: width 300ms ease-out; }

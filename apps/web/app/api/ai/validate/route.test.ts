@@ -28,6 +28,7 @@ import {
   distanceKm,
   checkTravelTimes,
   keepOutOfCityDailyRange,
+  qualityScore,
 } from "./route";
 
 const NO_WAR_ZONES: string[] = [];
@@ -302,6 +303,20 @@ test("a crashed check blocks submission with a retry message instead of passing 
   assert.equal(result.hard_errors.length, 1);
   assert.equal(result.hard_errors[0].error_code, "CHECK_FAILED");
   assert.equal(result.hard_errors[0].severity, "error");
+});
+
+test("no score while there's a critical issue, so a blocked package never reads 100/100", () => {
+  // Regression: a re-check showed 100/100 next to "Day 1 has no accommodation attached".
+  const aiScores = { grammar_score: 1, completeness_score: 1, feasibility_score: 1 };
+  assert.equal(qualityScore(aiScores, 1, 1), 100);
+  assert.equal(qualityScore({ grammar_score: 0.6, completeness_score: 0.8, feasibility_score: 0.9 }, 1, 1), 81);
+});
+
+test("safety blocks and other critical issues leave the score out rather than showing 0", () => {
+  const aiScores = { grammar_score: 1, completeness_score: 1, feasibility_score: 1 };
+  assert.equal(qualityScore(aiScores, 1, 1, 1), undefined, "one critical issue");
+  assert.equal(qualityScore(aiScores, 0, 1, 1), undefined, "safety block");
+  assert.equal(qualityScore(aiScores, 1, 0, 1), undefined, "brand-safety block");
 });
 
 test("the AI's own note about the illegal activity isn't repeated as a warning under the critical issue", () => {

@@ -2217,7 +2217,9 @@ export default function ItineraryEditor({
   const hardErrors = feasResult?.hard_errors ?? [];
   const softWarnings = feasResult?.soft_warnings ?? [];
   const hasEmptyDay = days.some((day) => day.items.length === 0);
-  const displayScore = hasEmptyDay ? 0 : feasResult?.quality_score;
+  // No score while critical issues block submission — the check leaves it out too.
+  const scoreWithheld = Boolean(feasResult) && hardErrors.length > 0;
+  const displayScore = scoreWithheld ? undefined : hasEmptyDay ? 0 : feasResult?.quality_score;
 
   const isReadyToSubmit = Boolean(
     feasResult &&
@@ -2270,7 +2272,7 @@ export default function ItineraryEditor({
         void runFeasibilityCheck();
         return;
       }
-      showNotice((displayScore ?? 0) < 70
+      showNotice(!scoreWithheld && (displayScore ?? 0) < 70
         ? `Your trip score is ${displayScore ?? 0}/100. A minimum score of 70 is required to continue. Improve your itinerary and check content again.`
         : "Fix critical feasibility issues and check content again before continuing.");
       return;
@@ -2747,7 +2749,8 @@ export default function ItineraryEditor({
                 <div className={`feas-score-display${!feasResult || resultStale ? " feas-score-display-stale" : scorePassing ? " feas-score-display-pass" : ""}`}>
                   <strong>{displayScore !== undefined ? displayScore : "—"}</strong><span>/100</span>
                 </div>
-                <div className={`score-track${resultStale ? " score-track-stale" : scorePassing ? " score-track-pass" : ""}`} role="meter" aria-label={displayScore !== undefined ? `Package quality score, ${displayScore} out of 100${resultStale ? " (stale — content changed since this was calculated)" : ""}. Minimum score to submit is 70.` : "Package quality score not yet checked. Minimum score to submit is 70."} aria-valuemin={0} aria-valuemax={100} aria-valuenow={displayScore ?? 0}>
+                {scoreWithheld && !resultStale && <p className="feas-score-hint">Fix the critical issues to see your score.</p>}
+                <div className={`score-track${resultStale ? " score-track-stale" : scorePassing ? " score-track-pass" : ""}`} role="meter" aria-label={displayScore !== undefined ? `Package quality score, ${displayScore} out of 100${resultStale ? " (stale — content changed since this was calculated)" : ""}. Minimum score to submit is 70.` : scoreWithheld ? "Package quality score not shown until the critical issues are fixed. Minimum score to submit is 70." : "Package quality score not yet checked. Minimum score to submit is 70."} aria-valuemin={0} aria-valuemax={100} aria-valuenow={displayScore ?? 0}>
                   <span className="score-fill" style={{ width: displayScore !== undefined ? `${Math.min(100, Math.max(0, displayScore))}%` : "0%" }} />
                   <i aria-hidden="true" />
                 </div>
