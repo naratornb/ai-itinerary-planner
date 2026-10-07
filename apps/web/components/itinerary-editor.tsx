@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { useRouter } from "next/navigation";
 import CopilotPanel from "./copilot/copilot-panel";
+import AiDisclaimer from "./ai-disclaimer";
 import { HotelChoiceCard } from "./hotel-choice-card";
 import RouteMap, { type RouteStop } from "./route-map";
 import { createCopilotClient } from "../lib/copilot-client";
@@ -11,14 +12,18 @@ import {
   arrivalLanding,
   buildPackageUpdate,
   buildDaysFromPackage,
+  compareDayItems,
   computePackagePrice,
   copilotSuggestionToTimelineItem,
   extractClockTimeInZone,
   findDuplicateFlight,
   findStayConflict,
   flightArrivalDayOffset,
+  flightArrivalOffset,
   flightDurationMinutes,
+  flightEndClock,
   getEndTime,
+  hotelStayGroupKey,
   insertItemInDay,
   nextCalendarDate,
   removeDay,
@@ -233,6 +238,20 @@ export function placeUnassociatedMedia(
   });
 }
 
+/**
+ * True when the working days/title are exactly what the last save persisted —
+ * persistDraft swaps state for the server's round-tripped copy, which is not
+ * an edit and must not invalidate the feasibility result (see the
+ * result-stale effect below).
+ */
+export function contentMatchesSavedSnapshot(
+  snapshot: { days: BuilderDay[]; title: string } | null,
+  days: BuilderDay[],
+  title: string,
+): boolean {
+  return snapshot !== null && snapshot.days === days && snapshot.title === title;
+}
+
 export function removeItemPhotoFromDays(days: BuilderDay[], itemId: number, mediaId: string): BuilderDay[] {
   return days.map((day) => ({
     ...day,
@@ -287,21 +306,21 @@ export function findTimeConflict(items: TimelineItem[], editingId: number, time:
 
   const previous = items[index - 1];
   if (previous && REAL_TIME_PATTERN.test(previous.time)) {
-    // A flight's `time` is already its arrival — the flight has landed by then, so
-    // its "end" for adjacency purposes IS that time. `duration` on a flight is its
-    // travel time (e.g. ~6hrs SYD→DPS), not time occupied after landing — adding it
-    // here double-counts the flight and pushes "ends at" hours past the real arrival.
-    const previousEnds = previous.type === "FLIGHT" ? previous.time : getEndTime(previous.time, previous.duration ?? "0");
+    // A flight has already landed by its end — `duration` on a flight is its
+    // travel time (e.g. ~6hrs SYD→DPS), not time occupied after landing, so
+    // adding it here double-counts the flight. For a relative leg `time` is the
+    // departure, so the end comes from flightEndClock, not `time` alone.
+    const previousEnds = previous.type === "FLIGHT" ? flightEndClock(previous) : getEndTime(previous.time, previous.duration ?? "0");
     if (time < previousEnds) return `Must start at or after ${previous.title} ends, at ${previousEnds}`;
   }
 
   const next = items[index + 1];
   if (next && REAL_TIME_PATTERN.test(next.time)) {
-    // Same fix as above, mirrored: if the item being checked here is ITSELF a flight,
-    // `time` (its arrival) is already its end — don't add its own travel duration on
-    // top when checking it against the next item's start.
+    // Same fix as above, mirrored: if the item being checked here is ITSELF a
+    // flight, its own landing is already its end — don't add travel duration
+    // on top when checking it against the next item's start.
     const isFlight = items[index]?.type === "FLIGHT";
-    const thisEnds = isFlight ? time : getEndTime(time, duration);
+    const thisEnds = isFlight ? flightEndClock({ ...items[index]!, time }) : getEndTime(time, duration);
     if (thisEnds > next.time) {
       const latestStart = isFlight ? next.time : subtractMinutes(next.time, duration);
       return `Must start by ${latestStart}, so it ends before ${next.title} starts at ${next.time}`;
@@ -541,10 +560,11 @@ export function annotateItems(
     }
 
     const durationMin = Number(item.duration ?? 60);
-    // A flight's `time` is its arrival — it has already "ended" the moment it lands.
-    // `duration` on a flight is travel time, not time occupied after landing, so
-    // adding it here would double-count the flight (same bug fixed in findTimeConflict).
-    const endMin = item.type === "FLIGHT" ? toMinutes(item.time) : toMinutes(item.time) + durationMin;
+    // A flight has already "ended" the moment it lands — `duration` is travel
+    // time, not time occupied after landing, so adding it would double-count
+    // (same bug fixed in findTimeConflict). A relative leg's `time` is its
+    // departure, so the end comes from flightEndClock.
+    const endMin = item.type === "FLIGHT" ? toMinutes(flightEndClock(item)) : toMinutes(item.time) + durationMin;
 
     // 1 & 2. Gap vs next item — the list is a single day's items
     const next = raw[i + 1];
@@ -1009,7 +1029,9 @@ export default function ItineraryEditor({
   const [days, setDays] = useState(() => buildDaysFromPackage(pkg));
   const dayTabsRef = useRef<HTMLDivElement>(null);
   const [dayScroll, setDayScroll] = useState({ canLeft: false, canRight: false });
-  const [savedSnapshot, setSavedSnapshot] = useState<{ days: BuilderDay[]; title: string } | null>(null);
+  // Seeded with the loaded package, not null — a package nobody has edited
+  // yet is already "saved", so the back button mustn't warn about losing it.
+  const [savedSnapshot, setSavedSnapshot] = useState<{ days: BuilderDay[]; title: string } | null>(() => ({ days, title: pkg.title }));
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [packageStatus, setPackageStatus] = useState(pkg.status ?? "draft");
@@ -1018,7 +1040,6 @@ export default function ItineraryEditor({
   // Only draft/rejected packages may be saved or submitted (apps/api/app/packages/service.py) —
   // everything else is a read-only lifecycle state past this editor's control.
   const isLocked = packageStatus !== "draft" && packageStatus !== "rejected";
-  const [previewOpen, setPreviewOpen] = useState(false);
   const [isGeneratingStory, setIsGeneratingStory] = useState(false);
   const [editingDayField, setEditingDayField] = useState<"title" | null>(null);
   const [dayDraft, setDayDraft] = useState("");
@@ -1114,10 +1135,10 @@ export default function ItineraryEditor({
     setTripVibesDraft(next);
     setEditingTripParams(false);
   };
-  // buildDaysFromPackage stamps every row of a stay with `hotel-<id|name>`,
+  // buildDaysFromPackage stamps every row of a stay with hotelStayGroupKey,
   // so the API hotel is looked up by that key rather than by counting rows —
   // the item list here is one day's worth, not the whole trip.
-  const hotelByStayGroup = new Map(hotels.map((hotel) => [`hotel-${hotel.hotel_id ?? hotel.hotel_name ?? ""}`, hotel]));
+  const hotelByStayGroup = new Map(hotels.map((hotel, index) => [hotelStayGroupKey(hotel, index), hotel]));
   const hotelForItem = (item: TimelineItem) =>
     item.type === "HOTEL" && item.stayGroupId ? hotelByStayGroup.get(item.stayGroupId) : undefined;
   const routeStopBases = items.map((item, index) => {
@@ -1263,7 +1284,6 @@ export default function ItineraryEditor({
       });
       if (res.ok) {
         const data = await res.json();
-        console.log("=== [AI VALIDATE CLIENT RESPONSE] ===", data);
         setFeasResult(data);
         // Timestamps a check that only ever runs from a click handler, never
         // during render — safe despite the purity lint's static analysis.
@@ -1291,7 +1311,9 @@ export default function ItineraryEditor({
       isFirstMount.current = false;
       return;
     }
-    if (feasResult) setResultStale(true);
+    // persistDraft replaces days/title with the identical round-tripped
+    // content — that isn't a content change, so the result stays fresh.
+    if (feasResult && !contentMatchesSavedSnapshot(savedSnapshot, days, packageTitle)) setResultStale(true);
     // All itinerary content (items, story, photos) lives inside `days`; the
     // derived `items` is deliberately excluded so switching day tabs doesn't
     // mark an unchanged result stale.
@@ -1342,6 +1364,7 @@ export default function ItineraryEditor({
   // rows the package already carries.
   useEffect(() => {
     if (addFlow !== "activities") return;
+    let stale = false;
     const timer = window.setTimeout(async () => {
       let query = supabase
         .from("activities")
@@ -1355,6 +1378,7 @@ export default function ItineraryEditor({
       const search = activitySearch.trim();
       if (search) query = query.ilike("activity_name", `%${search}%`);
       const { data, error } = await query;
+      if (stale) return;
       if (error || !data) { setRecommendedActivities([]); return; }
       // The catalog carries some exact-duplicate rows (same activity re-seeded
       // under a different id) — collapse those to one card by name.
@@ -1374,7 +1398,7 @@ export default function ItineraryEditor({
         suitableFor: row.suitable_for,
       })));
     }, 250);
-    return () => window.clearTimeout(timer);
+    return () => { stale = true; window.clearTimeout(timer); };
   }, [addFlow, activeDayCity, activitySearch]);
 
   useEffect(() => {
@@ -1389,6 +1413,7 @@ export default function ItineraryEditor({
   // happened to attach to the package at creation time.
   useEffect(() => {
     if (addFlow !== "hotel") return;
+    let stale = false;
     const timer = window.setTimeout(async () => {
       let query = supabase
         .from("hotels")
@@ -1399,6 +1424,7 @@ export default function ItineraryEditor({
       const search = hotelSearch.trim();
       if (search) query = query.ilike("hotel_name", `%${search}%`);
       const { data, error } = await query;
+      if (stale) return;
       if (error || !data) { setCatalogHotels([]); return; }
       // Same seed-data quirk as activities/flights — the same listing
       // (name + room type + price) can appear more than once in the
@@ -1412,7 +1438,7 @@ export default function ItineraryEditor({
       });
       setCatalogHotels(deduped.map((row) => ({ ...row, address: null })));
     }, 250);
-    return () => window.clearTimeout(timer);
+    return () => { stale = true; window.clearTimeout(timer); };
   }, [addFlow, activeDayCity, hotelSearch, hotelSort]);
 
   useEffect(() => {
@@ -1427,6 +1453,7 @@ export default function ItineraryEditor({
   // to the traveller, so only destination is filtered here.
   useEffect(() => {
     if (addFlow !== "flight") return;
+    let stale = false;
     const timer = window.setTimeout(async () => {
       // flights.destination_country is only populated for some routes, so a
       // country-level destination (e.g. "Iceland", picked from the wizard's
@@ -1441,6 +1468,7 @@ export default function ItineraryEditor({
           .select("city")
           .or(`city.eq.${activeDayCity},country.eq.${activeDayCity}`)
           .limit(1);
+        if (stale) return;
         if (cityLookup?.[0]?.city) destinationCity = cityLookup[0].city;
       }
       let query = supabase
@@ -1453,6 +1481,7 @@ export default function ItineraryEditor({
       // a bare city name never hits, so this needs ilike instead.
       if (destinationCity) query = query.or(`destination.ilike.%${destinationCity}%,destination_country.ilike.%${destinationCity}%`);
       const { data, error } = await query;
+      if (stale) return;
       if (error || !data) { setCatalogFlights([]); return; }
       const mapped = data.map((row) => {
         const originIata = iataOf(row.origin);
@@ -1486,7 +1515,7 @@ export default function ItineraryEditor({
       if (flightSort === "arrival") deduped.sort((a, b) => (a.arrivalClock ?? "").localeCompare(b.arrivalClock ?? ""));
       setCatalogFlights(deduped.map(({ departureClock: _departureClock, arrivalClock: _arrivalClock, ...flight }) => flight));
     }, 250);
-    return () => window.clearTimeout(timer);
+    return () => { stale = true; window.clearTimeout(timer); };
   }, [addFlow, activeDayCity, flightSort]);
 
   const showNotice = (message: string) => {
@@ -1878,7 +1907,10 @@ export default function ItineraryEditor({
   };
 
   const saveEditedItem = () => {
-    if (!editingItem || !editingItem.title.trim()) return;
+    // A photo upload mid-flight only carries blob previews — the media_id
+    // swap lands on the editing state, so saving now would lose the photo
+    // (the finished upload falls back to the day photo stash instead).
+    if (!editingItem || !editingItem.title.trim() || pendingUploads.current.size) return;
 
     const updatedItem: TimelineItem = {
       ...items.find((item) => item.id === editingItem.id)!,
@@ -1895,9 +1927,11 @@ export default function ItineraryEditor({
     const withUpdate = items.map((item) => item.id === editingItem.id ? updatedItem : item);
     // A changed start time moves the stop to wherever it now falls
     // chronologically, instead of blocking the save until neighbors are
-    // rearranged by hand.
+    // rearranged by hand. The shared day comparator keeps hotel rows pinned —
+    // a raw string sort pushed "Check-out"/"Check-in" labels below every clock
+    // time and dropped the check-out card to the bottom of its own day.
     const resorted = REAL_TIME_PATTERN.test(updatedItem.time)
-      ? [...withUpdate].sort((a, b) => a.time.localeCompare(b.time))
+      ? [...withUpdate].sort(compareDayItems)
       : withUpdate;
 
     setItems(resorted);
@@ -2198,8 +2232,10 @@ export default function ItineraryEditor({
 
   const hardErrors = feasResult?.hard_errors ?? [];
   const softWarnings = feasResult?.soft_warnings ?? [];
-  const hasEmptyDay = days.some((day) => day.items.length === 0);
-  const displayScore = hasEmptyDay ? 0 : feasResult?.quality_score;
+  // R9 already scores empty days — a hard error mid-trip (blocking via
+  // hardErrors below), a soft warning on arrival/departure days. Zeroing the
+  // score here overruled the warning into a silent block.
+  const displayScore = feasResult?.quality_score;
 
   const isReadyToSubmit = Boolean(
     feasResult &&
@@ -2239,11 +2275,39 @@ export default function ItineraryEditor({
         ? (feasResult && !resultStale && !feasResult.is_feasible ? "Fix issues to continue" : "Check content to continue")
         : "Continue to review";
 
+  const handlePreview = async () => {
+    if (!isReadyToSubmit || feasLoading || saving || uploadingCount > 0 || submitting || isLocked) return;
+    setSaving(true);
+    try {
+      const token = await accessToken();
+      if (!token) {
+        onSessionExpired();
+        throw new Error("Your session expired. Please sign in again.");
+      }
+      await persistDraft(token);
+      try {
+        window.sessionStorage.setItem(itinerarySnapshotStorageKey(pkg.package_id), JSON.stringify({ title: packageTitle, days }));
+      } catch {
+        // best-effort only
+      }
+      router.push(`/packages/preview/${encodeURIComponent(pkg.package_id)}`);
+    } catch (error) {
+      if (error instanceof CreatorApiError) {
+        if (error.status === 401) onSessionExpired();
+        if (error.status === 404 || error.status === 409) setPackageStatus("not_editable");
+      }
+      showNotice(typeof error === "object" && error !== null && "message" in error
+        ? String(error.message)
+        : "Unable to open preview.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   // Saves the draft, then hands off to the review page where the actual
   // submit-for-review call happens — this never submits by itself.
   const handleSubmit = async () => {
     if (feasLoading || saving || uploadingCount > 0 || submittingRef.current || isLocked) return;
-    setPreviewOpen(false);
     if (!isReadyToSubmit) {
       // Never checked, or checked against content that's since changed:
       // run the check itself instead of just telling the creator to go
@@ -2270,9 +2334,8 @@ export default function ItineraryEditor({
       setEditingDayField(null);
       setEditingItem(null);
       setAddingAfter(null);
-      // Flights/hotels/activities added this session aren't saved by PUT yet
-      // (see saveDraft above) — snapshot them so the review page shows exactly
-      // what was just approved here, not a stale server-side fetch.
+      // Snapshot the working days so the review page shows exactly what was
+      // just approved here, without re-fetching (see review-draft.ts).
       try {
         window.sessionStorage.setItem(itinerarySnapshotStorageKey(pkg.package_id), JSON.stringify({ title: packageTitle, days }));
       } catch {
@@ -2380,7 +2443,7 @@ export default function ItineraryEditor({
         </div>
         <div className="editor-actions">
           <button className="quiet-button" disabled={saving || submitting || uploadingCount > 0 || isLocked} onClick={() => { void saveDraft(); }}>{uploadingCount > 0 ? `Uploading ${uploadingCount}…` : saving ? "Saving…" : saved ? "Saved" : "Save Draft"}</button>
-          <button className="quiet-button" onClick={() => setPreviewOpen(true)}>Preview</button>
+          <button className="quiet-button" disabled={!isReadyToSubmit || feasLoading || saving || uploadingCount > 0 || submitting || isLocked} onClick={() => { void handlePreview(); }}>Preview</button>
           <button className="publish-button" disabled={feasLoading || saving || uploadingCount > 0 || submitting || isLocked} onClick={() => { void handleSubmit(); }}>
             {submissionButtonLabel}
           </button>
@@ -2441,9 +2504,10 @@ export default function ItineraryEditor({
               <textarea value={story} onChange={(event) => setStory(event.target.value)} placeholder="Share your insider tips and personal recommendations…" aria-label="Your story" />
               <div className="story-copy-footer">
                 <span className="story-copy-stats">
-                  {story.length} characters · {story.trim() ? story.trim().split(/\s+/).length : 0} words
+                  {story.length} characters
                   {saved && lastSavedAt && <span className="story-copy-saved">Draft saved {formatRelativeTime(lastSavedAt)}</span>}
                 </span>
+                <AiDisclaimer style={{ marginTop: 6 }} />
               </div>
             </section>
           </div>
@@ -2557,6 +2621,9 @@ export default function ItineraryEditor({
                   <div className="item-copy">
                     <div className="item-copy-head">
                       <span className={`item-type-pill${item.type === "FLIGHT" ? " item-type-pill-flight" : item.type === "HOTEL" ? " item-type-pill-hotel" : ""}`}>{referenceFlight?.label ?? item.type}</span>
+                      {(item.type === "ACTIVITY" || item.type === "CREATOR PICK") && item.category && item.category.toLowerCase() !== item.type.toLowerCase() && (
+                        <span className="item-type-pill">{item.category}</span>
+                      )}
                       {!referenceFlight && item.duration && <span className="item-copy-meta-item"><Icon name="clock" size={12} />{item.duration} min</span>}
                       {!referenceFlight && item.address && <span className="item-copy-meta-item"><Icon name="pin" size={12} />{item.address}</span>}
                       {stayMarkerLabel && <span className="stay-marker">{stayMarkerLabel}</span>}
@@ -2591,8 +2658,8 @@ export default function ItineraryEditor({
                       <div><dt>Cabin</dt><dd>{flight.cabin_class || "Not provided"}</dd></div>
                       <div><dt>From</dt><dd>{flight.origin_iata || "Not provided"}</dd></div>
                       <div><dt>To</dt><dd>{flight.destination_iata || "Not provided"}</dd></div>
-                      <div><dt>Departure</dt><dd>{extractClockTimeInZone(flight.departure_datetime, timezoneForIata(flight.origin_iata)) ?? "Not provided"}</dd></div>
-                      <div><dt>Arrival</dt><dd>{extractClockTimeInZone(flight.arrival_datetime, timezoneForIata(flight.destination_iata)) ?? "Not provided"}{(() => { const offset = flightArrivalDayOffset(flight.departure_datetime, timezoneForIata(flight.origin_iata), flight.arrival_datetime, timezoneForIata(flight.destination_iata)); return offset ? <sup className="flight-day-offset" title={`Arrives ${offset} day${offset === 1 ? "" : "s"} later`}>+{offset}</sup> : null; })()}</dd></div>
+                      <div><dt>Departure</dt><dd>{flight.departure_time ?? extractClockTimeInZone(flight.departure_datetime, timezoneForIata(flight.origin_iata)) ?? "Not provided"}</dd></div>
+                      <div><dt>Arrival</dt><dd>{flight.arrival_time ?? extractClockTimeInZone(flight.arrival_datetime, timezoneForIata(flight.destination_iata)) ?? "Not provided"}{(() => { const offset = flightArrivalOffset(flight); return offset ? <sup className="flight-day-offset" title={`Arrives ${offset} day${offset === 1 ? "" : "s"} later`}>+{offset}</sup> : null; })()}</dd></div>
                     </dl>
                   </div>
                 </section>}
@@ -2681,7 +2748,7 @@ export default function ItineraryEditor({
                       {editingItem.photos.length < MAX_ITEM_PHOTOS && <label><input type="file" accept="image/png,image/jpeg" multiple onChange={(event) => { const files = Array.from(event.target.files ?? []).slice(0, MAX_ITEM_PHOTOS - editingItem.photos.length); event.target.value = ""; if (files.length) void trackUpload(addItemPhotos(files)); }} /><span className="edit-photo-add-icon"><Icon name="plus" size={16} /></span><span className="edit-photo-add-label">Add photo</span></label>}
                     </div>
                   </div>
-                  <div className="inline-edit-actions"><button className="quiet-button" onClick={() => setEditingItem(null)}>Cancel</button><button className="publish-button" disabled={!editingItem.title.trim()} onClick={saveEditedItem}>Save changes</button></div>
+                  <div className="inline-edit-actions"><button className="quiet-button" onClick={() => setEditingItem(null)}>Cancel</button><button className="publish-button" disabled={!editingItem.title.trim() || uploadingCount > 0} onClick={saveEditedItem}>Save changes</button></div>
                 </section>}
                 <AddStopFlow index={index} {...addFlowProps} />
               </div>})}
@@ -2898,7 +2965,6 @@ export default function ItineraryEditor({
           </div>
         </section>
       </div>}
-      {previewOpen && <div className="preview-backdrop" role="presentation" onMouseDown={() => setPreviewOpen(false)}><section className="preview-dialog" role="dialog" aria-modal="true" aria-labelledby="preview-title" onMouseDown={(event) => event.stopPropagation()}><button className="preview-close" onClick={() => setPreviewOpen(false)} aria-label="Close preview"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg></button><span>Traveller preview</span><h2 id="preview-title">{packageTitle}</h2><p>{story || "Your itinerary story will appear here. Add a personal introduction before submitting."}</p><div><strong>{days.length} days / 2 nights</strong><strong>${packagePrice.toLocaleString()}</strong></div><button className="publish-button" disabled={feasLoading || saving || uploadingCount > 0 || submitting || isLocked} onClick={() => { void handleSubmit(); }}>{submissionButtonLabel}</button></section></div>}
     </main>
   );
 }

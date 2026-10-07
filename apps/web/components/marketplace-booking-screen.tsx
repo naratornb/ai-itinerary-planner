@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { fetchMarketplacePackage, type MarketplacePackageDetail } from "../lib/marketplace-api";
 import { HotelChoiceCard } from "./hotel-choice-card";
 import { supabase } from "../lib/supabase/client";
-import { dateAfter, estimateBookingTotal, flightsOn, iataPattern, type CatalogOptions } from "../lib/booking-options";
+import { dateAfter, defaultTravelers, estimateBookingTotal, flightsOn, iataPattern, pickFlightLegs, type CatalogOptions } from "../lib/booking-options";
 import {
   CheckIcon, color, DepartureDatePicker, detailPrice, displayFont, eyebrowStyle,
   fieldStyle, formatDateLabel, radius, SectionTitle,
@@ -97,21 +97,19 @@ function FlightRadioGroup({ label, options, value, onChange }: {
 function BookingDetail({ pkg }: { pkg: MarketplacePackageDetail }) {
   const router = useRouter();
 
-  const legs = [...(pkg.flights ?? [])].sort((a, b) => (a.day_number ?? 0) - (b.day_number ?? 0));
-  const outboundFlight = legs.find((f) => f.day_number === 1) ?? legs[0] ?? null;
-  const returnFlight = legs.length > 1 ? legs[legs.length - 1] : null;
+  const { outbound: outboundFlight, returnLeg: returnFlight } = pickFlightLegs(pkg.flights);
   const primaryHotel = pkg.hotels?.[0] ?? null;
   const hotelNights = primaryHotel?.check_in_day != null && primaryHotel?.check_out_day != null
     ? primaryHotel.check_out_day - primaryHotel.check_in_day
     : null;
 
   const [departure, setDeparture] = useState(outboundFlight?.departure_datetime?.slice(0, 10) ?? "");
-  const [travelers, setTravelers] = useState(2);
+  const [travelers, setTravelers] = useState(() => defaultTravelers(pkg.max_group_size));
   const [outboundSel, setOutboundSel] = useState(outboundFlight?.flight_id ?? "");
   const [returnSel, setReturnSel] = useState(returnFlight?.flight_id ?? "");
   const [hotelSel, setHotelSel] = useState(primaryHotel?.hotel_id ?? "");
   const [catalog, setCatalog] = useState<CatalogOptions | null>(null);
-  const maxTravelers = pkg.max_group_size ?? 8;
+  const maxTravelers = Math.max(1, pkg.max_group_size ?? 8);
 
   // The real choices: other dated departures on the package's flight routes
   // and other hotels in the destination city. Catalog tables are public-read

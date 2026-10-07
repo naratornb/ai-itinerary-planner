@@ -582,3 +582,33 @@ test("the AI is told scoring sets only the three numbers, never extra issues", (
 test("the AI is told to report opening hours only when the time is clearly outside them", () => {
   assert.match(buildSystemPrompt(FALLBACK_RULES), /R3[\s\S]*only when the scheduled time is clearly outside/);
 });
+
+test("a same-day connection leg on the outbound day is not the return flight", () => {
+  // Regression: returnFlight picked the last leg unconditionally when more
+  // than one flight existed, so a SYD→HKG→NRT connection on day 1 made every
+  // day-1 activity after 13:30 a bogus SHORT_DEPARTURE_BUFFER hard error.
+  const days = [
+    day(1, [activity("Evening market", { start_time: "19:00", duration_hours: 2 })], [
+      { ...flight("08:00", "international", "SYD to HKG"), departure_time: "08:00" },
+      { ...flight("20:00", "international", "HKG to NRT"), departure_time: "15:30" },
+    ]),
+    day(2, [activity("Temple")]),
+    day(3, [activity("Market")]),
+  ];
+  assert.equal(returnCodes(days).length, 0);
+});
+
+test("a mid-trip flight still gets the departure buffer on its own day", () => {
+  // A leg the traveller must catch mid-trip (day 3 of 5) keeps the check —
+  // it only breaks when the last leg shares the outbound's day.
+  const days = [
+    day(1, [activity("A")], [{ ...flight("10:00", "international", "SYD to BKK"), departure_time: "06:00" }]),
+    day(2, [activity("B")]),
+    day(3, [activity("Rushed lunch", { start_time: "14:00", duration_hours: 2 })], [returnFlight("17:00")]),
+    day(4, [activity("C")]),
+    day(5, [activity("D")]),
+  ];
+  const errors = returnCodes(days);
+  assert.equal(errors.length, 1);
+  assert.equal(errors[0].field, "Day 3");
+});

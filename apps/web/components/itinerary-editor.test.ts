@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { annotateItems, deriveFlightType, findTimeConflict, flightForItem, placeUnassociatedMedia, referenceFlightPresentation, removeItemPhotoFromDays } from "./itinerary-editor";
+import { annotateItems, contentMatchesSavedSnapshot, deriveFlightType, findTimeConflict, flightForItem, placeUnassociatedMedia, referenceFlightPresentation, removeItemPhotoFromDays } from "./itinerary-editor";
 import type { BuilderDay, TimelineItem } from "../lib/itinerary-builder";
 
 function item(overrides: Partial<TimelineItem> & { id: number; time: string }): TimelineItem {
@@ -104,6 +104,43 @@ test("annotateItems has the same flight-duration fix — no false 'Overlaps next
   const [, activity] = annotateItems(items);
   assert.equal(activity.status, "pass");
   assert.equal(activity.problem, undefined);
+});
+
+test("a same-day flight's end is its landing time, not its departure", () => {
+  // Relative flights carry `time` = departure clock and `arrivalTime` = landing —
+  // an activity starting between them sits inside the flight and must conflict.
+  const items = [
+    item({ id: 1, time: "08:00", arrivalTime: "11:00", duration: "180", type: "FLIGHT", title: "SYD to BNE" }),
+    item({ id: 2, time: "12:00", duration: "60", title: "Lunch" }),
+  ];
+
+  const conflict = findTimeConflict(items, 2, "10:30", "60");
+  assert.match(conflict ?? "", /SYD to BNE ends, at 11:00/);
+});
+
+test("an overnight flight falls back to its departure as the same-day end", () => {
+  // Landing is tomorrow (05:44 < 20:50), so within this day the flight's end is
+  // when it leaves — the dated-leg arrival convention can't apply.
+  const items = [
+    item({ id: 1, time: "20:50", arrivalTime: "05:44", duration: "534", type: "FLIGHT", title: "SYD to NRT" }),
+    item({ id: 2, time: "22:00", duration: "60", title: "Late dinner" }),
+  ];
+
+  assert.equal(findTimeConflict(items, 2, "22:00", "60"), null);
+});
+
+test("annotateItems flags a stop scheduled inside a same-day flight", () => {
+  // Same root cause as the findTimeConflict case above: the flight's end used
+  // to be read from `time` (departure on relative legs), so a 10:30 lunch
+  // inside an 08:00→11:00 flight never surfaced a conflict badge.
+  const items = [
+    item({ id: 1, time: "08:00", arrivalTime: "11:00", duration: "180", type: "FLIGHT", title: "SYD to BNE" }),
+    item({ id: 2, time: "10:30", duration: "60", title: "Lunch" }),
+  ];
+
+  const [flight] = annotateItems(items);
+  assert.equal(flight.status, "critical");
+  assert.match(flight.problem ?? "", /Overlaps next item/);
 });
 
 test("annotateItems does not flag ordinary words containing 'y' as consonant runs as gibberish", () => {
@@ -330,6 +367,15 @@ test("flightForItem returns undefined for non-flight items", () => {
   assert.equal(flightForItem(item({ id: 2, time: "10:00", type: "ACTIVITY" })), undefined);
 });
 
+test("the flight detail panel prefers date-free clock times over datetime extraction", () => {
+  // Regression: the Departure/Arrival rows read only departure_datetime /
+  // arrival_datetime, which are null for date-free package flights — a saved
+  // "20:50" departure rendered as "Not provided".
+  const source = readFileSync(new URL("./itinerary-editor.tsx", import.meta.url), "utf8");
+  assert.match(source, /flight\.departure_time \?\? extractClockTimeInZone\(flight\.departure_datetime/);
+  assert.match(source, /flight\.arrival_time \?\? extractClockTimeInZone\(flight\.arrival_datetime/);
+});
+
 test("the editor resolves flight details from the item, never a positional flights[N] lookup", () => {
   // Same regression guard as above, at the render site: indexing into
   // packageDetail.flights by item position is what made added flights
@@ -397,4 +443,63 @@ test("an activity starting after the full buffer is fine", () => {
     { id: 2, time: "20:01", type: "ACTIVITY", title: "Night Market", price: "$0", icon: "star", status: "pass", duration: "60" },
   ] as TimelineItem[];
   assert.equal(annotateItems(items, { time: "18:31", bufferMin: 90, international: true })[0].problem, undefined);
+});
+
+test("a freshly loaded package counts as saved", () => {
+  // Regression: savedSnapshot started null, so `saved` was false on first
+  // load — the back button warned "Leave without saving?" for a package
+  // nobody had touched, and the draft button lied about needing a save.
+  const source = readFileSync(new URL("./itinerary-editor.tsx", import.meta.url), "utf8");
+  assert.match(source, /setSavedSnapshot\] = useState<\{ days: BuilderDay\[\]; title: string \} \| null>\(\(\) => \(\{ days, title: pkg\.title \}\)\)/);
+});
+
+test("Save changes is blocked while an item photo upload is in flight", () => {
+  // Regression: addItemPhotos only swaps blob previews for real media_ids in
+  // the editing state — saving first persisted a blob src with no media_id
+  // and the finished upload fell through to the day photo stash instead.
+  const source = readFileSync(new URL("./itinerary-editor.tsx", import.meta.url), "utf8");
+  assert.match(source, /saveEditedItem[\s\S]{0,400}pendingUploads\.current\.size/);
+  assert.match(source, /disabled=\{[^}]*uploadingCount > 0[^}]*\}[^>]*onClick=\{saveEditedItem\}/);
+});
+
+test("contentMatchesSavedSnapshot keeps a fresh check result after saving", () => {
+  // Regression: persistDraft's setDays(persistedDays) marks the check result
+  // stale, so a clean package had to be re-checked after every Save Draft.
+  const days: BuilderDay[] = [
+    { id: "day-1", day: 1, title: "Day 1", meta: "", items: [], story: "", photos: [] },
+  ];
+  const snapshot = { days, title: "Tokyo trip" };
+
+  assert.equal(contentMatchesSavedSnapshot(snapshot, days, "Tokyo trip"), true);
+  assert.equal(contentMatchesSavedSnapshot(snapshot, [...days], "Tokyo trip"), false);
+  assert.equal(contentMatchesSavedSnapshot(snapshot, days, "Renamed"), false);
+  assert.equal(contentMatchesSavedSnapshot(null, days, "Tokyo trip"), false);
+});
+
+test("catalog search effects drop responses superseded by a newer query", () => {
+  // Regression: the activity/hotel/flight catalog effects debounce with
+  // setTimeout but the cleanup only cleared the timer — an in-flight request
+  // for an older search could resolve last and overwrite newer results.
+  const source = readFileSync(new URL("./itinerary-editor.tsx", import.meta.url), "utf8");
+  const effects = (source.match(/useEffect\(\(\) => \{\s*if \(addFlow !== "(activities|hotel|flight)"\)[\s\S]*?\}, \[addFlow/g) ?? ([] as string[]))
+    .filter((effect) => effect.includes("window.setTimeout"));
+  assert.equal(effects.length, 3, "expected the three debounced catalog effects");
+  for (const effect of effects) {
+    assert.match(effect, /let stale = false/, "effect must declare a stale flag");
+    assert.match(effect, /if \(stale\) return/, "effect must bail out before setting results");
+    assert.match(effect, /return \(\) => \{[^}]*stale = true/, "cleanup must mark the run stale");
+  }
+});
+
+test("co-pilot send and suggestion-add are guarded by refs, not async state", () => {
+  // Regression: `send` guarded on `sending` state and `addSuggestion` on
+  // `addedSuggestionIds` — both update asynchronously, so a double Enter /
+  // double-click inside the same frame fired two turns / inserted the same
+  // suggestion twice. Synchronous refs are the only reliable guard.
+  const hook = readFileSync(new URL("./copilot/use-copilot.ts", import.meta.url), "utf8");
+  assert.match(hook, /useRef/, "send must use a ref-based in-flight guard");
+  assert.match(hook, /Ref\.current/, "send must check the ref synchronously");
+  const panel = readFileSync(new URL("./copilot/copilot-panel.tsx", import.meta.url), "utf8");
+  assert.match(panel, /useRef/, "addSuggestion must use a ref-based added guard");
+  assert.match(panel, /Ref\.current\.(has|includes)/, "addSuggestion must check the ref synchronously");
 });

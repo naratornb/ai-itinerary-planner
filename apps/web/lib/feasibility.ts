@@ -68,11 +68,17 @@ export function runCodeChecks(days: any[], arrival?: ArrivalLanding | null): { h
   const hard: CodeIssue[] = [];
   const soft: CodeIssue[] = [];
 
-  // The trip's return flight: the last flight, unless it's the only one and isn't
-  // on the last day (then it's the arrival). Used by R21.
+  // The trip's return flight: the last flight, but only when it departs on a
+  // later day than the first leg — a same-day connection (SYD→HKG→NRT all on
+  // day 1) is part of the outbound journey, not a flight home, and letting it
+  // stand in as the "return" flags every activity after its departure time as
+  // a bogus R21 violation. A lone flight on the last day still counts (a
+  // return-only booking). Used by R21.
   const allFlights = days.flatMap((d: any) => (d.flights || []).map((f: any) => ({ flight: f, dayNumber: d.day_number })));
   const lastFlight = allFlights[allFlights.length - 1];
-  const returnFlight = lastFlight && (allFlights.length > 1 || lastFlight.dayNumber === days.length) ? lastFlight : null;
+  const outboundDay = allFlights[0]?.dayNumber;
+  const returnFlight = lastFlight && (lastFlight.dayNumber === days.length
+    || (allFlights.length > 1 && lastFlight.dayNumber > (outboundDay ?? 0))) ? lastFlight : null;
 
   for (const day of days) {
     const acts: any[] = day.activities || [];
