@@ -1,7 +1,7 @@
 ---
 version: anydesign-1
 name: Influencer Travel Marketplace web experience
-source: apps/web
+source: apps/web and supplied admin approval dashboard wireframe
 captured_at: 2026-10-07
 description: |
   An energetic travel marketplace and creator workspace built around a strict division of
@@ -20,6 +20,8 @@ colors:
   border: "#E0E0E0"
   success: "#14804A"
   warning: "#A45B00"
+  danger: "#D40119"
+  danger-surface: "#FEE2E2"
 typography:
   display:
     fontFamily: "Roboto, sans-serif"
@@ -73,6 +75,10 @@ components:
     textColor: "{colors.text-primary}"
     rounded: "{rounded.md}"
     padding: 16px
+  creator-revision-feedback:
+    backgroundColor: "{colors.warning}"
+    textColor: "{colors.text-primary}"
+    padding: 16px
   creation-subnav:
     backgroundColor: "{colors.surface}"
     textColor: "{colors.text-primary}"
@@ -109,6 +115,27 @@ components:
     textColor: "{colors.text-primary}"
     rounded: "{rounded.lg}"
     padding: 16px
+  admin-review-summary:
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.text-primary}"
+    rounded: "{rounded.md}"
+    minHeight: 112px
+  admin-review-queue:
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.text-primary}"
+    rounded: "{rounded.md}"
+    rowMinHeight: 72px
+    controlMinHeight: 40px
+    controlGap: 12px
+    controlRadius: 6px
+    mobileBreakpoint: 720px
+  admin-review-detail:
+    backgroundColor: "{colors.surface-subtle}"
+    textColor: "{colors.text-primary}"
+    rounded: "{rounded.md}"
+    sidebarWidth: 320px
+    contentGap: 24px
+    mobileBreakpoint: 900px
   hotel-detail-drawer:
     backgroundColor: "{colors.surface}"
     textColor: "{colors.text-primary}"
@@ -127,14 +154,14 @@ components:
 
 ## Source
 
-- **Source type**: Local Next.js application, CSS design tokens, and current routed UI.
-- **Path / URL**: `apps/web`
-- **Capture method**: Source inspection of page routes, component states, global CSS, and focused desktop previews.
-- **Detected limitations**: Desktop creation flows have the strongest visual evidence. Mobile rules are present in CSS but have not received equivalent visual QA. Destination-specific recommended months and temperatures are unavailable.
+- **Source type**: Local Next.js application, CSS design tokens, current routed UI, and supplied administrator dashboard wireframe.
+- **Path / URL**: `apps/web` plus the conversation reference image.
+- **Capture method**: Source inspection of page routes, component states, global CSS, focused desktop previews, and direct visual analysis of the wireframe.
+- **Detected limitations**: The administrator reference shows desktop hierarchy only and includes historical filters and metrics unsupported by the current API. Those unsupported controls are intentionally omitted. Mobile rules are derived from the existing responsive system and require implementation QA.
 
 ## TL;DR
 
-The experience combines an energetic marketplace with a task-focused creator workspace. `{colors.brand}` (#D40119) identifies the environment, `{colors.action}` (#0072EA) marks interaction, and border-first white surfaces preserve clarity across the dashboard, guided builders, editor, and package detail views.
+The experience combines an energetic marketplace with task-focused creator and administrator workspaces. `{colors.brand}` (#D40119) identifies the environment, `{colors.action}` (#0072EA) marks interaction, and border-first white surfaces preserve clarity across the dashboard, guided builders, editor, package detail, and review-queue views.
 
 ## 1. Visual identity
 
@@ -317,7 +344,9 @@ Default boundaries use `{colors.border}` (#E0E0E0) at 1px or 1.5px. Selected car
 #### Dashboard Package Row
 
 - **What it is**: A creator package summary row with aligned destination, duration, formatted AUD price, status, and centred actions.
+- The dashboard toolbar filters the loaded package list through `All`, `Approved`, `Under review`, `Rejected`, and `Drafts` tabs.
 - **Routing rule**: Draft and rejected packages open the editor; approved packages open creator preview; live packages open the marketplace detail page.
+- Rejected packages use `{colors.danger}` text on `{colors.danger-surface}` so a required revision is distinct from a neutral draft.
 - Approved rows pair Preview with a labelled `Publish` action. Publishing requires confirmation before the package becomes publicly visible.
 - Live rows place a share action beside the view action. It shares the public marketplace detail URL and falls back to copying the link when native sharing is unavailable.
 - Approved rows do not expose a share action; after publishing, the row changes to Live and replaces Publish with Share.
@@ -329,6 +358,13 @@ Default boundaries use `{colors.border}` (#E0E0E0) at 1px or 1.5px. Selected car
 - **What it is**: Fixed-size day cards and an equal-size add control in a horizontal strip.
 - **Composition**: 210 by 120px cards, 12px gaps, dark selected state, dashed add state.
 - **Where it appears**: Package editor.
+- **Confidence**: ✅ high
+
+#### Creator Revision Feedback
+
+- **What it is**: A persistent notice above the editable itinerary when an administrator returns a package for changes.
+- **Composition**: Warning-tinted full-width band with an alert icon, `Changes requested` heading, the administrator's exact creator-facing reason, and the review date when supplied by the API.
+- **Visibility rule**: Render whenever the package status is `rejected`. Show the exact creator-facing reason when available; if the API returns no latest approval data, state that no reviewer feedback was provided instead of hiding the notice or displaying a raw `null`. Never substitute internal notes or invent feedback.
 - **Confidence**: ✅ high
 
 #### Feasibility Sidebar
@@ -344,6 +380,28 @@ Default boundaries use `{colors.border}` (#E0E0E0) at 1px or 1.5px. Selected car
 - **What it is**: A task-focused assistant surface with a compact identity header, request shortcuts, conversation, and persistent composer.
 - **Composition**: 340px desktop sidebar that becomes a full-viewport mobile sheet below 700px.
 - **Trigger placement**: The trigger remains fixed in the lower-right corner; transient editor guidance uses the lower-left corner so the two never overlap.
+- **Confidence**: ✅ high
+
+#### Admin Review Summary
+
+- **What it is**: Two quiet operational summaries for the real pending-review total and the age of the oldest submission.
+- **Composition**: Border-first `{colors.surface}` (#FFFFFF) cards with `{rounded.md}` (12px) corners, a 112px minimum height, a compact label, and a prominent value.
+- **Usage rule**: These cards summarize current queue pressure; they do not introduce approved-today, rejected, or other historical metrics unavailable from the existing contract.
+- **Confidence**: ✅ high
+
+#### Admin Review Queue
+
+- **What it is**: A text-first pending-package queue with API-supported sort, row count, refresh, pagination, and one `Review` action per package.
+- **Composition**: Desktop rows use a 72px minimum height on a neutral white surface with restrained separators. Toolbar controls reuse the creator dashboard's compact 40px height, 14px type, 6px radius, and 12px spacing; refresh stays a square icon action. Below 720px, each row becomes a bordered card while sort, row count, and refresh remain on one compact toolbar row.
+- **Interaction rule**: `{colors.action}` (#0072EA) is reserved for links, focus, and controls. Approve and reject actions remain on the separate review page. Search and additional filters stay absent until the API can apply them across the full queue.
+- **Confidence**: ✅ high
+
+#### Admin Review Detail
+
+- **What it is**: A focused administrator workspace for reading one submitted package and recording a decision with the existing approval endpoints.
+- **Composition**: A flexible content column and sticky 320px decision column separated by a 24px gap. The main column pairs real cover media or an explicit empty state with package facts, then a horizontally selectable day itinerary. The decision column contains the API-provided price breakdown and two clearly separated outcomes.
+- **Interaction rule**: Approval and change requests require confirmation. Creator-facing rejection feedback must contain at least 10 characters; internal notes remain separate and optional. Missing media, descriptions, or pricing are labelled as unavailable rather than generated.
+- **Responsive rule**: Below 900px the decision column follows the itinerary in document order; below 720px the cover, facts, itinerary rows, and modal actions stack without losing information.
 - **Confidence**: ✅ high
 
 ## 4. Layout & Composition
@@ -363,6 +421,8 @@ Default boundaries use `{colors.border}` (#E0E0E0) at 1px or 1.5px. Selected car
 - Image-led choice grids for destination mood and season
 - Persistent bottom action row within desktop setup views
 - Dashboard summary cards above a package table
+- Administrator queue summaries above a text-first pending-review table
+- Administrator package review with a readable itinerary and sticky decision column
 - Timeline editor beside continuous validation and pricing context
 
 Desktop setup pages are designed to complete within one viewport where practical. The content area, not an internal modal, owns each step.
@@ -374,7 +434,7 @@ Desktop setup pages are designed to complete within one viewport where practical
 | Name | Width | Key changes |
 |---|---|---|
 | Mobile | < 600px | Progress copy hides; nodes remain; fields and cards stack |
-| Tablet | 600–800px | Creation viewport becomes page-scrolling; progress spacing tightens |
+| Tablet | 600–800px | Creation viewport becomes page-scrolling; the administrator queue switches from table to labelled cards below 720px |
 | Desktop | 801–1279px | 960px guided-flow container and multi-column option grids |
 | Wide | ≥ 1280px | Containers remain capped and centred |
 
@@ -388,6 +448,8 @@ Primary and secondary actions use at least 44px height. Creation navigation uses
 - Desktop overflow locking is removed below 800px so the document scrolls naturally.
 - Editor sidebars collapse below 1100px and become a single column below 700px.
 - Creation footer actions may wrap on narrow screens.
+- The administrator queue hides its desktop table below 720px and presents the same information as stacked cards without horizontal page scrolling.
+- The administrator review decision column moves below the package content below 900px; package facts and timeline rows stack below 720px.
 - Hotel details use a 440px right-side drawer on desktop and a full-width, vertically scrolling sheet below 640px.
 
 ### 4.4 Image behavior
@@ -426,6 +488,8 @@ Use the repository's Next.js App Router, React, TypeScript, CSS custom propertie
 - Session-expired redirects and retry actions
 - Submission in progress and locked non-draft packages
 - No-season creation and clear-season behavior
+- Administrator queue loading skeletons, all-caught-up empty state, access-required state, retry state, and late-response protection
+- Administrator review-detail loading, missing-package, access-required, already-reviewed, submission-error, and success states
 
 ### Confidence map
 
@@ -451,6 +515,9 @@ Use the repository's Next.js App Router, React, TypeScript, CSS custom propertie
 - Keep title and description grouped, then separate tags or metadata with a larger vertical gap.
 - Use explicit workflow language: `Submit for review`, `Approved`, creator preview, and `Live` must remain distinct.
 - Keep alternative creation actions consequence-specific, such as `Build without season` and `Clear season`.
+- Keep administrator queue surfaces neutral and text-first; reserve `{colors.action}` (#0072EA) for review links, sorting, refresh, pagination, and visible focus.
+- Preserve desktop/mobile information parity when the administrator table becomes cards below 720px.
+- Keep administrator decisions beside the submitted evidence on wide screens and directly after it on smaller screens.
 - Keep hotel comparison in booking context: opening details must not select a hotel, while `Select this stay` must update the choice and close the drawer.
 - Show `View on provider site` only as an enabled link when the selected property has its own verified provider URL.
 
@@ -463,6 +530,8 @@ Use the repository's Next.js App Router, React, TypeScript, CSS custom propertie
 - Do not show `Build without season` when a season is selected; use `Clear season` to prevent accidental omission.
 - Do not describe reference flights as booked, guaranteed, or purchaser-specific inventory.
 - Do not treat approval as publication or route an approved package directly to the public marketplace detail page.
+- Do not add approved-today, rejected, historical, or reviewer-performance metrics without an API source.
+- Do not place approve or reject controls in the administrator queue; open the dedicated review route instead.
 - Do not invent hotel photos, reviews, policies, or provider destinations when catalog data is absent.
 
 ## 7. Open Questions
@@ -470,11 +539,12 @@ Use the repository's Next.js App Router, React, TypeScript, CSS custom propertie
 - Should recommended season become persistent package metadata? If so, define an API field before enabling multiple seasons or destination-specific month ranges.
 - Mobile creation layouts need a dedicated visual QA pass at common phone widths and 200% zoom.
 - Booking, earnings, and analytics navigation remains outside the focused creation-flow design until those destinations are implemented.
+- Should a future contract expose automated feasibility findings, show their source and rule identifiers rather than deriving a score in the browser.
 - Hotel provider URLs are not present in the current catalog schema; the provider action remains disabled until that contract exists.
 
 ## 8. Companion files
 
-- [x] `design-tokens.json` — canonical W3C DTCG token data; no token values changed in this update.
+- [x] `design-tokens.json` — canonical W3C DTCG token data, extended only with administrator component dimensions.
 - [ ] `design-a11y.md` — not regenerated in this documentation-only update.
 - [ ] Multi-viewport screenshots — desktop creation screens have been previewed; tablet and mobile captures remain open.
 

@@ -2,6 +2,7 @@ export const APP_ROUTES = {
   login: "/login",
   marketplace: "/marketplace",
   dashboard: "/dashboard",
+  admin: "/admin",
   builder: "/packages/new",
   manualBuilder: "/packages/new/manual",
   wizard: "/packages/new/ai",
@@ -19,6 +20,10 @@ export function creatorPackageRoute(packageId: string, status: string): string {
   if (status === "live") return `/marketplace/packages/${encodedId}`;
   if (status === "approved") return `/packages/preview/${encodedId}`;
   return `/packages/editor/${encodedId}`;
+}
+
+export function adminApprovalRoute(packageId: string): string {
+  return `/admin/approvals/${encodeURIComponent(packageId)}`;
 }
 
 export function creatorPackageShareRoute(packageId: string, status: string): string | null {
