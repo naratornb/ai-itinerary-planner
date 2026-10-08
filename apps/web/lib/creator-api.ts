@@ -37,6 +37,8 @@ export type CreatorPackage = {
 
 export type CreatorHotelDetail = {
   hotel_id: string | null;
+  /** package_hotels row id — unique per stay, so repeat stays at the same
+   * hotel keep separate stay groups in the editor. */
   package_component_id?: string | null;
   sequence_order?: number | null;
   hotel_name: string | null;
@@ -88,6 +90,8 @@ export type CreatorActivityDetail = {
   booking_required: boolean | null;
   day_number?: number | null;
   start_time?: string | null;
+  /** "activity" (default) or "creator_pick" — the editor's type discriminator. */
+  item_type?: string | null;
   category?: string | null;
   address?: string | null;
   notes?: string | null;
@@ -126,11 +130,8 @@ export type CreatorPackageDetail = {
   base_price_aud?: number;
   destination_city?: string | null;
   destination_country?: string | null;
-  // Present on the real GET /packages/{id} response (TravelPackageDetail in
-  // apps/api/app/packages/schemas.py) but unused until now, so left untyped.
   description?: string | null;
   max_group_size?: number | null;
-  // Not yet in the API response — renders when the backend ships these columns.
   season?: string | null;
   suitable_for?: string | null;
   tags?: string[];
@@ -184,10 +185,14 @@ export const STATUS_LABELS: Record<string, string> = {
 };
 
 export function formatCreatorPackage(pkg: CreatorPackage) {
+  const createdDate = new Date(pkg.created_at);
   return {
     id: pkg.package_id,
     name: pkg.title,
     duration: `${pkg.duration_days} day${pkg.duration_days === 1 ? "" : "s"}`,
+    created: Number.isFinite(createdDate.getTime())
+      ? new Intl.DateTimeFormat("en-AU", { day: "numeric", month: "short", year: "numeric" }).format(createdDate)
+      : "—",
     destination: [pkg.destination_city, pkg.destination_country].filter(Boolean).join(", "),
     price: new Intl.NumberFormat("en-AU", {
       style: "currency",
@@ -207,68 +212,6 @@ export function formatCreatorPackage(pkg: CreatorPackage) {
 type PackageListResponse = {
   data: CreatorPackage[];
 };
-
-export type DashboardStats = {
-  packageCount: number;
-  bookingCount: number | null;
-  commissionRate: number | null;
-  commissionAud: number | null;
-};
-
-type DashboardStatsResponse = {
-  package_count: number;
-  booking_count: number | null;
-  commission_rate: number | null;
-  commission_aud: number | null;
-};
-
-export function formatDashboardStats(stats: DashboardStats) {
-  const unavailable = "Not available yet";
-  return [
-    { label: "Packages", value: String(stats.packageCount), sub: "All your packages" },
-    {
-      label: "Bookings",
-      value: stats.bookingCount === null ? "—" : String(stats.bookingCount),
-      sub: stats.bookingCount === null ? unavailable : "Confirmed bookings",
-    },
-    {
-      label: "Commission rate",
-      value: stats.commissionRate === null
-        ? "—"
-        : new Intl.NumberFormat("en-AU", { style: "percent", maximumFractionDigits: 1 }).format(stats.commissionRate),
-      sub: stats.commissionRate === null ? unavailable : "Current rate",
-    },
-    {
-      label: "Your commission",
-      value: stats.commissionAud === null
-        ? "—"
-        : new Intl.NumberFormat("en-AU", {
-          style: "currency",
-          currency: "AUD",
-          maximumFractionDigits: 0,
-        }).format(stats.commissionAud),
-      sub: stats.commissionAud === null ? "Available after bookings" : "Total earned",
-    },
-  ];
-}
-
-export async function fetchDashboardStats(
-  fetcher: typeof fetch,
-  apiUrl: string,
-  accessToken: string,
-): Promise<DashboardStats> {
-  const response = await fetcher(`${apiUrl.replace(/\/$/, "")}/dashboard/stats`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-  if (!response.ok) throw new Error("Unable to load dashboard statistics.");
-  const payload = (await response.json()) as DashboardStatsResponse;
-  return {
-    packageCount: payload.package_count,
-    bookingCount: payload.booking_count,
-    commissionRate: payload.commission_rate,
-    commissionAud: payload.commission_aud,
-  };
-}
 
 export async function signInWithEmail(
   auth: AuthClient,
@@ -297,9 +240,6 @@ export async function fetchOwnPackages(
 }
 
 // Mirrors FlightInput/HotelInput/ActivityInput in apps/api/app/packages/schemas.py.
-// day_number/sequence_order/start_time/category/address/source_id are not
-// accepted by the backend yet (proposed in the save/submit handover doc) —
-// sent ahead of that landing so nothing has to change here once it does.
 export type FlightInput = {
   origin_iata: string;              // exactly 3 chars
   destination_iata: string;         // exactly 3 chars
@@ -350,6 +290,8 @@ export type ActivityInput = {
   day_number?: number;
   sequence_order?: number;
   start_time?: string | null;
+  /** "activity" (default) or "creator_pick". */
+  item_type?: string | null;
   category?: string | null;
   address?: string | null;
   notes?: string | null;
@@ -394,10 +336,6 @@ export type UpdatePackageInput = {
   max_group_size?: number;
   tags?: string[];
   days?: PackageDayInput[];
-  // Not yet persisted by PUT /packages/{id} — the backend still only reads
-  // metadata + day title/summary and silently ignores everything else here.
-  // Sent anyway so the editor round-trips real content once that ships;
-  // see the save/submit handover doc.
   flights?: FlightInput[];
   hotels?: HotelInput[];
   activities?: ActivityInput[];
@@ -569,9 +507,6 @@ export class SubmitPackageError extends Error {
   }
 }
 
-// Mirrors POST /packages/{package_id}/submit in the Sept 2026 save/submit
-// handover — not deployed at time of writing, so this will genuinely fail
-// (404/other) until the backend ships it.
 export async function submitPackage(
   fetcher: typeof fetch,
   apiUrl: string,
@@ -594,7 +529,7 @@ export async function submitPackage(
   if (!response.ok) {
     const body = await response.json().catch(() => null);
     const message = body?.message
-      || (response.status === 404 ? "Submission isn't available yet. Please try again later." : null)
+      || (response.status === 404 ? "This package can't be submitted." : null)
       || "Something went wrong. Please try again later.";
     throw new SubmitPackageError(message, response.status, body?.error_code);
   }

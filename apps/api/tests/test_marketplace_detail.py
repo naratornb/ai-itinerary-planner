@@ -1,3 +1,5 @@
+import copy
+
 import yaml
 from fastapi.testclient import TestClient
 
@@ -71,6 +73,23 @@ def test_404_when_not_visible(monkeypatch):
     resp = client.get("/marketplace/packages/b0000000-0000-0000-0000-000000000008")
     assert resp.status_code == 404
     assert resp.json()["error_code"] == "PACKAGE_NOT_FOUND"
+
+
+def test_local_package_detail(monkeypatch):
+    _configure(monkeypatch)
+    row = copy.deepcopy(FIXTURE)
+    row["package_flights"] = []
+    monkeypatch.setattr(packages_service.requests, "get", _fake_get([row], []))
+    resp = client.get(f"/marketplace/packages/{FIXTURE['package_id']}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["flights"] == []
+    assert body["hotels"][0]["hotel_name"] == "Shinjuku Inn"
+    assert body["activities"][0]["activity_name"] == "Food tour"
+    assert body["pricing"] == {
+        "flights_total": 0, "hotels_total": 600,
+        "activities_total": 150, "components_total": 750, "base_price_aud": 2999,
+    }
 
 
 def test_upstream_error_not_leaked(monkeypatch):

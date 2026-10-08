@@ -5,6 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import core
+from app.approvals import service as approvals_service
 from app.main import app
 from app.packages import service
 
@@ -414,6 +415,38 @@ def test_get_detail(fake):
     missing = client.get(f"/packages/{PKG}")
     assert missing.status_code == 404
     assert missing.json()["error_code"] == "NOT_FOUND"
+
+
+def test_get_detail_rejected_returns_latest_approval(fake):
+    rejected = copy.deepcopy(DETAIL_ROW)
+    rejected["status"] = "rejected"
+    approval = {
+        "approval_id": "appr-1",
+        "package_id": PKG,
+        "decision": "rejected",
+        "rejection_reason": "Please clarify which transfers are included.",
+        "reviewed_at": "2026-10-07T04:22:00Z",
+    }
+    fake.route("GET", "travel_packages", FakeResp([rejected]))
+    fake.route("GET", "package_approvals", FakeResp([approval]))
+
+    resp = client.get(f"/packages/{PKG}")
+    assert resp.status_code == 200
+    assert resp.json()["latest_approval"] == approval
+
+    call = fake.find("GET", "package_approvals")[0]
+    # package_approvals RLS is admin-only — the creator path must read it
+    # through the service role after ownership is verified above.
+    assert call["headers"]["apikey"] == "service-key"
+    assert call["params"]["limit"] == 1
+
+
+def test_get_detail_draft_does_not_query_approvals(fake):
+    fake.route("GET", "travel_packages", FakeResp([DETAIL_ROW]))
+    resp = client.get(f"/packages/{PKG}")
+    assert resp.status_code == 200
+    assert resp.json()["latest_approval"] is None
+    assert fake.find("GET", "package_approvals") == []
 
 
 # Mixed fixture: one legacy linked component per type (details IS NULL,
@@ -883,6 +916,63 @@ def test_submit_preconditions(fake):
     assert body["error_code"] == "SUBMISSION_PRECONDITION_FAILED"
     assert body["details"]["missing"] == ["hotel"]
     assert "price" in (body["message"] + str(body["details"])).lower()
+
+
+def test_get_local_package_detail(fake):
+    row = copy.deepcopy(DETAIL_ROW)
+    row["package_flights"] = []
+    fake.route("GET", "travel_packages", FakeResp([row]))
+    resp = client.get(f"/packages/{PKG}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["flights"] == []
+    assert body["pricing"]["flights_total"] == 0
+    assert body["hotels"]
+    assert body["activities"]
+
+
+def test_local_package_lifecycle(fake, monkeypatch):
+    monkeypatch.setattr(approvals_service, "requests", service.requests)
+    app.dependency_overrides[core.require_admin_ctx] = lambda: {
+        "uid": UID, "headers": dict(USER_HEADERS),
+    }
+    fake.route(
+        "POST", "rpc/submit_package_for_review",
+        FakeResp({"outcome": "ok", "package_id": PKG}),
+    )
+    pending = _summary_row(status="pending_review")
+    approved = _summary_row(status="approved")
+    live = _summary_row(status="live", published_at="2026-10-08T00:00:00+00:00")
+    for row in (pending, pending, approved):
+        fake.route("GET", "travel_packages", FakeResp([row]))
+    fake.route("POST", "package_approvals", FakeResp([{
+        "approval_id": "approval-1", "package_id": PKG, "reviewer_id": UID,
+        "decision": "approved", "reviewed_at": "2026-10-08T00:00:00+00:00",
+    }]))
+    fake.route("PATCH", "travel_packages", FakeResp([approved]))
+    fake.route("PATCH", "travel_packages", FakeResp([live]))
+
+    submitted = client.post(f"/packages/{PKG}/submit")
+    assert submitted.status_code == 200
+    assert submitted.json()["status"] == "pending_review"
+    decision = client.post(f"/approvals/{PKG}/approve")
+    assert decision.status_code == 200
+    assert decision.json()["package"]["status"] == "approved"
+    assert decision.json()["approval"]["decision"] == "approved"
+    published = client.post(f"/approvals/{PKG}/publish")
+    assert published.status_code == 200
+    assert published.json()["status"] == "live"
+    assert published.json()["published_at"]
+    assert fake.find("PATCH", "travel_packages")[-1]["json"]["published_at"]
+
+    row = copy.deepcopy(DETAIL_ROW)
+    row.update(status="live", published_at=live["published_at"], package_flights=[])
+    for endpoint in (f"/packages/{PKG}", f"/marketplace/packages/{PKG}"):
+        fake.route("GET", "travel_packages", FakeResp([row]))
+        detail = client.get(endpoint)
+        assert detail.status_code == 200
+        assert detail.json()["flights"] == []
+        assert detail.json()["status"] == "live"
 
 
 def test_submit_pending_review_package_rejects_later_save(fake):
