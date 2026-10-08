@@ -103,29 +103,24 @@ export function runCodeChecks(days: any[], arrival?: ArrivalLanding | null): { h
     }
 
     if (acts.length === 0) {
-      // Arrival/departure days are commonly all-travel with no scheduled activity —
-      // day_number is re-numbered 1..N on every add/delete (see removeDay()), so
-      // this stays correct as the trip's first/last day shifts.
+      // Never blocks: arrival/departure days are often all travel, and a middle day
+      // can be a deliberate free day. day_number is re-numbered 1..N on every
+      // add/delete (see removeDay()), so first/last stays correct as days shift.
       const isFirstOrLastDay = day.day_number === 1 || day.day_number === days.length;
-      const issue: CodeIssue = {
+      soft.push({
         error_code: "EMPTY_DAY",
         rule: "R9 – Completeness",
-        severity: isFirstOrLastDay ? "warning" : "error",
+        severity: "warning",
         field: dayLabel,
         field_value: "0 activities",
         affected_item: dayLabel,
         message: isFirstOrLastDay
           ? `${dayLabel} has no activities scheduled. As this is an arrival or departure day, please confirm this is intentional.`
-          : `${dayLabel} has no activities scheduled. Please add at least one activity.`,
+          : `${dayLabel} has no activities scheduled. Please confirm this is intentional. If it's a free day, say so in the day summary (e.g. "Free day to relax or explore at your own pace") so travellers know what to expect.`,
         action: isFirstOrLastDay
           ? `If ${dayLabel} involves more than arrival/departure travel, please add an activity.`
-          : `Add at least one activity to ${dayLabel}.`,
-      };
-      if (isFirstOrLastDay) {
-        soft.push(issue);
-      } else {
-        hard.push(issue);
-      }
+          : `Add an activity to ${dayLabel}, or describe it as a free day in its summary.`,
+      });
     }
 
     // ── R17 – Accommodation: per day, not package-wide — so a creator can jump
@@ -447,6 +442,12 @@ export const FALLBACK_RULES: FeasibilityRule[] = [
     rule_description:
       "Beyond the specific numbered rules above, use your general travel-planning judgment to catch any other concrete, real-world feasibility problem a professional travel agent would object to and that isn't already covered — for example an itinerary item that's factually wrong for the destination, a logistically impossible sequence, or anything else clearly unworkable. Only flag issues you are reasonably confident about; do not invent minor, subjective, or speculative issues, and do not repeat something already covered by another rule. Always classify these as a SOFT WARNING, never a hard error, with error_code \"GENERAL_FEASIBILITY\", rule \"R15 – General Feasibility\", so a novel judgment call never blocks publishing on its own.",
   },
+  {
+    rule_code: "R23",
+    rule_name: "Trip Name Match",
+    rule_description:
+      "Compare the trip name with the activities actually scheduled. Flag a SOFT WARNING only when the name promises a specific place, landscape or kind of activity that no scheduled activity provides (e.g. \"Beach & Relaxation Tour\" with no beach, \"Island Hopping\" with no island trip, \"Tokyo & Kyoto\" with nothing in Kyoto, \"Ski Week\" with no skiing). Never flag a general name or a broad theme that city activities can fit, such as culture, cultural exploration, discovery, adventure, highlights or getaway (\"4-Day Cultural Exploration of Bangkok\", \"4 Days in Bangkok\"). Use error_code \"TRIP_NAME_MISMATCH\", rule \"R23 – Trip Name Match\", and word it as: message \"The trip name \\\"<trip name>\\\" promises <what it promises>, but no scheduled activity offers it.\", action \"Rename the trip to match its activities, or add <what it promises>.\"",
+  },
 ];
 
 export function buildSystemPrompt(rules: FeasibilityRule[]): string {
@@ -534,12 +535,15 @@ SCORING only sets the three scores — never add hard_errors or soft_warnings fo
 from the numbered rules.
 - grammar_score — wording and tone of the creator's text (day summaries and every activity's
   description, including [catalog] ones): subtract 0.1 for each summary or description with spelling
-  or grammar mistakes, an unclear meaning, or a tone unsuitable for travellers. Don't judge [catalog]
-  activity names.
+  or grammar mistakes or an unclear meaning, and subtract 0.3 for each one written in
+  slang or text-speak ("u", "gonna", "luv", "fr fr") or in a tone unsuitable for travellers. Don't
+  judge [catalog] activity names.
 - completeness_score — every day has at least one activity and a hotel night (except the last day),
   each day's summary matches the activities scheduled that day, and every activity has a duration:
   subtract 0.1 for each day missing an activity or hotel, each day whose summary doesn't match its
-  activities, and each activity without a duration.
+  activities, and each activity without a duration. A day with no activities whose summary
+  describes it as a free day is complete, not missing an activity. Also subtract 0.3 if the trip name
+  promises something the scheduled activities don't include (see R23).
 - feasibility_score — whether a real traveller can actually do the schedule on time: subtract 0.1
   for each gap too short to travel between activities, each activity too soon after landing, and
   each activity scheduled outside the venue's opening hours or on a day it's closed.

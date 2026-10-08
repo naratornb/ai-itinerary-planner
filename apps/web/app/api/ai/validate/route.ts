@@ -35,7 +35,7 @@ async function fetchActiveRules(): Promise<FeasibilityRule[]> {
     if (error) console.warn("Failed to fetch feasibility_rules, using fallback:", error.message);
     return FALLBACK_RULES;
   }
-  return rules;
+  return withFallbackRules(rules);
 }
 
 /**
@@ -43,6 +43,15 @@ async function fetchActiveRules(): Promise<FeasibilityRule[]> {
  * (FALLBACK_RULES). A retired rule — or an old uncoded row — still marked active in
  * the database then can't keep reaching the AI before a migration switches it off.
  */
+/**
+ * Database wording wins, but a rule the code knows and the table doesn't have yet (a
+ * new rule before its migration runs) is still sent, in FALLBACK_RULES order.
+ */
+export function withFallbackRules(rows: FeasibilityRule[]): FeasibilityRule[] {
+  const inDb = new Set(rows.map((r) => r.rule_code));
+  return [...rows, ...FALLBACK_RULES.filter((r) => !inDb.has(r.rule_code))];
+}
+
 export function keepKnownRules(rows: FeasibilityRule[]): FeasibilityRule[] {
   const known = new Set(FALLBACK_RULES.map((r) => r.rule_code));
   return rows.filter((r) => known.has(r.rule_code));
@@ -187,8 +196,17 @@ export function findDayContainingText(days: any[], needle: string | undefined): 
  * tells the model never to flag this itself, but that's not a hard guarantee, so
  * entries matching it are filtered out of the AI's output as a safety net.
  */
+// "the flight arrives at 18:31", "before the flight arrival", "after the plane lands"
+const ARRIVAL_FLIGHT_CLAIM = /\b(?:lands?|landed|landing)\b|\b(?:flight|plane)\b[^.]*\barriv|\barriv\w*\b[^.]*\b(?:flight|plane)\b/i;
+
+/**
+ * R2 (arrival timing) is fully owned by the code check, so an AI issue about it is
+ * dropped — by code or rule, or by wording when the AI files it under another rule
+ * (an 08:30 stop came back under R15 as "before the flight arrival (08:00)").
+ */
 export function isTransferTimeIssue(issue: any): boolean {
-  return issue?.error_code === "SHORT_TRANSFER" || issue?.rule === "R2 – Transfer Time";
+  return issue?.error_code === "SHORT_TRANSFER" || issue?.rule === "R2 – Transfer Time"
+    || ARRIVAL_FLIGHT_CLAIM.test(String(issue?.message ?? ""));
 }
 
 /**
@@ -280,9 +298,13 @@ function splitByVerdict(issues: any[], verdict: (issue: any) => Verdict): { bloc
  * activities is worked out from coordinates instead (checkTravelTimes), because the
  * AI's estimate kept rising with the gap. Find the two activities it names on one
  * day: drop it when coordinates already cover that pair, when the gap is under
- * ACTIVITY_GAP_MIN (R22 blocks it), or when the gap covers the AI's own estimate
- * ("about N min", or the top of a range); otherwise it's a warning.
+ * ACTIVITY_GAP_MIN (R22 blocks it), when the gap is MAX_CITY_TRANSFER_MIN or more
+ * (a 270-min gap got "about 300 min" across Melbourne), or when the gap covers the
+ * AI's own estimate ("about N min", or the top of a range); otherwise it's a warning.
  */
+// The R12 prompt's own ceiling: "allow up to 60 minutes across a large, congested city".
+const MAX_CITY_TRANSFER_MIN = 60;
+
 export function verifyTransferGaps(
   issues: any[],
   days: any[],
@@ -301,7 +323,7 @@ export function verifyTransferGaps(
         if (text.includes(acts[k - 1].name) && text.includes(acts[k].name)) {
           const gap = acts[k].start - acts[k - 1].end;
           if (coveredByCoordinates(acts[k - 1].name, acts[k].name)) return "drop";
-          if (gap < ACTIVITY_GAP_MIN) return "drop";
+          if (gap < ACTIVITY_GAP_MIN || gap >= MAX_CITY_TRANSFER_MIN) return "drop";
           return Number.isNaN(estimate) || gap < estimate ? "warn" : "drop";
         }
       }
@@ -529,6 +551,54 @@ export function buildIllegalActError(aiResult: any, days: any[]): any | null {
   };
 }
 
+const LEET: Record<string, string> = { "0": "o", "1": "i", "3": "e", "4": "a", "5": "s", "7": "t", "@": "a", $: "s" };
+
+/** PROFANITY_WORDS match after undoing spacing ("S.H.I.T") and leetspeak ("sh1t"). */
+function hasDisguisedProfanity(text: string): boolean {
+  const lower = text.toLowerCase();
+  const joined = lower.replace(/\b(?:[a-z0-9][.\-_*\s]){2,}[a-z0-9]\b/g, (m) => m.replace(/[^a-z0-9]/g, ""));
+  const unleet = joined.replace(/[013457@$]/g, (c) => LEET[c]);
+  return PROFANITY_WORDS.some((word) => hasWord(lower, word) || hasWord(unleet, word));
+}
+
+/**
+ * The AI's profanity flag is a second pass behind PROFANITY_WORDS for disguised
+ * words. It blocks only when its quote holds a listed word once spacing and leetspeak
+ * are undone; otherwise (slang like "gr8 tour tbh ... its lit" was flagged) it only
+ * asks the creator to check the wording.
+ */
+export function buildAiProfanityIssue(aiResult: any, days: any[]): any | null {
+  if (!aiResult?.scores?.contains_profanity) return null;
+  const evidence = String(aiResult.profanity_evidence || "").trim();
+  const evidenceDay = findDayContainingText(days, evidence);
+  const field = evidenceDay !== null ? `Day ${evidenceDay}` : "package_content";
+  const where = evidenceDay !== null ? `Day ${evidenceDay}` : "package content";
+  if (hasDisguisedProfanity(evidence)) {
+    return {
+      error_code: "POLICY_VIOLATION",
+      rule: "SafetyStatus",
+      severity: "error",
+      field,
+      field_value: evidence || "N/A",
+      affected_item: "Entire Package",
+      message: `Profanity detected in ${where} (AI-detected).`,
+      action: "Remove prohibited content to proceed.",
+    };
+  }
+  return {
+    error_code: "CHECK_WORDING",
+    rule: "SafetyStatus",
+    severity: "warning",
+    field,
+    field_value: evidence || "N/A",
+    affected_item: evidenceDay !== null ? `Day ${evidenceDay}` : "Entire Package",
+    message: evidence
+      ? `Check the wording in ${where}: "${evidence}" may read as offensive (AI-flagged).`
+      : `Check the wording in ${where}: some text may read as offensive (AI-flagged).`,
+    action: "Make sure it reads as intended. A reviewer may ask about it.",
+  };
+}
+
 const AI_UNAVAILABLE_WARNING = {
   error_code: "AI_CHECKS_UNAVAILABLE",
   rule: "System",
@@ -539,6 +609,24 @@ const AI_UNAVAILABLE_WARNING = {
   message: "Some AI checks couldn't run this time, so only the standard checks were applied.",
   action: "Run Check content again for the full set of checks.",
 };
+
+/**
+ * FinalScore = SafetyStatus x BrandSafety x [(Grammar x 0.2) + (Completeness x 0.3) +
+ * (Feasibility x 0.5)] x 100. Left out while anything blocks submission (a critical
+ * issue or a safety block): a blocked package showing 100/100 read as a contradiction.
+ */
+export function qualityScore(
+  scores: { grammar_score?: number; completeness_score?: number; feasibility_score?: number },
+  safetyStatus: number,
+  brandSafety: number,
+  criticalCount = 0,
+): number | undefined {
+  if (criticalCount > 0 || safetyStatus === 0 || brandSafety === 0) return undefined;
+  const grammar = Number(scores.grammar_score ?? 0.8);
+  const completeness = Number(scores.completeness_score ?? 0.8);
+  const feasibility = Number(scores.feasibility_score ?? 0.9);
+  return Math.round((grammar * 0.2 + completeness * 0.3 + feasibility * 0.5) * 100);
+}
 
 /**
  * Returned when the check itself fails. It must never pass: a package nobody could
@@ -577,65 +665,38 @@ export function dropIllegalActDuplicates(issues: any[], illegalActError: any | n
   return issues.filter((issue) => String(issue?.affected_item ?? "").trim().toLowerCase() !== evidence);
 }
 
+type HardBlock = { type: "SafetyStatus" | "BrandSafety"; message: string; field?: string };
+
+/**
+ * Every hard block in the package, one per category (conflict destination, competitor,
+ * profanity), so a creator sees all of them at once instead of fixing one, re-checking
+ * and only then meeting the next. The first block is also spread onto the result.
+ */
 export function runHardBlockFilters(pkg: any, warZones: string[], days: any[] = []) {
   const fullText = JSON.stringify(pkg).toLowerCase();
   const country = (pkg.country || "").toLowerCase();
+  const blocks: HardBlock[] = [];
 
   // Only the destination itself blocks; a mention in the text is a warning
   // (see findWordingWarnings).
-  for (const zone of warZones) {
-    if (country.trim() === zone) {
-      return {
-        blocked: true,
-        type: "SafetyStatus",
-        message: `Geopolitical Safety: Packages to ${zone} are restricted.`,
-      };
-    }
-  }
+  const zone = warZones.find((z) => country.trim() === z);
+  if (zone) blocks.push({ type: "SafetyStatus", message: `Geopolitical Safety: Packages to ${zone} are restricted.` });
+
   // Check per-day first (in day order) so a match can be attributed to a specific
   // day; a match that only shows up in a package-level field (trip name, hotel name)
-  // falls through to the whole-package scan below with no day to point to.
-  for (const day of days) {
-    const dayText = dayTextBlob(day);
-    for (const comp of BANNED_COMPETITORS) {
-      if (hasWord(dayText, comp)) {
-        return {
-          blocked: true,
-          type: "BrandSafety",
-          message: `Brand Safety: Mentions of competitor '${comp}' are blocked, in Day ${day.day_number}.`,
-          field: `Day ${day.day_number}`,
-        };
-      }
+  // falls through to the whole-package scan with no day to point to.
+  const firstMatch = (words: string[], type: HardBlock["type"], message: (word: string, day?: number) => string) => {
+    for (const day of days) {
+      const word = words.find((w) => hasWord(dayTextBlob(day), w));
+      if (word) return blocks.push({ type, message: message(word, day.day_number), field: `Day ${day.day_number}` });
     }
-  }
-  for (const comp of BANNED_COMPETITORS) {
-    if (hasWord(fullText, comp)) {
-      return {
-        blocked: true,
-        type: "BrandSafety",
-        message: `Brand Safety: Mentions of competitor '${comp}' are blocked.`,
-      };
-    }
-  }
-  for (const day of days) {
-    const dayText = dayTextBlob(day);
-    for (const word of PROFANITY_WORDS) {
-      if (hasWord(dayText, word)) {
-        return {
-          blocked: true,
-          type: "SafetyStatus",
-          message: `Profanity detected in Day ${day.day_number}.`,
-          field: `Day ${day.day_number}`,
-        };
-      }
-    }
-  }
-  for (const word of PROFANITY_WORDS) {
-    if (hasWord(fullText, word)) {
-      return { blocked: true, type: "SafetyStatus", message: "Profanity detected in package content." };
-    }
-  }
-  return { blocked: false };
+    const word = words.find((w) => hasWord(fullText, w));
+    if (word) blocks.push({ type, message: message(word) });
+  };
+  firstMatch(BANNED_COMPETITORS, "BrandSafety", (comp, day) => `Brand Safety: Mentions of competitor '${comp}' are blocked${day ? `, in Day ${day}` : ""}.`);
+  firstMatch(PROFANITY_WORDS, "SafetyStatus", (_, day) => (day ? `Profanity detected in Day ${day}.` : "Profanity detected in package content."));
+
+  return { blocked: blocks.length > 0, blocks, ...blocks[0] };
 }
 
 /**
@@ -705,22 +766,20 @@ export async function POST(req: NextRequest) {
     const wordingWarnings = findWordingWarnings(pkg, CONFLICT_COUNTRIES, days);
     let brandSafety = 1;
     let safetyStatus = 1;
-    let hardBlockError: any = null;
-
-    if (blockCheck.blocked) {
-      if (blockCheck.type === "BrandSafety") brandSafety = 0;
-      if (blockCheck.type === "SafetyStatus") safetyStatus = 0;
-      hardBlockError = {
+    const hardBlockErrors = blockCheck.blocks.map((block) => {
+      if (block.type === "BrandSafety") brandSafety = 0;
+      if (block.type === "SafetyStatus") safetyStatus = 0;
+      return {
         error_code: "POLICY_VIOLATION",
-        rule: blockCheck.type,
+        rule: block.type,
         severity: "error",
-        field: blockCheck.field || "package_content",
+        field: block.field || "package_content",
         field_value: "N/A",
         affected_item: "Entire Package",
-        message: blockCheck.message,
+        message: block.message,
         action: "Remove prohibited content to proceed.",
       };
-    }
+    });
 
     // 2. Code-based deterministic checks (see runCodeChecks) — always consistent
     const codeResults = runCodeChecks(days, pkg.arrival_landing);
@@ -783,26 +842,12 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 3b. AI profanity recheck — a semantic second pass behind the static PROFANITY_WORDS
-    //     list, catching misspellings/leetspeak/evasions the fixed list would miss.
-    let aiProfanityError: any = null;
-    if (!hardBlockError && Boolean(aiResult.scores?.contains_profanity)) {
-      safetyStatus = 0;
-      const evidenceDay = findDayContainingText(days, aiResult.profanity_evidence);
-      aiProfanityError = {
-        error_code: "POLICY_VIOLATION",
-        rule: "SafetyStatus",
-        severity: "error",
-        field: evidenceDay !== null ? `Day ${evidenceDay}` : "package_content",
-        field_value: aiResult.profanity_evidence || "N/A",
-        affected_item: "Entire Package",
-        message:
-          evidenceDay !== null
-            ? `Profanity detected in Day ${evidenceDay} (AI-detected).`
-            : "Profanity detected in package content (AI-detected).",
-        action: "Remove prohibited content to proceed.",
-      };
-    }
+    // 3b. AI profanity recheck — a second pass behind PROFANITY_WORDS for disguised
+    //     words; skipped when the list already found profanity (see buildAiProfanityIssue).
+    const listFoundProfanity = blockCheck.blocks.some((block) => block.message.startsWith("Profanity"));
+    const aiProfanityIssue = listFoundProfanity ? null : buildAiProfanityIssue(aiResult, days);
+    const aiProfanityError = aiProfanityIssue?.severity === "error" ? aiProfanityIssue : null;
+    if (aiProfanityError) safetyStatus = 0;
 
     const illegalActError = buildIllegalActError(aiResult, days);
 
@@ -832,13 +877,14 @@ export async function POST(req: NextRequest) {
       ...travelTimeErrors,
       ...(photosError ? [photosError] : []),
       ...allowedAiHardErrors,
-      ...(hardBlockError ? [hardBlockError] : []),
+      ...hardBlockErrors,
       ...(aiProfanityError ? [aiProfanityError] : []),
       ...(illegalActError ? [illegalActError] : []),
     ];
     const mergedSoftWarnings = [
       ...codeResults.soft,
       ...wordingWarnings,
+      ...(aiProfanityIssue && !aiProfanityError ? [aiProfanityIssue] : []),
       ...dedupeSimilarPairs(
         keepOutOfCityDailyRange(dropSingleActivityDailyRange(
           dropRepeatedDuplicates(dropIllegalActDuplicates(aiWarnings, illegalActError), codeResults.soft, days),
@@ -849,18 +895,10 @@ export async function POST(req: NextRequest) {
       ...(aiAvailable ? [] : [AI_UNAVAILABLE_WARNING]),
     ];
 
-    // 5. Quality score: FinalScore = SafetyStatus x BrandSafety x [(Grammar x 0.2) + (Completeness x 0.3) + (Feasibility x 0.5)] x 100
-    const scores = aiResult.scores || {};
-    const grammar = Number(scores.grammar_score ?? 0.8);
-    const completeness = Number(scores.completeness_score ?? 0.8);
-    const feasibility = Number(
-      scores.feasibility_score ?? (mergedHardErrors.length === 0 ? 0.9 : 0.4)
-    );
-
+    // 5. Quality score — none while a critical issue blocks submission (see qualityScore)
     if (illegalActError) safetyStatus = 0;
 
-    const weighted = grammar * 0.2 + completeness * 0.3 + feasibility * 0.5;
-    const qualityScore = Math.round(safetyStatus * brandSafety * weighted * 100);
+    const score = qualityScore(aiResult.scores || {}, safetyStatus, brandSafety, mergedHardErrors.length);
     const isFeasible = mergedHardErrors.length === 0;
 
     return NextResponse.json({
@@ -872,8 +910,8 @@ export async function POST(req: NextRequest) {
       summary:
         aiResult.summary ||
         (isFeasible ? "All checks passed." : "Issues found — review critical errors."),
-      quality_score: qualityScore,
-      can_publish: qualityScore >= 70 && isFeasible,
+      quality_score: score,
+      can_publish: isFeasible && (score ?? 0) >= 70,
       ai_response: aiResult,
     });
   } catch (err: any) {

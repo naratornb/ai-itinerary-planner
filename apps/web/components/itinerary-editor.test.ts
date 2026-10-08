@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { annotateItems, contentMatchesSavedSnapshot, deriveFlightType, findTimeConflict, flightForItem, placeUnassociatedMedia, referenceFlightPresentation, removeItemPhotoFromDays } from "./itinerary-editor";
+import { annotateItems, contentMatchesSavedSnapshot, deriveFlightType, findTimeConflict, flightForItem, isCreatorPickComplete, placeUnassociatedMedia, referenceFlightPresentation, removeItemPhotoFromDays } from "./itinerary-editor";
 import type { BuilderDay, TimelineItem } from "../lib/itinerary-builder";
 
 function item(overrides: Partial<TimelineItem> & { id: number; time: string }): TimelineItem {
@@ -528,4 +528,26 @@ test("on a day before the arrival flight lands, every stop gets the before-landi
   assert.equal(museum.problem, "Starts before your flight lands");
   assert.equal(museum.problemDetail, "Your flight leaves at 15:00 and lands at 00:31 the next day (Day 2), so you're still travelling. Move this to after you arrive.");
   assert.notEqual(flight.problem, "Starts before your flight lands");
+});
+
+test("a creator pick needs both a title and a description before it can be added or saved", () => {
+  assert.equal(isCreatorPickComplete({ title: "Sunset at Sanur Beach Warung", description: "Grilled seafood on the sand." }), true);
+  assert.equal(isCreatorPickComplete({ title: "Sunset at Sanur Beach Warung", description: "" }), false);
+  assert.equal(isCreatorPickComplete({ title: "Sunset at Sanur Beach Warung", description: "   \n " }), false, "whitespace isn't a description");
+  assert.equal(isCreatorPickComplete({ title: " ", description: "Grilled seafood on the sand." }), false);
+});
+
+test("both creator pick forms label the field Description and gate their button on it", () => {
+  const source = readFileSync(new URL("./itinerary-editor.tsx", import.meta.url), "utf8");
+  assert.ok(!source.includes("<span>Why you recommend it</span>"), "add form still says \"Why you recommend it\"");
+  assert.match(source, /disabled=\{!isCreatorPickComplete\(\{ title: p\.creatorDraft\.title, description: p\.creatorDraft\.reason \}\)\}[^>]*>Add creator pick/);
+  assert.match(source, /<label className="edit-notes"><span>Description<RequiredMark \/><\/span>/);
+  assert.match(source, /isFixedActivity \? !editingItem\.title\.trim\(\) : !isCreatorPickComplete\(\{ title: editingItem\.title, description: editingItem\.notes \}\)/);
+});
+
+test("creator pick title and description are marked required, visually and for screen readers", () => {
+  const source = readFileSync(new URL("./itinerary-editor.tsx", import.meta.url), "utf8");
+  for (const label of ["<span>Title<RequiredMark /></span>", "<span>Activity<RequiredMark /></span>"]) assert.ok(source.includes(label), label);
+  assert.equal(source.split("<span>Description<RequiredMark /></span>").length - 1, 2, "both Description labels");
+  assert.equal(source.split('aria-required="true"').length - 1, 4, "title and description inputs in both forms");
 });
