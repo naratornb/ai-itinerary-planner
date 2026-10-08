@@ -311,7 +311,7 @@ export function isCreatorPickComplete({ title, description }: { title: string; d
 // own displayed time is a real clock time — a hotel stop shows "Check-in" /
 // "Check-out" / "Overnight stay" instead (bookings only carry a date, never
 // a time), so it naturally never enters either side of this check.
-export function findTimeConflict(items: TimelineItem[], editingId: number, time: string, duration: string): string | null {
+export function findTimeConflict(items: TimelineItem[], editingId: number, time: string, duration: string, overnightArrivalId?: number): string | null {
   const index = items.findIndex((item) => item.id === editingId);
   if (index === -1) return null;
 
@@ -321,7 +321,7 @@ export function findTimeConflict(items: TimelineItem[], editingId: number, time:
     // travel time (e.g. ~6hrs SYD→DPS), not time occupied after landing, so
     // adding it here double-counts the flight. For a relative leg `time` is the
     // departure, so the end comes from flightEndClock, not `time` alone.
-    const previousEnds = previous.type === "FLIGHT" ? flightEndClock(previous) : getEndTime(previous.time, previous.duration ?? "0");
+    const previousEnds = previous.type === "FLIGHT" ? flightEndClock(previous, previous.id === overnightArrivalId) : getEndTime(previous.time, previous.duration ?? "0");
     if (time < previousEnds) return `Must start at or after ${previous.title} ends, at ${previousEnds}`;
   }
 
@@ -331,7 +331,7 @@ export function findTimeConflict(items: TimelineItem[], editingId: number, time:
     // flight, its own landing is already its end — don't add travel duration
     // on top when checking it against the next item's start.
     const isFlight = items[index]?.type === "FLIGHT";
-    const thisEnds = isFlight ? flightEndClock({ ...items[index]!, time }) : getEndTime(time, duration);
+    const thisEnds = isFlight ? flightEndClock({ ...items[index]!, time }, editingId === overnightArrivalId) : getEndTime(time, duration);
     if (thisEnds > next.time) {
       const latestStart = isFlight ? next.time : subtractMinutes(next.time, duration);
       return `Must start by ${latestStart}, so it ends before ${next.title} starts at ${next.time}`;
@@ -542,7 +542,7 @@ function detectGibberish(text: string): boolean {
  */
 export function annotateItems(
   raw: TimelineItem[],
-  landing?: { time: string; departureTime?: string; bufferMin: number; international: boolean; landsOnLaterDay?: number },
+  landing?: { time: string; departureTime?: string; bufferMin: number; international: boolean; landsOnLaterDay?: number; overnightFlightId?: number },
 ): TimelineItem[] {
   const isTimedStop = (item: TimelineItem) =>
     item.type !== "FLIGHT" && item.type !== "HOTEL" && REAL_TIME_PATTERN.test(item.time);
@@ -586,7 +586,7 @@ export function annotateItems(
     // time, not time occupied after landing, so adding it would double-count
     // (same bug fixed in findTimeConflict). A relative leg's `time` is its
     // departure, so the end comes from flightEndClock.
-    const endMin = item.type === "FLIGHT" ? toMinutes(flightEndClock(item)) : toMinutes(item.time) + durationMin;
+    const endMin = item.type === "FLIGHT" ? toMinutes(flightEndClock(item, item.id === landing?.overnightFlightId)) : toMinutes(item.time) + durationMin;
 
     // 1 & 2. Gap vs next item — the list is a single day's items
     const next = raw[i + 1];
@@ -1121,8 +1121,9 @@ export default function ItineraryEditor({
     const arrival = arrivalLanding(days);
     if (!arrival) return null;
     const international = deriveFlightType(arrival.flight.originIata, arrival.flight.destinationIata, pkg.destination_country) === "international";
-    return { ...arrival, departureTime: arrival.flight.departureTime, international, bufferMin: TRANSFER_BUFFER_MIN[international ? "international" : "domestic"] };
+    return { ...arrival, departureTime: arrival.flight.departureTime, international, bufferMin: TRANSFER_BUFFER_MIN[international ? "international" : "domestic"], overnightFlightId: arrival.overnight ? arrival.flight.id : undefined };
   }, [days, pkg.destination_country]);
+  const overnightArrivalId = landing?.overnightFlightId;
   const items = useMemo(
     () => annotateItems(
       activeDayData?.items ?? [],
@@ -1972,7 +1973,7 @@ export default function ItineraryEditor({
     // a raw string sort pushed "Check-out"/"Check-in" labels below every clock
     // time and dropped the check-out card to the bottom of its own day.
     const resorted = REAL_TIME_PATTERN.test(updatedItem.time)
-      ? [...withUpdate].sort(compareDayItems)
+      ? [...withUpdate].sort((a, b) => compareDayItems(a, b, overnightArrivalId))
       : withUpdate;
 
     setItems(resorted);
@@ -2006,7 +2007,7 @@ export default function ItineraryEditor({
     next.splice(insertionIndex, 0, moved);
 
     const conflict = REAL_TIME_PATTERN.test(moved.time)
-      ? findTimeConflict(next, moved.id, moved.time, moved.duration ?? "0")
+      ? findTimeConflict(next, moved.id, moved.time, moved.duration ?? "0", overnightArrivalId)
       : null;
     if (conflict) {
       showNotice(`Can't move ${moved.title} there — ${conflict}`);
@@ -2566,7 +2567,7 @@ export default function ItineraryEditor({
                 const hasHotelDetails = item.type === "HOTEL" && (Boolean(hotel) || Boolean(item.roomType));
                 const isFixedActivity = item.type === "ACTIVITY";
                 const scheduleConflict = REAL_TIME_PATTERN.test(item.time)
-                  ? findTimeConflict(items, item.id, item.time, item.duration ?? "0")
+                  ? findTimeConflict(items, item.id, item.time, item.duration ?? "0", overnightArrivalId)
                   : null;
                 const nights = hotel ? hotelNights(hotel) : null;
                 // Only the check-in row speaks for the whole stay; the night
@@ -2659,7 +2660,7 @@ export default function ItineraryEditor({
                   <button className="drag-handle" draggable aria-label={`Move ${hotelTitle}. Use drag and drop, or the up and down arrow keys.`} onDragStart={(event) => { setEditingItem(null); setDraggedItemId(item.id); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", String(item.id)); }} onDragEnd={endDrag} onKeyDown={(event) => { if (event.key === "ArrowUp") { event.preventDefault(); moveItem(index, index - 1); } if (event.key === "ArrowDown") { event.preventDefault(); moveItem(index, index + 1); } }}><span /><span /><span /><span /><span /><span /></button>
                   <div className="item-time">
                     <div className="item-time-row"><Icon name={item.icon} /><strong className={isTimeValue ? undefined : "item-time-word"}>{item.type === "FLIGHT" && item.arrivalTime ? item.arrivalTime : item.time}</strong></div>
-                    {isTimeValue && item.type === "FLIGHT" && item.arrivalTime && <span className="item-time-end">from {item.time}</span>}
+                    {isTimeValue && item.type === "FLIGHT" && item.arrivalTime && <span className="item-time-end">{landing?.overnight && landing.flight.id === item.id ? `Departs ${item.time} the day before` : `from ${item.time}`}</span>}
                     {isTimeValue && item.type !== "FLIGHT" && item.duration && <span className="item-time-end">to {getEndTime(item.time, item.duration)}</span>}
                   </div>
                   <div className="item-copy">
