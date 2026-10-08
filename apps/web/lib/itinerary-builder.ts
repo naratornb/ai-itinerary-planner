@@ -802,7 +802,9 @@ export function buildPackageUpdate(
       destination_iata: item.destinationIata!,
       airline: item.airline || "Unknown",
       flight_number: item.flightNumber || null,
-      departure_time: item.departureTime || (REAL_TIME.test(item.time) ? item.time : null),
+      // An arrival-anchored row's time is its landing, so it can't stand in
+      // for a missing take-off.
+      departure_time: item.departureTime || (item.flightRole !== "arrival" && REAL_TIME.test(item.time) ? item.time : null),
       arrival_time: item.arrivalTime || null,
       duration_minutes: item.duration ? Number(item.duration) : null,
       cabin_class: item.cabinClass || null,

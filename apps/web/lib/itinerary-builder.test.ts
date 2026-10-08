@@ -1078,3 +1078,64 @@ test("a lone flight on the last day is the trip home, not an arrival", () => {
 test("no flights means no arrival landing", () => {
   assert.equal(arrivalLanding([flightDay(1, [])]), null);
 });
+
+const roleFlight = (overrides: Partial<CreatorFlightDetail>): CreatorFlightDetail => ({
+  flight_id: null, airline: "Example Air", flight_number: "EA1", origin_iata: "SYD", destination_iata: "KIX",
+  departure_time: "20:50", arrival_time: "05:44", cabin_class: "Economy", price_aud: 900, day_number: 1,
+  ...overrides,
+});
+const rolePackage = (flights: CreatorFlightDetail[], duration_days = 5) => ({
+  package_id: "pkg-roles", title: "Osaka", duration_days, destination_city: "Osaka", destination_country: "Japan",
+  description: "", max_group_size: 4, tags: [], flights, hotels: [], activities: [], days: [],
+}) as CreatorPackageDetail;
+const flightRows = (days: BuilderDay[]) =>
+  days.flatMap((day, dayIndex) => day.items.filter((item) => item.type === "FLIGHT").map((item) => ({ dayIndex, item })));
+
+test("the first flight anchors its day on landing, the last on take-off", () => {
+  const days = buildDaysFromPackage(rolePackage([
+    roleFlight({}),
+    roleFlight({ origin_iata: "KIX", destination_iata: "SYD", departure_time: "21:30", arrival_time: "08:10", day_number: 5 }),
+  ]));
+  const [outbound, inbound] = flightRows(days);
+  assert.equal(outbound.dayIndex, 0);
+  assert.equal(outbound.item.flightRole, "arrival");
+  assert.equal(outbound.item.time, "05:44");
+  assert.equal(inbound.dayIndex, 4);
+  assert.equal(inbound.item.flightRole, "departure");
+  assert.equal(inbound.item.time, "21:30");
+});
+
+test("a lone flight is an arrival on day 1 and a departure on any later day", () => {
+  const [first] = flightRows(buildDaysFromPackage(rolePackage([roleFlight({})])));
+  assert.equal(first.item.flightRole, "arrival");
+  const [later] = flightRows(buildDaysFromPackage(rolePackage([roleFlight({ day_number: 3 })])));
+  assert.equal(later.item.flightRole, "departure");
+  assert.equal(later.item.time, "20:50");
+});
+
+test("loading then saving keeps both flight times, whichever end anchors the day", () => {
+  const flights = [
+    roleFlight({}),
+    roleFlight({ origin_iata: "KIX", destination_iata: "SYD", departure_time: "21:30", arrival_time: "08:10", day_number: 5 }),
+  ];
+  const pkg = rolePackage(flights);
+  const saved = buildPackageUpdate(pkg, buildDaysFromPackage(pkg), "Osaka").flights ?? [];
+  assert.deepEqual(saved.map(({ departure_time, arrival_time, day_number }) => ({ departure_time, arrival_time, day_number })), [
+    { departure_time: "20:50", arrival_time: "05:44", day_number: 1 },
+    { departure_time: "21:30", arrival_time: "08:10", day_number: 5 },
+  ]);
+});
+
+test("an arrival flight with no take-off time never saves its landing as the take-off", () => {
+  const pkg = rolePackage([roleFlight({ departure_time: null })]);
+  const [saved] = buildPackageUpdate(pkg, buildDaysFromPackage(pkg), "Osaka").flights ?? [];
+  assert.equal(saved.arrival_time, "05:44");
+  assert.equal(saved.departure_time, null);
+});
+
+test("getEndTime leaves a booking label alone and treats a non-numeric duration as zero", () => {
+  assert.equal(getEndTime("Check-in", "60"), "Check-in");
+  assert.equal(getEndTime("Overnight stay", "60"), "Overnight stay");
+  assert.equal(getEndTime("10:00", "abc"), "10:00");
+  assert.equal(getEndTime("23:30", "60"), "00:30");
+});

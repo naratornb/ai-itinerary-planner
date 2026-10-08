@@ -338,6 +338,33 @@ test("duration grows to cover every relative itinerary day", () => {
   assert.deepEqual(out.activities?.map((entry) => entry.day_number), [1, 2, 3]);
 });
 
+const threeDayTrip = (check_out: string, depart_date = "2026-04-01") => {
+  const res = response({
+    accommodation: [hotel({ check_in: "2026-04-01T15:00:00", check_out })],
+    days: [
+      day({ date: "2026-04-01" }),
+      day({ day_number: 2, date: "2026-04-02", activities: [activity({ activity_id: "AC-2" })] }),
+      day({ day_number: 3, date: "2026-04-03", activities: [activity({ activity_id: "AC-3" })] }),
+    ],
+  });
+  res.trip.duration_days = 3;
+  res.trip.travel_dates.depart_date = depart_date;
+  return itineraryToPackageInput(base(), res);
+};
+
+test("a check-out inside the trip leaves its length alone", () => {
+  assert.equal(threeDayTrip("2026-04-03T10:00:00").duration_days, 3);
+});
+
+test("a check-out the morning after the last day adds that one day", () => {
+  assert.equal(threeDayTrip("2026-04-04T10:00:00").duration_days, 4);
+});
+
+test("a depart_date left behind by re-dated days can't stretch the trip past one extra day", () => {
+  // A stale depart_date ten months earlier once made a 12-day trip 301 days long.
+  assert.equal(threeDayTrip("2026-04-04T10:00:00", "2025-06-01").duration_days, 4);
+});
+
 // ─── buildItineraryQuery ──────────────────────────────────────────────────────
 
 const selection = (overrides: Partial<WizardSelection> = {}): WizardSelection => ({
