@@ -250,6 +250,18 @@ test("R18: a package with at least one photo passes", () => {
   assert.equal(issue, null);
 });
 
+test("slang costs more writing marks than a typo, and a trip name the activities don't match costs completeness", () => {
+  // Regression: "u gonna luv dis place nxt lvl fr fr" only cost 0.1 (grammar 0.9), and a
+  // "Beach & Relaxation Tour" of city culture activities cost nothing.
+  const prompt = buildSystemPrompt(FALLBACK_RULES);
+  assert.match(prompt, /subtract 0\.3 for each[^.]*slang or text-speak/);
+  assert.match(prompt, /subtract 0\.3 if the trip name/);
+  const r23 = FALLBACK_RULES.find((rule) => rule.rule_code === "R23");
+  assert.equal(r23?.rule_name, "Trip Name Match");
+  assert.match(r23!.rule_description, /SOFT WARNING/);
+  assert.match(r23!.rule_description, /Never flag a general name or a broad theme/, "\"Cultural Exploration\" was wrongly flagged");
+});
+
 test("buildSystemPrompt renders the supplied rule list", () => {
   const prompt = buildSystemPrompt([
     { rule_code: "R14", rule_name: "Similar Duplicate Activity", rule_description: "Test description." },
@@ -328,7 +340,8 @@ test("FALLBACK_RULES still covers every contextual rule code previously hardcode
   const codes = FALLBACK_RULES.map((r) => r.rule_code);
   // R8 (group size) was removed: the editor has no group-size input, so the AI was
   // judging "Private Edition" activities against a group size it never had.
-  assert.deepEqual(codes, ["R3", "R4", "R6", "R10", "R11", "R12", "R14", "R15"]);
+  // R23 (Trip Name Match) was added after these.
+  assert.deepEqual(codes, ["R3", "R4", "R6", "R10", "R11", "R12", "R14", "R15", "R23"]);
 });
 
 function longDayCodes(days: any[]) {

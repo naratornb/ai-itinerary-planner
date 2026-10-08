@@ -30,6 +30,7 @@ import {
   keepOutOfCityDailyRange,
   qualityScore,
   buildAiProfanityIssue,
+  withFallbackRules,
 } from "./route";
 
 const NO_WAR_ZONES: string[] = [];
@@ -370,6 +371,14 @@ test("an AI profanity flag on harmless slang only asks the creator to check the 
   assert.equal(issue.error_code, "CHECK_WORDING");
   assert.match(issue.message, /Day 2/);
   assert.equal(buildAiProfanityIssue({ scores: { contains_profanity: false } }, days), null);
+});
+
+test("a rule the code knows but the database doesn't have yet still reaches the AI", () => {
+  const db = [{ rule_code: "R3", rule_name: "Opening Hours", rule_description: "DB wording" }];
+  const rules = withFallbackRules(db);
+  assert.equal(rules.find((r) => r.rule_code === "R3")?.rule_description, "DB wording", "database wording wins");
+  assert.ok(rules.some((r) => r.rule_code === "R23"), "a new code-only rule is added");
+  assert.equal(new Set(rules.map((r) => r.rule_code)).size, rules.length, "no duplicates");
 });
 
 test("the AI's own note about the illegal activity isn't repeated as a warning under the critical issue", () => {

@@ -436,6 +436,12 @@ export const FALLBACK_RULES: FeasibilityRule[] = [
     rule_description:
       "Beyond the specific numbered rules above, use your general travel-planning judgment to catch any other concrete, real-world feasibility problem a professional travel agent would object to and that isn't already covered — for example an itinerary item that's factually wrong for the destination, a logistically impossible sequence, or anything else clearly unworkable. Only flag issues you are reasonably confident about; do not invent minor, subjective, or speculative issues, and do not repeat something already covered by another rule. Always classify these as a SOFT WARNING, never a hard error, with error_code \"GENERAL_FEASIBILITY\", rule \"R15 – General Feasibility\", so a novel judgment call never blocks publishing on its own.",
   },
+  {
+    rule_code: "R23",
+    rule_name: "Trip Name Match",
+    rule_description:
+      "Compare the trip name with the activities actually scheduled. Flag a SOFT WARNING only when the name promises a specific place, landscape or kind of activity that no scheduled activity provides (e.g. \"Beach & Relaxation Tour\" with no beach, \"Island Hopping\" with no island trip, \"Tokyo & Kyoto\" with nothing in Kyoto, \"Ski Week\" with no skiing). Never flag a general name or a broad theme that city activities can fit, such as culture, cultural exploration, discovery, adventure, highlights or getaway (\"4-Day Cultural Exploration of Bangkok\", \"4 Days in Bangkok\"). Use error_code \"TRIP_NAME_MISMATCH\", rule \"R23 – Trip Name Match\", and word it as: message \"The trip name \\\"<trip name>\\\" promises <what it promises>, but no scheduled activity offers it.\", action \"Rename the trip to match its activities, or add <what it promises>.\"",
+  },
 ];
 
 export function buildSystemPrompt(rules: FeasibilityRule[]): string {
@@ -523,13 +529,15 @@ SCORING only sets the three scores — never add hard_errors or soft_warnings fo
 from the numbered rules.
 - grammar_score — wording and tone of the creator's text (day summaries and every activity's
   description, including [catalog] ones): subtract 0.1 for each summary or description with spelling
-  or grammar mistakes, an unclear meaning, or a tone unsuitable for travellers. Don't judge [catalog]
-  activity names.
+  or grammar mistakes or an unclear meaning, and subtract 0.3 for each one written in
+  slang or text-speak ("u", "gonna", "luv", "fr fr") or in a tone unsuitable for travellers. Don't
+  judge [catalog] activity names.
 - completeness_score — every day has at least one activity and a hotel night (except the last day),
   each day's summary matches the activities scheduled that day, and every activity has a duration:
   subtract 0.1 for each day missing an activity or hotel, each day whose summary doesn't match its
   activities, and each activity without a duration. A day with no activities whose summary
-  describes it as a free day is complete, not missing an activity.
+  describes it as a free day is complete, not missing an activity. Also subtract 0.3 if the trip name
+  promises something the scheduled activities don't include (see R23).
 - feasibility_score — whether a real traveller can actually do the schedule on time: subtract 0.1
   for each gap too short to travel between activities, each activity too soon after landing, and
   each activity scheduled outside the venue's opening hours or on a day it's closed.

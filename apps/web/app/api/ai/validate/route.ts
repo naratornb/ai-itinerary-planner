@@ -35,7 +35,7 @@ async function fetchActiveRules(): Promise<FeasibilityRule[]> {
     if (error) console.warn("Failed to fetch feasibility_rules, using fallback:", error.message);
     return FALLBACK_RULES;
   }
-  return rules;
+  return withFallbackRules(rules);
 }
 
 /**
@@ -43,6 +43,15 @@ async function fetchActiveRules(): Promise<FeasibilityRule[]> {
  * (FALLBACK_RULES). A retired rule — or an old uncoded row — still marked active in
  * the database then can't keep reaching the AI before a migration switches it off.
  */
+/**
+ * Database wording wins, but a rule the code knows and the table doesn't have yet (a
+ * new rule before its migration runs) is still sent, in FALLBACK_RULES order.
+ */
+export function withFallbackRules(rows: FeasibilityRule[]): FeasibilityRule[] {
+  const inDb = new Set(rows.map((r) => r.rule_code));
+  return [...rows, ...FALLBACK_RULES.filter((r) => !inDb.has(r.rule_code))];
+}
+
 export function keepKnownRules(rows: FeasibilityRule[]): FeasibilityRule[] {
   const known = new Set(FALLBACK_RULES.map((r) => r.rule_code));
   return rows.filter((r) => known.has(r.rule_code));
