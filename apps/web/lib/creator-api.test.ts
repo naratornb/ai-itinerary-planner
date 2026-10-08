@@ -7,6 +7,7 @@ import {
   fetchOwnPackage,
   fetchOwnPackages,
   formatCreatorPackage,
+  publishPackage,
   resolveCreatorProfile,
   signInWithEmail,
   submitPackage,
@@ -254,6 +255,51 @@ test("formatCreatorPackage labels an approved package as a preview", () => {
   });
 
   assert.equal(formatted.rowAction, "Preview");
+});
+
+test("publishPackage makes an approved package live", async () => {
+  const published = {
+    package_id: "package-1",
+    title: "Approved trip",
+    destination_country: "Japan",
+    destination_city: "Tokyo",
+    duration_days: 5,
+    base_price_aud: 2485,
+    status: "live",
+    creator_id: "creator-1",
+    created_at: "2026-08-20T00:00:00Z",
+    published_at: "2026-10-07T01:00:00Z",
+  };
+  const fetcher: typeof fetch = async (url, init) => {
+    assert.equal(String(url), "http://localhost:8000/approvals/package%2F1/publish");
+    assert.equal(init?.method, "POST");
+    assert.deepEqual(init?.headers, { Authorization: "Bearer access-token" });
+    return new Response(JSON.stringify(published), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  assert.deepEqual(
+    await publishPackage(fetcher, "http://localhost:8000/", "access-token", "package/1"),
+    published,
+  );
+});
+
+test("publishPackage surfaces an invalid status transition", async () => {
+  const fetcher: typeof fetch = async () => new Response(JSON.stringify({
+    message: "Cannot publish a package in status 'draft'; it must be 'approved'.",
+  }), {
+    status: 409,
+    headers: { "Content-Type": "application/json" },
+  });
+
+  await assert.rejects(
+    publishPackage(fetcher, "http://localhost:8000", "access-token", "package-1"),
+    (error) => error instanceof CreatorApiError
+      && error.status === 409
+      && /must be 'approved'/i.test(error.message),
+  );
 });
 
 test("resolveCreatorProfile prefers the database profile", () => {

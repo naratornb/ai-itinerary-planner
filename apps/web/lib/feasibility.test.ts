@@ -493,9 +493,9 @@ test("R22: a 15-minute gap is enough, and an overlap is left to R7", () => {
   assert.ok(runCodeChecks(overlap).hard.every((i) => i.error_code !== "SHORT_ACTIVITY_GAP"));
 });
 
-test("the AI may hard-block on R3, R4 and R12, and the prompt says so over any rule wording", () => {
+test("the AI may hard-block on R3 and R4, and the prompt says so over any rule wording", () => {
   const prompt = buildSystemPrompt(FALLBACK_RULES);
-  assert.match(prompt, /R3[^\n]*R4[^\n]*R12[^\n]*hard error/);
+  assert.match(prompt, /R3[^\n]*R4[^\n]*hard error[^\n]*R12[^\n]*soft warning/);
   const r3 = FALLBACK_RULES.find((r) => r.rule_code === "R3")!.rule_description;
   assert.doesNotMatch(r3, /SOFT WARNING, never a hard error/);
 });
@@ -611,4 +611,28 @@ test("a mid-trip flight still gets the departure buffer on its own day", () => {
   const errors = returnCodes(days);
   assert.equal(errors.length, 1);
   assert.equal(errors[0].field, "Day 3");
+});
+
+test("buildUserPrompt sends each activity's whole description, not a cut-off one", () => {
+  // Regression: descriptions were cut to 60 characters ("…stunning evening exhibitions a"),
+  // so the AI flagged them as incomplete and marked the writing score down.
+  const description = "What you'll see: You will see stunning evening exhibitions and contemporary Thai art in a quiet gallery.";
+  const days = [{ day_number: 1, summary: "", flights: [], activities: [
+    { activity_name: "Bangkok Museum & Gallery Pass — Evening Edition", slot: "Evening", start_time: "18:00", category: "culture", duration_hours: 2, address: "Siam", description, source: "catalog" },
+  ] }];
+  assert.ok(buildUserPrompt({}, days).includes(`desc: ${description}`));
+});
+
+test("R2: activities on days before the arrival flight lands are hard errors too", () => {
+  // Regression: SYD to BKK leaves Day 1 at 15:00 and lands Day 2 at 00:31. A Bangkok
+  // museum on Day 1 at 09:09 (traveller still in Sydney) wasn't flagged.
+  const landing = { day_number: 2, time: "00:31", departure_time: "15:00", flight_type: "international", title: "SYD to BKK" };
+  const days = [
+    day(1, [activity("Bangkok Museum & Gallery Pass", { start_time: "09:09", duration_hours: 4.3 }), activity("Night market", { start_time: "19:00" })]),
+    day(2, [activity("Grand Palace", { start_time: "10:00" })]),
+  ];
+  const before = runCodeChecks(days, landing).hard.filter((i) => i.error_code === "ACTIVITY_BEFORE_LANDING");
+  assert.deepEqual(before.map((i) => i.affected_item), ["Bangkok Museum & Gallery Pass", "Night market"]);
+  assert.match(before[0].message, /SYD to BKK leaves at 15:00 and lands at 00:31 the next day \(Day 2\)/);
+  assert.equal(before[0].field, "Day 1");
 });

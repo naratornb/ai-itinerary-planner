@@ -24,6 +24,10 @@ import {
   verifyTransferGaps,
   keepRealAiRules,
   verifyOpeningHours,
+  taxiMinutes,
+  distanceKm,
+  checkTravelTimes,
+  keepOutOfCityDailyRange,
 } from "./route";
 
 const NO_WAR_ZONES: string[] = [];
@@ -159,7 +163,7 @@ test("isTransferTimeIssue recognizes an R2 duplicate by error_code or rule, so i
   assert.equal(isTransferTimeIssue(undefined), false);
 });
 
-test("partitionAiHardErrors keeps R3, R4 and R12 as hard errors, demoting everything else to a warning", () => {
+test("partitionAiHardErrors keeps R3 and R4 as hard errors, demoting everything else to a warning", () => {
   // Agreed requirement: travel time between activities, opening hours and day-specific
   // closures are hard blocks. Every other AI rule stays a warning — e.g. a hard error
   // about read-only flight data (R6 below) must never block publishing.
@@ -172,8 +176,9 @@ test("partitionAiHardErrors keeps R3, R4 and R12 as hard errors, demoting everyt
 
   const { allowed, downgraded } = partitionAiHardErrors(issues);
 
-  assert.deepEqual(allowed.map((i) => i.error_code), ["SHORT_TRANSFER_ACTIVITY", "OPENING_HOURS", "DAY_CLOSURE"]);
-  assert.deepEqual(downgraded.map((i) => i.error_code), ["AMBIGUOUS_FLIGHT_INFO"]);
+  // R12 travel time is now calculated from coordinates in code; the AI's version only warns.
+  assert.deepEqual(allowed.map((i) => i.error_code), ["OPENING_HOURS", "DAY_CLOSURE"]);
+  assert.deepEqual(downgraded.map((i) => i.error_code), ["SHORT_TRANSFER_ACTIVITY", "AMBIGUOUS_FLIGHT_INFO"]);
   assert.equal(downgraded[0].severity, "warning");
 });
 
@@ -455,8 +460,8 @@ test("an AI travel-time issue is dropped when the real gap already covers its ow
   };
   const other = { rule: "R3 – Opening Hours", message: "Closed." };
   const { blocks, warnings } = verifyTransferGaps([wrong, real], days);
-  assert.deepEqual(blocks, [real]);
-  assert.deepEqual(warnings, []);
+  assert.deepEqual(blocks, [], "the AI's R12 never blocks on its own");
+  assert.deepEqual(warnings, [{ ...real, severity: "warning" }]);
   void other;
 });
 
@@ -492,7 +497,7 @@ test("an AI travel-time estimate written as a range is understood", () => {
   const copyOfR22 = { rule: "R12 – Activity Transfer Time", message: 'Not enough time to get from "Phuket Cooking Class" to "Old Town Walk": 7 min between them, but the trip takes about 10-40 min.' };
   const covered = { rule: "R12 – Activity Transfer Time", message: 'Not enough time to get from "Old Town Walk" to "Night Market": 23 min between them, but the trip takes about 10-20 min.' };
   const tight = { rule: "R12 – Activity Transfer Time", message: 'Not enough time to get from "Old Town Walk" to "Night Market": 23 min between them, but the trip takes about 20-30 min.' };
-  assert.deepEqual(verifyTransferGaps([copyOfR22, covered, tight], days), { blocks: [tight], warnings: [] });
+  assert.deepEqual(verifyTransferGaps([copyOfR22, covered, tight], days), { blocks: [], warnings: [{ ...tight, severity: "warning" }] });
 });
 
 test("an opening-hours issue is dropped when the visit fits the hours the AI itself quoted", () => {
@@ -525,4 +530,88 @@ test("a travel-time issue whose activities can't be identified is a warning, not
   const issue = { rule: "R12 – Activity Transfer Time", message: "Not enough time between the morning stops: about 30 min needed." };
   assert.deepEqual(verifyTransferGaps([issue], []).blocks, []);
   assert.equal(verifyTransferGaps([issue], []).warnings.length, 1);
+});
+
+test("opening hours are checked against the activity on the issue's day when its name repeats", () => {
+  // Regression: "Bangkok Museum & Gallery Pass" was on Day 2 at 13:30 and Day 8 at 01:00.
+  // The AI flagged 01:00, but the check looked up the Day 2 visit (which fits) and dropped it.
+  const days = [
+    { day_number: 2, activities: [{ activity_name: "Bangkok Museum & Gallery Pass", start_time: "13:30", duration_hours: 5.3 }] },
+    { day_number: 8, activities: [{ activity_name: "Bangkok Museum & Gallery Pass", start_time: "01:00", duration_hours: 1 }] },
+  ];
+  const issue = {
+    rule: "R3 – Opening Hours", field: "Day 8 – Morning", affected_item: "Bangkok Museum & Gallery Pass",
+    message: "Bangkok Museum & Gallery Pass is scheduled at 01:00, but museums and galleries are typically closed at this time. Usual opening hours are 09:00 to 17:00.",
+  };
+  assert.equal(verifyOpeningHours([issue], days).blocks.length, 1);
+});
+
+test("hours written as 'HH:MM to HH:MM' are read as opening and closing times", () => {
+  const days = [{ day_number: 1, activities: [{ activity_name: "City Museum", start_time: "16:00", duration_hours: 2 }] }];
+  const late = { rule: "R3 – Opening Hours", field: "Day 1", affected_item: "City Museum", message: "Runs past closing. Usual opening hours are 09:00 to 17:00." };
+  assert.equal(verifyOpeningHours([late], days).blocks.length, 1, "ends 18:00, after a 17:00 close");
+  const fine = [{ day_number: 1, activities: [{ activity_name: "City Museum", start_time: "10:00", duration_hours: 2 }] }];
+  assert.equal(verifyOpeningHours([late], fine).blocks.length, 0, "10:00–12:00 fits 09:00 to 17:00");
+});
+
+const LANGUAGE = { lat: 13.729566, lng: 100.567306 }; // Sukhumvit Soi 24
+const MUSEUM = { lat: 13.759303, lng: 100.496996 };   // Khao San Road
+
+test("taxi travel time is 10 min plus 3 min per km, rounded up", () => {
+  assert.equal(taxiMinutes(8.3), 35);
+  assert.equal(taxiMinutes(1), 13);
+  assert.equal(Math.round(distanceKm(LANGUAGE, MUSEUM) * 10) / 10, 8.3);
+});
+
+function bangkokDay(museumStart: string) {
+  return [{ day_number: 3, activities: [
+    { activity_name: "Bangkok Language & Culture Crash Course", start_time: "08:30", duration_hours: 3 },
+    { activity_name: "Bangkok Museum & Gallery Pass", start_time: museumStart, duration_hours: 5.3 },
+  ] }];
+}
+const coords = new Map([
+  ["bangkok language & culture crash course", LANGUAGE],
+  ["bangkok museum & gallery pass", MUSEUM],
+]);
+
+test("a gap shorter than the taxi time between two catalog activities is a hard error", () => {
+  // Regression: the AI's estimate kept rising with the gap (25, then 30, then 40 min),
+  // so the planner could never satisfy it. The time is now worked out from coordinates.
+  const issues = checkTravelTimes(bangkokDay("11:48"), coords);
+  assert.equal(issues.length, 1);
+  assert.equal(issues[0].severity, "error");
+  assert.equal(issues[0].field, "Day 3");
+  assert.match(issues[0].message, /8\.3 km apart/);
+  assert.match(issues[0].message, /about 35 min by taxi/);
+  assert.match(issues[0].message, /left 18 min/);
+});
+
+test("the same pair passes once the gap covers the taxi time, and keeps passing", () => {
+  assert.deepEqual(checkTravelTimes(bangkokDay("12:05"), coords), []);
+  assert.deepEqual(checkTravelTimes(bangkokDay("12:05"), coords), []);
+});
+
+test("travel time leaves gaps under 15 min to R22, and skips activities without coordinates", () => {
+  assert.deepEqual(checkTravelTimes(bangkokDay("11:40"), coords), [], "10-minute gap is R22's");
+  assert.deepEqual(checkTravelTimes(bangkokDay("11:48"), new Map()), []);
+});
+
+test("an AI travel-time issue is only ever a warning, and is dropped when coordinates cover the pair", () => {
+  const issue = { rule: "R12 – Activity Transfer Time", message: 'Not enough time to get from "Bangkok Language & Culture Crash Course" to "Bangkok Museum & Gallery Pass": 18 min between them, but the trip takes about 30 min.' };
+  const covered = verifyTransferGaps([issue], bangkokDay("11:48"), (a, b) => coords.has(a) && coords.has(b));
+  assert.deepEqual(covered, { blocks: [], warnings: [] });
+  const uncovered = verifyTransferGaps([issue], bangkokDay("11:48"), () => false);
+  assert.equal(uncovered.blocks.length, 0);
+  assert.equal(uncovered.warnings.length, 1);
+});
+
+test("a Daily Range warning about different parts of the same city is dropped", () => {
+  // Regression: R10 flagged nearly every day in Bangkok for "activities in different
+  // parts of the city". Within-city travel is the coordinate-based R12's job.
+  const sameCity = { rule: "R10 – Daily Range", message: "This day combines activities in different parts of the city that are far apart, requiring significant travel time." };
+  const dayTrip = { rule: "R10 – Daily Range", message: "Combining the Ayutthaya day trip with an evening show is very tiring." };
+  const otherCity = { rule: "R10 – Daily Range", message: "Activities in Bangkok and Pattaya on the same day are in different cities." };
+  const excursion = { rule: "R10 – Daily Range", message: "A long excursion outside the city alongside two other activities." };
+  const other = { rule: "R11 – Seasonality", message: "Rainy season." };
+  assert.deepEqual(keepOutOfCityDailyRange([sameCity, dayTrip, otherCity, excursion, other]), [dayTrip, otherCity, excursion, other]);
 });

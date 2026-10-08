@@ -59,6 +59,7 @@ export type CreatorHotelDetail = {
 
 export type CreatorFlightDetail = {
   flight_id: string | null;
+  package_component_id?: string | null;
   day_number?: number | null;
   sequence_order?: number | null;
   airline: string | null;
@@ -415,6 +416,25 @@ export async function deletePackage(
   // e.g. 409 PACKAGE_NOT_DELETABLE if the status changed since the page loaded.
   const body = await response.json().catch(() => null);
   throw new Error(body?.message || "Unable to delete this package. Please try again.");
+}
+
+export async function publishPackage(
+  fetcher: typeof fetch,
+  apiUrl: string,
+  accessToken: string,
+  packageId: string,
+) {
+  const response = await fetcher(
+    `${apiUrl.replace(/\/$/, "")}/approvals/${encodeURIComponent(packageId)}/publish`,
+    { method: "POST", headers: { Authorization: `Bearer ${accessToken}` } },
+  );
+  if (response.status === 401) {
+    throw new CreatorApiError("Your session expired. Please sign in again.", 401);
+  }
+  if (!response.ok) {
+    throw await creatorApiError(response, "Unable to publish this package. Please try again.");
+  }
+  return response.json() as Promise<CreatorPackage>;
 }
 
 // Mirrors MediaItem/MediaUploadResponse in apps/api/app/media/schemas.py.

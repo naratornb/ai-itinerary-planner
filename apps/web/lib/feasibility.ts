@@ -62,7 +62,7 @@ export function isValidClockTime(time: unknown): boolean {
 }
 
 /** Where the trip's arrival flight lands — worked out by the editor (arrivalLanding). */
-export type ArrivalLanding = { day_number: number; time: string; flight_type?: string; title?: string };
+export type ArrivalLanding = { day_number: number; time: string; departure_time?: string; flight_type?: string; title?: string };
 
 export function runCodeChecks(days: any[], arrival?: ArrivalLanding | null): { hard: CodeIssue[]; soft: CodeIssue[] } {
   const hard: CodeIssue[] = [];
@@ -195,8 +195,27 @@ export function runCodeChecks(days: any[], arrival?: ArrivalLanding | null): { h
       }
     }
 
-    // ── R2 – Arrival Transfer: on the day the arrival flight lands, nothing can start
-    //     before landing, and the first activity needs time to clear the airport.
+    // ── R2 – Arrival Transfer: nothing can happen at the destination before the
+    //     arrival flight lands — including on earlier days, when an overnight flight
+    //     lands the next day (the traveller is still at home, or in the air).
+    if (arrival && day.day_number < arrival.day_number && isValidClockTime(arrival.time)) {
+      for (const { act } of timed) {
+        hard.push({
+          error_code: "ACTIVITY_BEFORE_LANDING",
+          rule: "R2 – Transfer Time",
+          severity: "error",
+          field: dayLabel,
+          field_value: `${dayLabel}, lands Day ${arrival.day_number} ${arrival.time}`,
+          affected_item: act.activity_name,
+          message: arrival.departure_time
+            ? `"${act.activity_name}" is on ${dayLabel}, but ${arrival.title || "your flight"} leaves at ${arrival.departure_time} and lands at ${arrival.time} the next day (Day ${arrival.day_number}).`
+            : `"${act.activity_name}" is on ${dayLabel}, but ${arrival.title || "your flight"} only lands on Day ${arrival.day_number} at ${arrival.time}.`,
+          action: `Move "${act.activity_name}" to Day ${arrival.day_number} after landing, or later.`,
+        });
+      }
+    }
+    // On the landing day itself, nothing can start before landing, and the first
+    // activity needs time to clear the airport.
     if (arrival && arrival.day_number === day.day_number && isValidClockTime(arrival.time)) {
       const landing = toMinutes(arrival.time);
       const international = arrival.flight_type === "international";
@@ -414,7 +433,7 @@ export const FALLBACK_RULES: FeasibilityRule[] = [
     rule_code: "R12",
     rule_name: "Activity Transfer Time",
     rule_description:
-      "Each activity line shows a start_time, duration_hours and address. For each consecutive pair of activities on the same day, use the gap given on the first activity's line (\"N min until the next activity\" — never work it out yourself), and estimate a realistic door-to-door travel time between the two addresses by taxi or public transport (most trips within one city take 10–40 minutes; allow up to 60 minutes across a large, congested city). Flag a HARD ERROR if the gap is shorter than your estimated travel time. Do not flag pairs at the same venue, next door, or in the same neighbourhood. Use error_code \"SHORT_TRANSFER_ACTIVITY\", rule \"R12 – Activity Transfer Time\", and word it as: message \"Not enough time to get from \\\"<first activity>\\\" to \\\"<second activity>\\\": <gap> min between them, but the trip takes about <estimate> min.\", action \"Leave at least <estimate> min between them, or swap one for something closer.\"",
+      "Each activity line shows a start_time, duration_hours and address. For each consecutive pair of activities on the same day, use the gap given on the first activity's line (\"N min until the next activity\" — never work it out yourself), and estimate a realistic door-to-door travel time between the two addresses by taxi or public transport (most trips within one city take 10–40 minutes; allow up to 60 minutes across a large, congested city). Flag a SOFT WARNING if the gap is shorter than your estimated travel time (travel time between catalog activities is also calculated separately from their coordinates). Do not flag pairs at the same venue, next door, or in the same neighbourhood. Use error_code \"SHORT_TRANSFER_ACTIVITY\", rule \"R12 – Activity Transfer Time\", and word it as: message \"Not enough time to get from \\\"<first activity>\\\" to \\\"<second activity>\\\": <gap> min between them, but the trip takes about <estimate> min.\", action \"Leave at least <estimate> min between them, or swap one for something closer.\"",
   },
   {
     rule_code: "R14",
@@ -499,7 +518,7 @@ start time at all) under any rule, including general judgment calls. That is alr
 deterministically as a hard error (error_code "INVALID_START_TIME") and always runs whether or not
 you also flag it — flagging it yourself only ever produces a duplicate of that same finding.
 
-Hard-error rules: R3 (Opening Hours), R4 (Day Closure) and R12 (Activity Transfer Time) are hard error rules — a problem they find always goes in hard_errors with severity "error", whatever a rule's own wording says about severity.
+Hard-error rules: R3 (Opening Hours) and R4 (Day Closure) are hard error rules — a problem they find always goes in hard_errors with severity "error", whatever a rule's own wording says about severity. R12 (Activity Transfer Time) is a soft warning: travel time between catalog activities is calculated separately from their coordinates.
 Only flag something as a hard error (severity "error") if the rule below explicitly says to. For
 every other contextual rule, always use a soft warning (severity "warning") — these are judgment
 calls a creator may reasonably disagree with or intend on purpose, so none of them should block
@@ -603,7 +622,9 @@ export function buildUserPrompt(pkg: any, days: any[]): string {
       const slot = timed.findIndex((t: any) => t.act === act);
       const timing = slot === -1 ? "" : ` | ends ${minutesToTime(timed[slot].end)}` + (
         timed[slot + 1] ? ` | ${timed[slot + 1].start - timed[slot].end} min until the next activity` : "");
-      const desc = act.description ? ` | desc: ${act.description.slice(0, 60)}` : "";
+      // The whole description (notes are capped at 500 characters in the editor): cut
+      // short, the AI flagged it as incomplete and marked the writing score down.
+      const desc = act.description ? ` | desc: ${String(act.description).replace(/\s+/g, " ").trim()}` : "";
       const startTime = act.start_time ? ` @${act.start_time}` : "";
       const address = act.address ? ` | @ ${act.address}` : "";
       const source = act.source === "creator" ? "[creator pick] " : act.source === "catalog" ? "[catalog] " : "";

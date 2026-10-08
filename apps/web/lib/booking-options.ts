@@ -15,6 +15,9 @@ export type CatalogHotel = {
   star_rating: number | null;
   room_type: string | null;
   city: string | null;
+  country?: string | null;
+  address?: string | null;
+  amenities?: string | null;
   price_per_night_aud: number | null;
 };
 
@@ -48,6 +51,35 @@ export function pickFlightLegs<T extends PackageFlight>(flights: T[] | null | un
   const lastDate = last.departure_datetime?.slice(0, 10);
   const isReturn = outDate && lastDate ? lastDate > outDate : (last.day_number ?? 0) > (outbound.day_number ?? 0);
   return { outbound, returnLeg: isReturn ? last : null };
+}
+
+export function dedupeCatalogHotels(hotels: CatalogHotel[]): CatalogHotel[] {
+  const seen = new Set<string>();
+  return hotels.filter((hotel) => {
+    const key = `${hotel.hotel_name ?? ""}|${hotel.room_type ?? ""}|${hotel.price_per_night_aud ?? ""}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+export function visibleCatalogHotels(hotels: CatalogHotel[], expanded: boolean, selectedId?: string): CatalogHotel[] {
+  if (expanded || hotels.length <= 6) return hotels;
+  const visible = hotels.slice(0, 6);
+  const selected = selectedId ? hotels.find((hotel) => hotel.hotel_id === selectedId) : null;
+  return selected && !visible.includes(selected) ? [...visible.slice(0, 5), selected] : visible;
+}
+
+export function bookingOptionId(
+  catalogId: string | null | undefined,
+  componentId: string | null | undefined,
+  fallback: string,
+): string {
+  return catalogId || componentId || fallback;
+}
+
+export function estimateHotelStayTotal(nightlyPrice: number | null, nights: number): number | null {
+  return nightlyPrice == null ? null : nightlyPrice * nights;
 }
 
 /** Catalog flights departing on `date` (YYYY-MM-DD). */
@@ -89,4 +121,23 @@ export function estimateBookingTotal(opts: {
 }): number | null {
   if (opts.basePrice == null) return null;
   return opts.basePrice * opts.travelers + opts.flightDelta * opts.travelers + opts.hotelNightlyDelta * opts.nights;
+}
+
+export function canRequestBooking(summary: {
+  departure: string;
+  estimateTotal: number | null;
+  outboundRequired: boolean;
+  outboundId: string;
+  returnRequired: boolean;
+  returnId: string;
+  hotelRequired: boolean;
+  hotelId: string;
+}): boolean {
+  return Boolean(
+    summary.departure
+    && summary.estimateTotal !== null
+    && (!summary.outboundRequired || summary.outboundId)
+    && (!summary.returnRequired || summary.returnId)
+    && (!summary.hotelRequired || summary.hotelId),
+  );
 }

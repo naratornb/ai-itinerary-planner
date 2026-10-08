@@ -93,3 +93,88 @@ test("pickFlightLegs splits outbound and return legs", () => {
   const noDay = leg(null, "2026-03-19T11:00:00Z", "ret");
   assert.deepEqual(pickFlightLegs([out, noDay]), { outbound: out, returnLeg: noDay });
 });
+
+test("booking requests unlock only after every required summary choice is ready", async () => {
+  const bookingOptions = await import("./booking-options");
+  const canRequestBooking = (bookingOptions as Record<string, unknown>).canRequestBooking;
+
+  assert.equal(typeof canRequestBooking, "function");
+  if (typeof canRequestBooking !== "function") return;
+
+  const ready = {
+    departure: "2027-04-09",
+    estimateTotal: 4510,
+    outboundRequired: true,
+    outboundId: "KE188-out",
+    returnRequired: true,
+    returnId: "KE188-return",
+    hotelRequired: true,
+    hotelId: "marriott-paris",
+  };
+
+  assert.equal(canRequestBooking(ready), true);
+  assert.equal(canRequestBooking({ ...ready, estimateTotal: null }), false);
+  assert.equal(canRequestBooking({ ...ready, outboundId: "" }), false);
+  assert.equal(canRequestBooking({ ...ready, returnId: "" }), false);
+  assert.equal(canRequestBooking({ ...ready, hotelId: "" }), false);
+  assert.equal(canRequestBooking({ ...ready, returnRequired: false, returnId: "" }), true);
+});
+
+test("duplicate hotel rows do not overwhelm the stay picker", async () => {
+  const bookingOptions = await import("./booking-options");
+  const dedupeCatalogHotels = (bookingOptions as Record<string, unknown>).dedupeCatalogHotels;
+
+  assert.equal(typeof dedupeCatalogHotels, "function");
+  if (typeof dedupeCatalogHotels !== "function") return;
+
+  const hotels = [
+    { hotel_id: "a", hotel_name: "Marriott Paris", room_type: "Standard Double", price_per_night_aud: 824, star_rating: 4.9, city: "Paris" },
+    { hotel_id: "b", hotel_name: "Marriott Paris", room_type: "Standard Double", price_per_night_aud: 824, star_rating: 4.9, city: "Paris" },
+    { hotel_id: "c", hotel_name: "Marriott Paris", room_type: "Twin Room", price_per_night_aud: 824, star_rating: 4.9, city: "Paris" },
+  ];
+
+  assert.deepEqual(
+    (dedupeCatalogHotels(hotels) as typeof hotels).map((hotel) => hotel.hotel_id),
+    ["a", "c"],
+  );
+});
+
+test("the stay picker reveals a short list before the traveler asks for more", async () => {
+  const bookingOptions = await import("./booking-options");
+  const visibleCatalogHotels = (bookingOptions as Record<string, unknown>).visibleCatalogHotels;
+
+  assert.equal(typeof visibleCatalogHotels, "function");
+  if (typeof visibleCatalogHotels !== "function") return;
+
+  const hotels = Array.from({ length: 8 }, (_, index) => ({ hotel_id: String(index + 1) }));
+  assert.deepEqual((visibleCatalogHotels(hotels, false) as typeof hotels).map((hotel) => hotel.hotel_id), ["1", "2", "3", "4", "5", "6"]);
+  assert.equal((visibleCatalogHotels(hotels, true) as typeof hotels).length, 8);
+  assert.deepEqual(
+    (visibleCatalogHotels(hotels, false, "8") as typeof hotels).map((hotel) => hotel.hotel_id),
+    ["1", "2", "3", "4", "5", "8"],
+  );
+});
+
+test("curated booking choices get stable IDs when catalog IDs are missing", async () => {
+  const bookingOptions = await import("./booking-options");
+  const bookingOptionId = (bookingOptions as Record<string, unknown>).bookingOptionId;
+
+  assert.equal(typeof bookingOptionId, "function");
+  if (typeof bookingOptionId !== "function") return;
+
+  assert.equal(bookingOptionId("catalog-id", "component-id", "fallback-id"), "catalog-id");
+  assert.equal(bookingOptionId(null, "component-id", "fallback-id"), "component-id");
+  assert.equal(bookingOptionId(null, null, "fallback-id"), "fallback-id");
+});
+
+test("hotel stay total uses the nightly price and actual night count", async () => {
+  const bookingOptions = await import("./booking-options");
+  const estimateHotelStayTotal = (bookingOptions as Record<string, unknown>).estimateHotelStayTotal;
+
+  assert.equal(typeof estimateHotelStayTotal, "function");
+  if (typeof estimateHotelStayTotal !== "function") return;
+
+  assert.equal(estimateHotelStayTotal(824, 4), 3296);
+  assert.equal(estimateHotelStayTotal(null, 4), null);
+  assert.equal(estimateHotelStayTotal(824, 0), 0);
+});

@@ -20,3 +20,8 @@ export function creatorPackageRoute(packageId: string, status: string): string {
   if (status === "approved") return `/packages/preview/${encodedId}`;
   return `/packages/editor/${encodedId}`;
 }
+
+export function creatorPackageShareRoute(packageId: string, status: string): string | null {
+  if (status !== "live") return null;
+  return `/marketplace/packages/${encodeURIComponent(packageId)}`;
+}
