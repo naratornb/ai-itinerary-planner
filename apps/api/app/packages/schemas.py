@@ -110,6 +110,7 @@ class ActivityInput(BaseModel):
     start_time: str | None = Field(default=None, pattern=_TIME_RE.pattern)
     duration_hours: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     price_aud: int | None = Field(default=None, ge=0)
+    item_type: Literal["activity", "creator_pick"] | None = None
     category: str | None = None
     address: str | None = None
     notes: str | None = None
@@ -287,6 +288,7 @@ class ActivityDetailOut(BaseModel):
     start_time: str | None = None
     duration_hours: float | None = None
     price_aud: int | None = None
+    item_type: Literal["activity", "creator_pick"] | None = None
     category: str | None = None
     address: str | None = None
     notes: str | None = None

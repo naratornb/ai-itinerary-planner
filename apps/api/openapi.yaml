@@ -40,7 +40,7 @@ info:
     Error responses use `ErrorResponse`, except user-management upstream failures, which return an `error` string.
     All monetary values are stored and returned as **whole AUD dollars** (integer), matching the database columns.
 
-  version: "2.5.0"
+  version: "2.6.0"
   license:
     name: Academic Use Only
 
@@ -1000,6 +1000,12 @@ components:
           nullable: true
           description: Per-person activity price in whole AUD dollars.
           example: 120
+        item_type:
+          type: string
+          nullable: true
+          description: Component kind — `activity` (default) or `creator_pick` for a creator's own non-bookable recommendation.
+          enum: [activity, creator_pick]
+          example: "creator_pick"
         category:
           type: string
           nullable: true

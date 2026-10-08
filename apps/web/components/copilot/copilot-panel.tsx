@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 
 import type { CopilotClient, CopilotSuggestionV1 } from "../../lib/copilot";
 import { useCopilot } from "./use-copilot";
+import AiDisclaimer from "../ai-disclaimer";
 
 type CopilotPanelProps = {
   client: CopilotClient;
@@ -37,6 +38,9 @@ export default function CopilotPanel({ client, city, dayLabel, onAddSuggestion, 
   const [input, setInput] = useState("");
   const [addedSuggestionIds, setAddedSuggestionIds] = useState<string[]>([]);
   const [dismissedIds, setDismissedIds] = useState<string[]>([]);
+  // `addedSuggestionIds` re-renders too late to stop a second click inside the
+  // same frame, which would insert two copies of the suggestion on the day.
+  const addedRef = useRef(new Set<string>());
   const { messages, loading, requestError, send } = useCopilot(client);
 
   const submit = (event: FormEvent) => {
@@ -48,7 +52,8 @@ export default function CopilotPanel({ client, city, dayLabel, onAddSuggestion, 
   };
 
   const addSuggestion = (suggestion: CopilotSuggestionV1, turnId?: string) => {
-    if (addedSuggestionIds.includes(suggestion.item_id)) return;
+    if (addedRef.current.has(suggestion.item_id)) return;
+    addedRef.current.add(suggestion.item_id);
     onAddSuggestion(suggestion);
     setAddedSuggestionIds((current) => [...current, suggestion.item_id]);
     if (turnId) {
@@ -196,6 +201,7 @@ export default function CopilotPanel({ client, city, dayLabel, onAddSuggestion, 
           <button type="submit" disabled={!input.trim() || loading}>Send</button>
         </div>
       </form>
+      <AiDisclaimer style={{ margin: "0 16px 12px", textAlign: "center" }} />
     </section>
     </>
   );

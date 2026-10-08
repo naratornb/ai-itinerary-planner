@@ -19,6 +19,7 @@ import {
 } from "../lib/creator-api";
 import {
   fetchMarketplacePackages,
+  reusableSearchResults,
   searchMarketplacePackages,
   uniqueDestinationSuggestions,
   type MarketplacePackageSummary,
@@ -33,6 +34,7 @@ import { VIBES } from "../lib/vibes";
 import { supabase } from "../lib/supabase/client";
 import { creatorPackageRoute, creatorPackageShareRoute } from "../lib/routes";
 import { creatorDashboardBackLink, dashboardActionAlignment } from "./navigation-model";
+import AiDisclaimer from "./ai-disclaimer";
 const creatorBannerImg = "/creator-banner.png";
 
 
@@ -71,6 +73,7 @@ const C = {
   successBg:     "#ECFDF5",
   warning:       "#A45B00",
   warningBg:     "#FFF8EC",
+  dangerBg:      "#FEE2E2",   // --fc-danger-subtle
   focusRing:     "rgba(0,114,234,0.35)",
   shadowCard:    "0 1px 3px rgba(33,33,33,0.07)",
   shadowRaised:  "0 2px 8px rgba(33,33,33,0.09)",
@@ -185,16 +188,6 @@ const navItemBase: React.CSSProperties = {
   gap: 8,
 };
 
-function MarketplaceControl({ children, onClick }: { children: React.ReactNode; onClick?: () => void }) {
-  const [hov, setHov] = useState(false);
-  return (
-    <button onClick={onClick} onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)}
-      style={{ ...navItemBase, background: hov ? "rgba(0,0,0,0.08)" : "none" }}>
-      {children}
-    </button>
-  );
-}
-
 function MarketplaceNavItem({ children, onClick, active }: { children: React.ReactNode; onClick?: () => void; active?: boolean }) {
   const [hov, setHov] = useState(false);
   return (
@@ -291,20 +284,6 @@ export function TopNav({ screen, onNav }: { screen: Screen; onNav: (s: Screen) =
 
           {/* Utilities */}
           <div style={{ display: "flex", alignItems: "center", marginLeft: "auto" }}>
-            <MarketplaceControl>
-              {/* phone/tablet icon */}
-              <svg style={{ display: "inline-grid", width: 20, height: 20, placeItems: "center", flexShrink: 0 }}
-                viewBox="0 0 24 24" fill="currentColor">
-                <path d="M17 1.01L7 1c-1.1 0-2 .9-2 2v18c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V3c0-1.1-.9-1.99-2-1.99zM17 19H7V5h10v14z"/>
-              </svg>
-              Get the app
-            </MarketplaceControl>
-            <MarketplaceControl>Get a Quote</MarketplaceControl>
-            <MarketplaceControl>
-              Help
-              <Chevron />
-            </MarketplaceControl>
-
             <div style={{ position: "relative" }}>
               <button
                 onClick={() => marketplaceSession ? setAccountOpen((open) => !open) : onNav("login")}
@@ -458,16 +437,7 @@ export function TopNav({ screen, onNav }: { screen: Screen; onNav: (s: Screen) =
           </nav>
 
           {/* Contact */}
-          <div style={{ display: "flex", alignItems: "center", marginLeft: "auto" }}>
-            <MarketplaceNavItem onClick={() => {}}>Stores</MarketplaceNavItem>
-            <MarketplaceNavItem onClick={() => {}}>
-              <svg style={{ display: "inline-grid", width: 20, height: 20, placeItems: "center", flexShrink: 0 }}
-                viewBox="0 0 24 24" fill="currentColor">
-                <path d="M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z"/>
-              </svg>
-              1300 859 334
-            </MarketplaceNavItem>
-          </div>
+          <div style={{ display: "flex", alignItems: "center", marginLeft: "auto" }} />
         </div>
       </div>
     </header>
@@ -546,7 +516,6 @@ export function LoginScreen({ onNav }: { onNav: (s: Screen) => void }) {
               onChange={(event) => setPassword(event.target.value)}
               autoComplete="current-password"
               required
-              minLength={8}
               style={{
                 width: "100%", boxSizing: "border-box",
                 height: 52, padding: "0 14px",
@@ -581,51 +550,14 @@ export function LoginScreen({ onNav }: { onNav: (s: Screen) => void }) {
           >{isSubmitting ? "Signing in…" : "Sign in"}</button>
         </form>
 
-        {/* OR divider */}
-        <div style={{ display: "flex", alignItems: "center", gap: 12, margin: "20px 0" }}>
-          <div style={{ flex: 1, height: 1, background: C.border }} />
-          <span style={{ fontSize: 13, color: C.secondary }}>OR</span>
-          <div style={{ flex: 1, height: 1, background: C.border }} />
-        </div>
-
-        {/* Social buttons */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {/* Google */}
-          <button style={{
-            display: "flex", alignItems: "center", gap: 14,
-            height: 48, padding: "0 18px",
-            background: C.white, border: `1px solid ${C.border}`, borderRadius: 6,
-            fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 500, color: C.ink,
-            cursor: "pointer",
-          }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = C.subtle; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = C.white; }}
-          >
-            <svg width="20" height="20" viewBox="0 0 18 18" fill="none">
-              <path d="M17.1 9.2c0-.6-.05-1.18-.14-1.74H9v3.3h4.56a3.9 3.9 0 01-1.69 2.56v2.13h2.74C16.3 13.95 17.1 11.77 17.1 9.2z" fill="#4285F4"/>
-              <path d="M9 18c2.29 0 4.21-.76 5.61-2.05l-2.74-2.13c-.76.51-1.73.81-2.87.81-2.2 0-4.07-1.49-4.73-3.49H1.45v2.2A8.99 8.99 0 009 18z" fill="#34A853"/>
-              <path d="M4.27 11.14A5.4 5.4 0 013.98 9c0-.74.13-1.46.29-2.14V4.66H1.45A9 9 0 000 9c0 1.45.35 2.82.96 4.04l2.93-1.9z" fill="#FBBC05"/>
-              <path d="M9 3.58c1.25 0 2.37.43 3.25 1.27l2.43-2.43A8.84 8.84 0 009 0 8.99 8.99 0 001.45 4.66l2.82 2.2C4.93 5.06 6.8 3.58 9 3.58z" fill="#EA4335"/>
-            </svg>
-            Continue with Google
-          </button>
-
-          {/* Facebook */}
-          <button style={{
-            display: "flex", alignItems: "center", gap: 14,
-            height: 48, padding: "0 18px",
-            background: C.white, border: `1px solid ${C.border}`, borderRadius: 6,
-            fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 500, color: C.ink,
-            cursor: "pointer",
-          }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = C.subtle; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = C.white; }}
-          >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="#1877F2">
-              <path d="M24 12.073C24 5.405 18.627 0 12 0S0 5.405 0 12.073C0 18.1 4.388 23.094 10.125 24v-8.437H7.078v-3.49h3.047V9.413c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.234 2.686.234v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.49h-2.796V24C19.612 23.094 24 18.1 24 12.073z"/>
-            </svg>
-            Continue with Facebook
-          </button>
+        {/* Secondary actions */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", margin: "16px 0 0" }}>
+          <Link href="/forgot-password" style={{ fontSize: 13, color: C.blue, textDecoration: "none", fontFamily: "var(--fc-font-body)" }}>
+            Forgot password?
+          </Link>
+          <Link href="/register" style={{ fontSize: 13, color: C.blue, textDecoration: "none", fontFamily: "var(--fc-font-body)" }}>
+            Create account
+          </Link>
         </div>
 
         {/* Partner logos */}
@@ -634,11 +566,6 @@ export function LoginScreen({ onNav }: { onNav: (s: Screen) => void }) {
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", lineHeight: 1 }}>
             <span style={{ fontSize: 8, color: "#00AACC", fontWeight: 700, letterSpacing: "0.05em" }}>cruise</span>
             <span style={{ fontSize: 10, color: "#00AACC", fontWeight: 700 }}>about</span>
-          </div>
-          {/* Travel Marketplace text logo */}
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", lineHeight: 1 }}>
-            <span style={{ fontSize: 9, fontWeight: 900, color: C.red, letterSpacing: "0.04em" }}>FLIGHT</span>
-            <span style={{ fontSize: 9, fontWeight: 900, color: C.red, letterSpacing: "0.04em" }}>CENTRE</span>
           </div>
           {/* Travel Associates */}
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", lineHeight: 1 }}>
@@ -693,6 +620,9 @@ export function MarketplaceScreen() {
   const [packages, setPackages] = useState<MarketplacePackageSummary[]>([]);
   const [allPackages, setAllPackages] = useState<MarketplacePackageSummary[]>([]);
   const [liveResults, setLiveResults] = useState<MarketplacePackageSummary[]>([]);
+  // Which query liveResults belongs to — results fetched for an earlier
+  // keystroke must never be served under the current text (see submitSearch).
+  const [liveQuery, setLiveQuery] = useState("");
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -771,6 +701,7 @@ export function MarketplaceScreen() {
         const data = await searchMarketplacePackages(fetch, MARKETPLACE_API_URL, query);
         if (!active) return;
         setLiveResults(data);
+        setLiveQuery(query);
         setSuggestions(uniqueDestinationSuggestions(data));
         setShowSuggestions(true);
       } catch {
@@ -794,8 +725,8 @@ export function MarketplaceScreen() {
     setLoading(true);
     setError("");
     try {
-      const data = query === search && liveResults.length ? liveResults
-        : await searchMarketplacePackages(fetch, MARKETPLACE_API_URL, trimmed);
+      const data = reusableSearchResults(trimmed, liveQuery, liveResults)
+        ?? await searchMarketplacePackages(fetch, MARKETPLACE_API_URL, trimmed);
       setPackages(data);
     } catch (searchError) {
       setError(searchError instanceof Error ? searchError.message : "Unable to search marketplace packages.");
@@ -909,27 +840,11 @@ export function MarketplaceScreen() {
               )}
             </div>
 
-            {/* Row 2: filters + search button */}
+            {/* Row 2: search button */}
             <div style={{
-              display: "flex", alignItems: "center", justifyContent: "space-between",
+              display: "flex", alignItems: "center", justifyContent: "flex-end",
               paddingBottom: 24,
             }}>
-              <div style={{ display: "flex", gap: 4 }}>
-                {["All departure dates", "All trip types"].map((label) => (
-                  <button key={label} type="button" style={{
-                    display: "inline-flex", alignItems: "center", gap: 6,
-                    background: "none", border: "none", cursor: "pointer",
-                    fontFamily: "var(--fc-font-body)", fontSize: 15, fontWeight: 500,
-                    color: C.ink, padding: "8px 12px",
-                    textDecoration: "underline", textUnderlineOffset: 3,
-                  }}>
-                    {label}
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                      <polyline points="6 9 12 15 18 9"/>
-                    </svg>
-                  </button>
-                ))}
-              </div>
               <button
                 type="submit"
                 onMouseEnter={(e) => (e.currentTarget.style.background = C.blueDark)}
@@ -1112,6 +1027,7 @@ export function MarketplaceScreen() {
                 display: "inline-flex", alignItems: "center", gap: 8,
                 marginBottom: 12,
               }}
+                onClick={() => router.push("/register")}
                 onMouseEnter={(e) => { e.currentTarget.style.background = C.blueDark; }}
                 onMouseLeave={(e) => { e.currentTarget.style.background = C.blue; }}
               >
@@ -1149,7 +1065,7 @@ export function MarketplaceScreen() {
               textTransform: "uppercase", color: C.white, margin: "0 0 12px",
             }}>Travel Marketplace</p>
             <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, lineHeight: "20px", color: "rgba(255,255,255,0.5)", margin: 0 }}>
-              Australia&apos;s favourite travel retailer since 1981.
+              Real itineraries from creators who&apos;ve actually been there.
             </p>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: "0 64px" }}>
@@ -1180,7 +1096,7 @@ export function MarketplaceScreen() {
             fontFamily: "var(--fc-font-body)", fontSize: 12, lineHeight: "16px",
             color: "rgba(255,255,255,0.35)", margin: 0,
           }}>
-            © 2026 Travel Marketplace Travel Group Limited. All rights reserved. Prices are per person, land only, subject to availability.
+            © 2026 Travel Marketplace. All rights reserved. Prices are per person, land only, subject to availability.
           </p>
         </div>
       </footer>
@@ -1205,7 +1121,7 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
   const [isPublishing, setIsPublishing] = useState(false);
   const [dashboardNotice, setDashboardNotice] = useState("");
   const publishTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const tabs = ["All", "Approved", "Under review", "Drafts"];
+  const tabs = ["All", "Approved", "Under review", "Rejected", "Drafts"];
 
   useEffect(() => {
     if (!pendingDelete) return;
@@ -1356,11 +1272,12 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
   ];
 
   const cols = {
-    grid: "minmax(0,1.8fr) minmax(140px,1fr) 100px 120px 140px 200px",
+    grid: "minmax(0,1.8fr) minmax(140px,1fr) 110px 90px 110px 130px 200px",
     gap: 24,
     headers: [
       { h: "Package",        align: "left"  },
       { h: "Destination",    align: "left"  },
+      { h: "Created",        align: "left"  },
       { h: "Duration",       align: "right" },
       { h: "Price",          align: "right" },
       { h: "Status",         align: "center" },
@@ -1379,7 +1296,7 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
               Creator dashboard
             </h1>
             <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, color: C.secondary, margin: 0 }}>
-              Manage your packages, bookings and earnings.
+              Manage your packages and track their review status.
             </p>
           </div>
           <BtnPrimary onClick={() => _onNav("builder")}>
@@ -1395,10 +1312,7 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
           {stats.map(({ label, value, sub }) => (
             <div key={label} style={{
               background: C.white,
-              borderTop: `1px solid ${C.border}`,
-              borderRight: `1px solid ${C.border}`,
-              borderBottom: `1px solid ${C.border}`,
-              borderLeft: `1px solid ${C.border}`,
+              border: `1px solid ${C.border}`,
               borderRadius: C.radiusMd,
               padding: "24px 24px 20px",
               boxShadow: C.shadowCard,
@@ -1420,7 +1334,7 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
         </div>
 
         {/* Packages table */}
-        <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 6, overflow: "hidden" }}>
+        <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 6, overflowX: "auto", overflowY: "hidden" }}>
 
           {/* Table toolbar */}
           {/* Toolbar: search + filter tabs */}
@@ -1435,9 +1349,10 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
                 value={searchQ}
                 onChange={(e) => setSearchQ(e.target.value)}
                 placeholder="Search packages..."
+                aria-label="Search packages"
                 style={{
                   width: "100%", boxSizing: "border-box",
-                  height: 42, paddingLeft: 38, paddingRight: 14,
+                  height: 42, paddingLeft: 38, paddingRight: 36,
                   fontFamily: "var(--fc-font-body)", fontSize: 14, color: C.ink,
                   background: C.white, border: `1px solid ${C.border}`,
                   borderRadius: 6, outline: "none",
@@ -1445,6 +1360,12 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
                 onFocus={(e) => { e.currentTarget.style.borderColor = "#9E9E9E"; }}
                 onBlur={(e) => { e.currentTarget.style.borderColor = C.border; }}
               />
+              {searchQ && (
+                <button type="button" aria-label="Clear package search" onClick={() => setSearchQ("")}
+                  style={{ position: "absolute", right: 4, top: "50%", transform: "translateY(-50%)", width: 34, height: 34, display: "grid", placeItems: "center", border: 0, background: "transparent", color: C.secondary, cursor: "pointer" }}>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M6 6l12 12M18 6 6 18" /></svg>
+                </button>
+              )}
             </div>
 
             {/* Spacer */}
@@ -1470,6 +1391,9 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
               })}
             </div>
           </div>
+
+          {/* Scrollable table body — min-width keeps Status/Actions reachable on narrow viewports */}
+          <div style={{ minWidth: 1020 }}>
 
           {/* Column headers */}
           <div style={{ display: "grid", gridTemplateColumns: cols.grid, columnGap: cols.gap, padding: "14px 28px", background: "#FAFAFA", borderBottom: `1px solid ${C.border}` }}>
@@ -1499,18 +1423,27 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
               <p style={{ margin: 0, color: C.secondary, fontSize: 14 }}>
                 {packages.length === 0 ? "Create your first package to get started." : "Try a different search or status."}
               </p>
+              {packages.length > 0 && (
+                <div style={{ marginTop: 16 }}>
+                  <BtnSecondary onClick={() => { setSearchQ(""); setActiveTab("All"); }}>
+                    Clear filters
+                  </BtnSecondary>
+                </div>
+              )}
             </div>
           ) : null}
 
           {/* Rows */}
           {filtered.map((pkg, i) => {
-            const hov = hovRow === pkg.name;
+            const hov = hovRow === pkg.id;
             const packageHref = creatorPackageRoute(pkg.id, pkg.statusKey);
             const statusStyle = pkg.statusKey === "live" || pkg.statusKey === "approved"
               ? { color: C.success, background: C.successBg }
               : pkg.statusKey === "pending_review"
                 ? { color: C.warning, background: C.warningBg }
-                : { color: C.secondary, background: C.subtle };
+                : pkg.statusKey === "rejected"
+                  ? { color: C.red, background: C.dangerBg }
+                  : { color: C.secondary, background: C.subtle };
             return (
               <div key={pkg.id}
                 style={{
@@ -1520,7 +1453,7 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
                   background: hov ? "#FAFAFA" : "transparent",
                   transition: "background 120ms",
                 }}
-                onMouseEnter={() => setHovRow(pkg.name)}
+                onMouseEnter={() => setHovRow(pkg.id)}
                 onMouseLeave={() => setHovRow(null)}
               >
                 {/* Package name */}
@@ -1539,6 +1472,10 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
 
                 <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, color: C.secondary, margin: 0 }}>
                   {pkg.destination}
+                </p>
+
+                <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, color: C.secondary, margin: 0, whiteSpace: "nowrap" }}>
+                  {pkg.created}
                 </p>
 
                 <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, color: C.ink, margin: 0, textAlign: "right" }}>
@@ -1607,6 +1544,7 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
               </div>
             );
           })}
+          </div>
         </div>
 
       </div>
@@ -1714,15 +1652,6 @@ export function CreatorNav({ onNav }: { onNav: (s: Screen) => void }) {
           </div>
 
           <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-            <MarketplaceControl>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="12" cy="12" r="10"/>
-                <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
-                <line x1="12" y1="17" x2="12.01" y2="17"/>
-              </svg>
-              Help
-            </MarketplaceControl>
-
             {/* Profile pill */}
             <div style={{ position: "relative" }}>
               <button
@@ -1768,7 +1697,6 @@ export function CreatorNav({ onNav }: { onNav: (s: Screen) => void }) {
                 }}>
                   {[
                     { label: "View Travel Marketplace", action: () => { onNav("marketplace"); setProfileOpen(false); } },
-                    { label: "Account settings",   action: () => setProfileOpen(false) },
                     { label: "Log out",            action: handleLogOut },
                   ].map(({ label, action }) => (
                     <button key={label} onClick={action} style={{
@@ -2457,6 +2385,7 @@ function PackageGenerationLoader({ elapsedMs, complete }: { elapsedMs: number; c
           </div>
           <span style={{ minWidth: 36, textAlign: "right", fontFamily: "var(--fc-font-body)", fontSize: 13, lineHeight: "18px", fontWeight: 600, fontVariantNumeric: "tabular-nums", color: C.secondary }}>{generationProgressLabel(progress)}</span>
         </div>
+        <AiDisclaimer style={{ marginTop: 16, textAlign: "center" }} />
       </div>
     </div>
   );
@@ -2483,6 +2412,9 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
   const inFlightSetupRef = useRef<string | null>(null);
   const [createError, setCreateError] = useState("");
   const [manualCreating, setManualCreating] = useState(false);
+  // `manualCreating` state re-renders too late to stop a second click inside
+  // the same frame, which would create a duplicate orphan draft package.
+  const manualCreatingRef = useRef(false);
 
   // Manual builds skip AI generation entirely, so they never enter the
   // full-screen generation step — creation happens inline on the last step.
@@ -2636,6 +2568,8 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
   // Manual builds skip AI drafting — create the package directly and go
   // straight to the editor, no fake generation screen.
   const createManualPackage = async (seasonOverride: string | null = season) => {
+    if (manualCreatingRef.current) return;
+    manualCreatingRef.current = true;
     setCreateError("");
     setManualCreating(true);
     try {
@@ -2656,6 +2590,7 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
     } catch (error) {
       setCreateError(error instanceof Error ? error.message : "Unable to create this package.");
     } finally {
+      manualCreatingRef.current = false;
       setManualCreating(false);
     }
   };

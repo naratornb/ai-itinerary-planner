@@ -3,10 +3,13 @@ import test from "node:test";
 
 import {
   dateAfter,
+  defaultTravelers,
   estimateBookingTotal,
   flightsOn,
   iataPattern,
+  pickFlightLegs,
   type CatalogFlight,
+  type PackageFlight,
 } from "./booking-options";
 
 const flight = (id: string, dt: string, price: number): CatalogFlight => ({
@@ -41,6 +44,16 @@ test("dateAfter shifts a YYYY-MM-DD date, null-safe", () => {
   assert.equal(dateAfter(null, 5), null);
 });
 
+test("defaultTravelers clamps the two-traveler default into the group limit", () => {
+  // Regression: max_group_size=1 left the select showing "1" while state (and
+  // the estimate) stayed at 2 travelers.
+  assert.equal(defaultTravelers(undefined), 2);
+  assert.equal(defaultTravelers(null), 2);
+  assert.equal(defaultTravelers(8), 2);
+  assert.equal(defaultTravelers(1), 1);
+  assert.equal(defaultTravelers(0), 1);
+});
+
 test("estimateBookingTotal applies per-seat flight and per-room hotel deltas", () => {
   // base $9,290 ×2; outbound swap +$4/seat; hotel swap −$581/night ×6 nights
   assert.equal(
@@ -55,6 +68,30 @@ test("estimateBookingTotal applies per-seat flight and per-room hotel deltas", (
     estimateBookingTotal({ basePrice: null, travelers: 2, flightDelta: 0, hotelNightlyDelta: 0, nights: 6 }),
     null,
   );
+});
+
+const leg = (day: number | null, dt: string | null, id = ""): PackageFlight => ({
+  flight_id: id || null,
+  day_number: day,
+  departure_datetime: dt,
+});
+
+test("pickFlightLegs splits outbound and return legs", () => {
+  // Regression: the last leg was always treated as the return, so a two-leg
+  // same-day connection (e.g. SYD→HKG→NRT) showed a "return flight" selector
+  // and charged a return delta for a leg that departs on day 1.
+  const out = leg(1, "2026-03-10T09:00:00Z", "out");
+  const conn = leg(1, "2026-03-10T18:00:00Z", "conn");
+  const ret = leg(10, "2026-03-19T11:00:00Z", "ret");
+
+  assert.deepEqual(pickFlightLegs([out, ret]), { outbound: out, returnLeg: ret });
+  assert.deepEqual(pickFlightLegs([out, conn, ret]), { outbound: out, returnLeg: ret });
+  assert.deepEqual(pickFlightLegs([out, conn]), { outbound: out, returnLeg: null });
+  assert.deepEqual(pickFlightLegs([out]), { outbound: out, returnLeg: null });
+
+  // Datetime fallback when day_number is missing on the later leg.
+  const noDay = leg(null, "2026-03-19T11:00:00Z", "ret");
+  assert.deepEqual(pickFlightLegs([out, noDay]), { outbound: out, returnLeg: noDay });
 });
 
 test("booking requests unlock only after every required summary choice is ready", async () => {
