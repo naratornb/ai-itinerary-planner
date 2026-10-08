@@ -40,7 +40,7 @@ info:
     Error responses use `ErrorResponse`, except user-management upstream failures, which return an `error` string.
     All monetary values are stored and returned as **whole AUD dollars** (integer), matching the database columns.
 
-  version: "2.6.0"
+  version: "2.7.0"
   license:
     name: Academic Use Only
 
@@ -490,6 +490,7 @@ components:
           properties:
             flights:
               type: array
+              description: Optional. Omit or send an empty array for a local travel package without flights.
               items:
                 $ref: '#/components/schemas/FlightInput'
             hotels:
@@ -581,6 +582,7 @@ components:
               type: array
               items:
                 $ref: '#/components/schemas/FlightDetail'
+              description: Empty for a local travel package without flight components.
             hotels:
               type: array
               items:
@@ -2027,6 +2029,8 @@ paths:
       description: |
         Creates a new travel package in `draft` status. The package may include
         initial flights, hotels, and activities, or these can be added later.
+        Flights are optional throughout the review and publication workflow.
+        A package with zero flight components is a local travel package.
 
         The package is not visible in the marketplace until it has been submitted,
         approved, and published.
@@ -2106,6 +2110,7 @@ paths:
       description: |
         Returns the full detail view of a package including all flights, hotels,
         activities, media, and the latest approval record.
+        Local travel packages return `flights: []`.
 
         Influencers may only retrieve their own packages. Admins may retrieve any package.
 
@@ -2262,10 +2267,12 @@ paths:
 
         **Pre-conditions (all must be met or 422 is returned):**
         - Package status is `draft` or `rejected`
-        - Package has at least one flight
         - Package has at least one hotel
         - Package has at least one activity
         - `base_price_aud` > 0
+
+        Flights are optional. A package with zero flight components is a local
+        travel package and follows the same approval and publication workflow.
 
         **Roles:** `influencer` (own packages only)
         **FR:** FR-I-102
@@ -3041,6 +3048,7 @@ paths:
         Returns the complete public view of a package, including all itinerary
         components (flights, hotels, activities) and media. Only packages with
         status `live` are accessible via this endpoint.
+        Local travel packages return `flights: []`.
 
         **Roles:** Public (no authentication required), `customer`
         **FR:** FR-C-100
