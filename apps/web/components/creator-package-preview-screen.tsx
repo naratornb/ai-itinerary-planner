@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { fetchOwnPackage, STATUS_LABELS, type CreatorPackageDetail } from "../lib/creator-api";
+import { creatorPreviewBack } from "../lib/routes";
 import { supabase } from "../lib/supabase/client";
 import { PackageDetailView } from "./marketplace-detail-screen";
 
@@ -38,11 +39,12 @@ export default function CreatorPackagePreviewScreen({ packageId }: { packageId: 
   if (error) return <main className="editor-load-state" role="alert"><h1>Unable to open preview</h1><p>{error}</p></main>;
   if (!pkg) return <main className="editor-load-state" aria-busy="true"><span className="editor-load-spinner" aria-hidden="true" /><p>Loading preview…</p></main>;
 
+  const back = creatorPreviewBack(pkg.package_id, pkg.status);
   return (
     <PackageDetailView
       pkg={pkg}
-      backLabel="Back to dashboard"
-      onBack={() => router.push("/dashboard")}
+      backLabel={back.label}
+      onBack={() => router.push(back.href)}
       previewLabel={`${STATUS_LABELS[pkg.status ?? ""] ?? pkg.status ?? "Approved"} creator preview`}
     />
   );
