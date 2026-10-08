@@ -230,10 +230,19 @@ def test_package_fetch_uses_narrow_select(db):
     package_calls = [c for c in db.calls if c[1] == "travel_packages"]
     assert package_calls
     for _, _, kwargs in package_calls:
-        assert kwargs["params"]["select"] == (
+        select = kwargs["params"]["select"]
+        # Every column must exist: PostgREST rejects the whole request with
+        # 42703 on an unknown one, which fails every co-pilot turn.
+        assert select == (
             "title,destination_city,destination_country,duration_days,"
-            "package_flights(id),package_hotels(id),package_activities(id)"
+            "package_flights(id),package_hotels(id),"
+            "package_activities(day_number,"
+            "name:details->>activity_name,start_time:details->>start_time,"
+            "duration:details->>duration_hours,day:details->>day_number,"
+            "activities(activity_name,duration_hours))"
         )
+        assert "*" not in select
+        assert "details," not in select and "details)" not in select
 
 
 def test_activity_turn_does_not_scan_the_flight_catalog(db):
