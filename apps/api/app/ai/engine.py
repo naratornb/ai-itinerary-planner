@@ -590,6 +590,7 @@ def _hours_to_clock(value: float) -> str:
 
     return f"{hours:02d}:{minutes:02d}"
 
+
 # ============================================================================
 # THEME
 # ============================================================================
@@ -1508,6 +1509,7 @@ def _pick_gateway(
     return city, hours
 
 
+
 def query_inventory(params: dict) -> dict:
 
     flights_df, hotels_df, activities_df = _load_inventory()
@@ -1586,6 +1588,7 @@ def query_inventory(params: dict) -> dict:
                 )
             else:
                 gateway_city = ""
+
 
     # ------------------------------------------------------------
     # RETURN
@@ -1722,6 +1725,7 @@ def query_inventory(params: dict) -> dict:
                 "      gateway: no return within two weeks of the trip; "
                 "leaving the itinerary one-way"
             )
+
 
     # ------------------------------------------------------------
     # INTER-CITY
@@ -1989,6 +1993,7 @@ def query_inventory(params: dict) -> dict:
     # plans against what the traveller experiences rather than UTC.
     _dest_city = destinations[0]
     _origin_city = origin
+
 
     return {
         "outbound_flight_options": _add_local_times(
@@ -4225,6 +4230,7 @@ def _enforce_travel_window(itinerary: dict, params: dict) -> dict:
 
     return itinerary
 
+
 # ============================================================================
 # DETERMINISTIC FALLBACK
 # ============================================================================
@@ -4934,6 +4940,24 @@ Keep prose concise so the complete object fits comfortably in the output.
     itinerary = _enforce_morning_start(itinerary, params)
     itinerary = _enforce_daylight_starts(itinerary, params)
     itinerary = _enforce_title_day_count(itinerary)
+
+    # Deterministic, not written by the model: the frontend needs a reliable
+    # signal for "there is no flight here" so it can say so to the user.
+    itinerary["flight_availability"] = inventory.get(
+        "flight_availability",
+        {
+            "outbound_available": False,
+            "return_available": False,
+            "requested_city": "",
+            "outbound_via": None,
+            "return_via": None,
+            "message": "",
+        },
+    )
+
+    # Correct the schedule against real local flight times. After validation,
+    # so flight fields hold inventory values rather than the model's.
+    itinerary = _enforce_travel_window(itinerary, params)
 
     # Deterministic, not written by the model: the frontend needs a reliable
     # signal for "there is no flight here" so it can say so to the user.
