@@ -10,21 +10,29 @@
 
 import { NextRequest, NextResponse } from "next/server";
 
+import { guardAiRequest, readBoundedJson, sanitizeText } from "../../../../lib/ai-route-guard";
+
 const NEXT_PUBLIC_API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const TIMEOUT_MS = 120_000;
+const RATE_LIMIT = { max: 5, windowMs: 60_000 };
+const MAX_BODY_BYTES = 8 * 1024;
 
 export async function POST(request: NextRequest) {
-  let body: { query?: string; origin_city?: string };
+  const guard = await guardAiRequest(request, "recommend", RATE_LIMIT);
+  if ("response" in guard) return guard.response;
 
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "invalid_json" }, { status: 400 });
-  }
+  const parsed = await readBoundedJson(request, MAX_BODY_BYTES);
+  if ("response" in parsed) return parsed.response;
+  const body = (parsed.body && typeof parsed.body === "object" ? parsed.body : {}) as {
+    query?: unknown;
+    origin_city?: unknown;
+  };
 
-  if (!body.query?.trim()) {
+  const query = sanitizeText(body.query, 1000);
+  if (!query) {
     return NextResponse.json({ error: "missing_query" }, { status: 400 });
   }
+  const originCity = sanitizeText(body.origin_city, 80) || "Sydney";
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
@@ -34,8 +42,8 @@ export async function POST(request: NextRequest) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        query: body.query,
-        origin_city: body.origin_city ?? "Sydney",
+        query,
+        origin_city: originCity,
       }),
       signal: controller.signal,
     });

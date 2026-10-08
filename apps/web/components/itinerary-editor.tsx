@@ -1306,9 +1306,15 @@ export default function ItineraryEditor({
     // while a re-check is in flight — only replace it once fresh data lands.
     setFeasLoading(true);
     try {
+      const token = await accessToken();
+      if (!token) {
+        onSessionExpired();
+        showNotice("Your session expired. Please sign in again.");
+        return;
+      }
       const res = await fetch("/api/ai/validate", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify(buildValidationPayload()),
       });
       if (res.ok) {
@@ -1643,9 +1649,15 @@ export default function ItineraryEditor({
         .filter((item) => item.type !== "FLIGHT" && item.type !== "HOTEL")
         .map((item) => (item.notes ? `${item.title} (${item.notes})` : item.title));
 
+      const token = await accessToken();
+      if (!token) {
+        onSessionExpired();
+        showNotice("Your session expired. Please sign in again.");
+        return;
+      }
       const response = await fetch("/api/ai/generate-content", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({
           packageTitle,
           destination: [pkg.destination_city, pkg.destination_country].filter(Boolean).join(", "),
@@ -1656,12 +1668,12 @@ export default function ItineraryEditor({
           vibe: days[activeDay]?.meta || "",
         }),
       });
-      const data = (await response.json()) as { listing?: string; error?: string };
+      const data = (await response.json()) as { listing?: string; error?: string; message?: string };
       if (data.listing) {
         setStory(data.listing);
         showNotice("Story generated");
       } else {
-        showNotice(data.error || "The story generator returned nothing.");
+        showNotice(data.message || data.error || "The story generator returned nothing.");
       }
     } catch {
       showNotice("Failed to connect to the story generator.");
