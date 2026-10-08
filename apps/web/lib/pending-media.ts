@@ -4,10 +4,10 @@
  * and save this stash is the only record of which day a photo belongs to —
  * without it, a refresh dumps every unsaved upload onto day 1.
  *
- * Read/write through window.sessionStorage in the client component (same
- * split as review-draft.ts: parsing stays pure, storage stays at the edge).
- * Tab-scoped like the other session stashes; stale entries are pruned on
- * load and are inert once a save associates the media_id anyway.
+ * Read/write through window.localStorage in the client component (parsing
+ * stays pure, storage stays at the edge). Device-scoped, so a new tab or
+ * restarted browser still places photos; stale entries are pruned on load
+ * and are inert once a save associates the media_id anyway.
  */
 
 export type PendingMediaDays = Record<string, number>; // media_id -> day_number

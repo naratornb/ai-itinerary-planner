@@ -215,7 +215,7 @@ export function referenceFlightPresentation(item: TimelineItem) {
 // their recorded pending day when one exists (uploaded, then refreshed
 // before saving), else on day 1 as they always have.
 // ponytail: a package_media.day_number column is the real fix; this
-// sessionStorage stash only covers the tab that did the upload.
+// localStorage stash only covers the device that did the upload.
 export function placeUnassociatedMedia(
   days: BuilderDay[],
   media: { media_id: string; url: string; caption?: string | null }[],
@@ -1671,10 +1671,10 @@ export default function ItineraryEditor({
   };
 
   const readPendingDays = (): PendingMediaDays =>
-    parsePendingMediaDays(window.sessionStorage.getItem(pendingMediaStorageKey(pkg.package_id)));
+    parsePendingMediaDays(window.localStorage.getItem(pendingMediaStorageKey(pkg.package_id)));
   const writePendingDays = (next: PendingMediaDays) => {
     try {
-      window.sessionStorage.setItem(pendingMediaStorageKey(pkg.package_id), JSON.stringify(next));
+      window.localStorage.setItem(pendingMediaStorageKey(pkg.package_id), JSON.stringify(next));
     } catch {
       // best-effort only
     }
