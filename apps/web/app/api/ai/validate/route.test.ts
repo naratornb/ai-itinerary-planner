@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { afterEach } from "node:test";
+import { NextRequest } from "next/server";
+
+import { resetRateLimits, setTokenVerifier } from "../../../../lib/ai-route-guard";
 
 import {
   runHardBlockFilters,
@@ -31,6 +34,7 @@ import {
   qualityScore,
   buildAiProfanityIssue,
   withFallbackRules,
+  POST,
 } from "./route";
 
 const NO_WAR_ZONES: string[] = [];
@@ -691,4 +695,34 @@ test("a Daily Range warning about different parts of the same city is dropped", 
   const excursion = { rule: "R10 – Daily Range", message: "A long excursion outside the city alongside two other activities." };
   const other = { rule: "R11 – Seasonality", message: "Rainy season." };
   assert.deepEqual(keepOutOfCityDailyRange([sameCity, dayTrip, otherCity, excursion, other]), [dayTrip, otherCity, excursion, other]);
+});
+
+// ─── POST guard ───────────────────────────────────────────────────────────────
+
+afterEach(() => {
+  setTokenVerifier();
+  resetRateLimits();
+});
+
+function validateRequest(body: string, headers: Record<string, string> = {}) {
+  return new NextRequest("http://localhost:3000/api/ai/validate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...headers },
+    body,
+  });
+}
+
+test("validate refuses callers without a valid access token", async () => {
+  setTokenVerifier(async () => null);
+  const response = await POST(validateRequest("{}"));
+  assert.equal(response.status, 401);
+  assert.equal((await response.json()).error, "unauthorized");
+});
+
+test("validate rejects malformed and oversized bodies for signed-in callers", async () => {
+  setTokenVerifier(async () => ({ id: "user-1" }));
+  const auth = { Authorization: "Bearer t" };
+  assert.equal((await POST(validateRequest("{oops", auth))).status, 400);
+  const huge = JSON.stringify({ notes: "x".repeat(1024 * 1024 + 10) });
+  assert.equal((await POST(validateRequest(huge, auth))).status, 413);
 });

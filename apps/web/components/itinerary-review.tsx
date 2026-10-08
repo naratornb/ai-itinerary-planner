@@ -190,9 +190,14 @@ export default function ItineraryReview({
         .filter((item) => item.type !== "FLIGHT" && item.type !== "HOTEL")
         .map((item) => (item.notes ? `${item.title} (${item.notes})` : item.title));
 
+      const token = await accessToken();
+      if (!token) {
+        showNotice("Your session expired. Please sign in again.");
+        return;
+      }
       const response = await fetch("/api/ai/generate-content", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({
           scope: "package",
           packageTitle,
@@ -203,12 +208,12 @@ export default function ItineraryReview({
           vibe: vibeLabels.join(", "),
         }),
       });
-      const data = (await response.json()) as { listing?: string; error?: string };
+      const data = (await response.json()) as { listing?: string; error?: string; message?: string };
       if (data.listing) {
         setReviewDraft((current) => ({ ...current, description: data.listing! }));
         showNotice("Description generated");
       } else {
-        showNotice(data.error || "The description generator returned nothing.");
+        showNotice(data.message || data.error || "The description generator returned nothing.");
       }
     } catch {
       showNotice("Failed to connect to the description generator.");

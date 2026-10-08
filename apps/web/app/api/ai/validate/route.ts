@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
+import { guardAiRequest, readBoundedJson } from "../../../../lib/ai-route-guard";
 import { supabase } from "../../../../lib/supabase/client";
 import {
   ACTIVITY_GAP_MIN,
@@ -16,7 +17,14 @@ import {
 
 const GEMINI_KEY = process.env.GEMINI_API_KEY!;
 const MODEL_NAME = process.env.MODEL_NAME || "gemini-2.5-flash";
-const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent?key=${GEMINI_KEY}`;
+// The key travels in a header so it can't end up in request logs or error messages.
+const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent`;
+
+const RATE_LIMIT = { max: 20, windowMs: 60_000 };
+const MAX_BODY_BYTES = 1024 * 1024;
+const MAX_DAYS = 60;
+// Prompts and responses carry creator content; keep them out of logs unless asked.
+const DEBUG_LOG = process.env.AI_VALIDATE_DEBUG === "1";
 
 // ─── AI rules (R3, R4, R6, R10, R11, R12, R14, R15) ─────────────────────────
 // Contextual rules that require real-world knowledge are sent to the AI. Rule
@@ -743,13 +751,19 @@ export function findWordingWarnings(pkg: any, warZones: string[], days: any[] = 
 // ─── Route handler ─────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
+  const guard = await guardAiRequest(req, "validate", RATE_LIMIT);
+  if ("response" in guard) return guard.response;
+  const parsed = await readBoundedJson(req, MAX_BODY_BYTES);
+  if ("response" in parsed) return parsed.response;
+
   try {
-    const pkg = await req.json();
+    const pkg = (parsed.body && typeof parsed.body === "object" ? parsed.body : {}) as any;
 
     if (!GEMINI_KEY) {
+      console.error("[AI VALIDATE] GEMINI_API_KEY is not configured");
       return NextResponse.json(
-        { error: "GEMINI_API_KEY is not configured in apps/web/.env.local" },
-        { status: 500 }
+        { error: "AI validation is not available right now." },
+        { status: 503 }
       );
     }
 
@@ -759,6 +773,13 @@ export async function POST(req: NextRequest) {
       days = typeof pkg.days_json === "string" ? JSON.parse(pkg.days_json) : (pkg.days || []);
     } catch {
       days = [];
+    }
+    if (!Array.isArray(days)) days = [];
+    if (days.length > MAX_DAYS) {
+      return NextResponse.json(
+        { error: "payload_too_large", message: `A package can have at most ${MAX_DAYS} days.` },
+        { status: 413 },
+      );
     }
 
     // 1. Text-based hard block filters (competitors, conflict destination, profanity)
@@ -799,16 +820,18 @@ export async function POST(req: NextRequest) {
     const systemPrompt = buildSystemPrompt(rules);
     const userPrompt = buildUserPrompt(pkg, days);
 
-    console.log("\n========== [AI VALIDATE] PROMPT SENT TO GEMINI ==========");
-    console.log(userPrompt);
-    console.log("=========================================================\n");
+    if (DEBUG_LOG) {
+      console.log("\n========== [AI VALIDATE] PROMPT SENT TO GEMINI ==========");
+      console.log(userPrompt);
+      console.log("=========================================================\n");
+    }
 
     // The model settings are part of the key, so changing them can't serve old answers.
     const cacheKey = aiCacheKey(`${MODEL_NAME} ${JSON.stringify(geminiGenerationConfig(MODEL_NAME))}`, systemPrompt, userPrompt);
     const cached = getCachedAiResult(cacheKey);
     const res = cached ? null : await fetch(GEMINI_URL, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "x-goog-api-key": GEMINI_KEY },
       body: JSON.stringify({
         system_instruction: { parts: [{ text: systemPrompt }] },
         contents: [{ parts: [{ text: userPrompt }] }],
@@ -822,7 +845,7 @@ export async function POST(req: NextRequest) {
     if (cached) {
       aiResult = cached;
       aiAvailable = true;
-      console.log("[AI VALIDATE] Unchanged content — reusing the cached AI result.");
+      if (DEBUG_LOG) console.log("[AI VALIDATE] Unchanged content — reusing the cached AI result.");
     } else if (!res) {
       // Already logged above.
     } else if (!res.ok) {
@@ -834,9 +857,11 @@ export async function POST(req: NextRequest) {
         aiResult = JSON.parse(raw.replace(/```json|```/g, "").trim());
         aiAvailable = true;
         putCachedAiResult(cacheKey, aiResult);
-        console.log("\n========== [AI VALIDATE] GEMINI RESPONSE ==========");
-        console.log(JSON.stringify(aiResult, null, 2));
-        console.log("===================================================\n");
+        if (DEBUG_LOG) {
+          console.log("\n========== [AI VALIDATE] GEMINI RESPONSE ==========");
+          console.log(JSON.stringify(aiResult, null, 2));
+          console.log("===================================================\n");
+        }
       } catch {
         console.warn("Failed to parse Gemini response — AI checks skipped.");
       }

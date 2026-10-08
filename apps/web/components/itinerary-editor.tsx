@@ -215,7 +215,7 @@ export function referenceFlightPresentation(item: TimelineItem) {
 // their recorded pending day when one exists (uploaded, then refreshed
 // before saving), else on day 1 as they always have.
 // ponytail: a package_media.day_number column is the real fix; this
-// sessionStorage stash only covers the tab that did the upload.
+// localStorage stash only covers the device that did the upload.
 export function placeUnassociatedMedia(
   days: BuilderDay[],
   media: { media_id: string; url: string; caption?: string | null }[],
@@ -1306,9 +1306,15 @@ export default function ItineraryEditor({
     // while a re-check is in flight — only replace it once fresh data lands.
     setFeasLoading(true);
     try {
+      const token = await accessToken();
+      if (!token) {
+        onSessionExpired();
+        showNotice("Your session expired. Please sign in again.");
+        return;
+      }
       const res = await fetch("/api/ai/validate", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify(buildValidationPayload()),
       });
       if (res.ok) {
@@ -1643,9 +1649,15 @@ export default function ItineraryEditor({
         .filter((item) => item.type !== "FLIGHT" && item.type !== "HOTEL")
         .map((item) => (item.notes ? `${item.title} (${item.notes})` : item.title));
 
+      const token = await accessToken();
+      if (!token) {
+        onSessionExpired();
+        showNotice("Your session expired. Please sign in again.");
+        return;
+      }
       const response = await fetch("/api/ai/generate-content", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({
           packageTitle,
           destination: [pkg.destination_city, pkg.destination_country].filter(Boolean).join(", "),
@@ -1656,12 +1668,12 @@ export default function ItineraryEditor({
           vibe: days[activeDay]?.meta || "",
         }),
       });
-      const data = (await response.json()) as { listing?: string; error?: string };
+      const data = (await response.json()) as { listing?: string; error?: string; message?: string };
       if (data.listing) {
         setStory(data.listing);
         showNotice("Story generated");
       } else {
-        showNotice(data.error || "The story generator returned nothing.");
+        showNotice(data.message || data.error || "The story generator returned nothing.");
       }
     } catch {
       showNotice("Failed to connect to the story generator.");
@@ -1671,10 +1683,10 @@ export default function ItineraryEditor({
   };
 
   const readPendingDays = (): PendingMediaDays =>
-    parsePendingMediaDays(window.sessionStorage.getItem(pendingMediaStorageKey(pkg.package_id)));
+    parsePendingMediaDays(window.localStorage.getItem(pendingMediaStorageKey(pkg.package_id)));
   const writePendingDays = (next: PendingMediaDays) => {
     try {
-      window.sessionStorage.setItem(pendingMediaStorageKey(pkg.package_id), JSON.stringify(next));
+      window.localStorage.setItem(pendingMediaStorageKey(pkg.package_id), JSON.stringify(next));
     } catch {
       // best-effort only
     }
@@ -2512,7 +2524,7 @@ export default function ItineraryEditor({
               <div className="day-photo-single">
                 {photos.map((photo) => <figure key={photo.src}>
                   <img src={toSafeImageSrc(photo.src)} alt={photo.alt} />
-                  <button type="button" className="remove-photo-btn" aria-label="Remove photo" onClick={() => { void removeDayPhoto(photo); }}><Icon name="plus" size={10} /></button>
+                  <button type="button" className="remove-photo-btn" aria-label={`Remove ${photo.alt}`} onClick={() => { void trackUpload(removeDayPhoto(photo)); }}><Icon name="plus" size={10} /></button>
                   <label className="change-photo-btn" aria-label={`Change ${photo.alt}`}>
                     <input type="file" accept="image/png,image/jpeg" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (!file) return; void trackUpload(changeDayPhoto(photo, file)); }} />
                     Change photo

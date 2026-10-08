@@ -174,10 +174,10 @@ function ShareIcon() {
   );
 }
 
-function Chevron({ up }: { up: boolean }) {
+function Chevron({ up, stroke = "#FFFFFF" }: { up: boolean; stroke?: string }) {
   return (
     <svg width="14" height="9" viewBox="0 0 14 9" fill="none" style={{ flexShrink: 0, transform: up ? "rotate(180deg)" : undefined }}>
-      <path d="M1 1L7 7L13 1" stroke="#FFFFFF" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M1 1L7 7L13 1" stroke={stroke} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
@@ -480,7 +480,7 @@ function DayCard({
 }: {
   day: { id?: string | null; day_number?: number | null; title?: string | null; summary?: string | null };
   index: number;
-  image: string;
+  image: string | null;
   items: TimelineItem[];
   stopImages: string[][];
   expanded: boolean;
@@ -495,14 +495,26 @@ function DayCard({
         onClick={onToggle}
         aria-expanded={expanded}
         className="day-card-toggle"
-        style={{ all: "unset", boxSizing: "border-box", display: "block", position: "relative", width: "100%", height: 340, cursor: "pointer" }}
+        style={{ all: "unset", boxSizing: "border-box", display: "block", position: "relative", width: "100%", height: image ? 340 : undefined, cursor: "pointer" }}
       >
-        <img src={image} alt={label} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
-        <div style={{ position: "absolute", inset: 0, background: "linear-gradient(0deg, rgba(0,0,0,0.75) 0%, rgba(0,0,0,0) 60%)" }} />
-        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16, padding: 28, color: "#FFFFFF" }}>
-          <h3 style={{ margin: 0, fontFamily: displayFont, fontSize: 28, fontWeight: 800, letterSpacing: "-0.01em", textTransform: "uppercase" }}>{label}</h3>
-          <Chevron up={expanded} />
-        </div>
+        {image ? (
+          <>
+            <img src={image} alt={label} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+            <div style={{ position: "absolute", inset: 0, background: "linear-gradient(0deg, rgba(0,0,0,0.75) 0%, rgba(0,0,0,0) 60%)" }} />
+            <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16, padding: 28, color: "#FFFFFF" }}>
+              <h3 style={{ margin: 0, fontFamily: displayFont, fontSize: 28, fontWeight: 800, letterSpacing: "-0.01em", textTransform: "uppercase" }}>{label}</h3>
+              <Chevron up={expanded} />
+            </div>
+          </>
+        ) : (
+          // No photo for this day — a quiet typographic header instead of
+          // reusing one stock image (which plastered the same picture over
+          // every photo-less card).
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, padding: "20px 24px", background: color.surfaceSubtle, color: color.textPrimary }}>
+            <h3 style={{ margin: 0, fontFamily: displayFont, fontSize: 18, fontWeight: 800, letterSpacing: "-0.01em", textTransform: "uppercase" }}>{label}</h3>
+            <Chevron up={expanded} stroke={color.textSecondary} />
+          </div>
+        )}
       </button>
       {(day.summary || items.length > 0) && (
         <div
@@ -590,7 +602,7 @@ export function PackageDetailView({
   const destination = [pkg.destination_city, pkg.destination_country].filter(Boolean).join(", ");
   const tripLength = formatTripLength(pkg.duration_days);
   const days = pkg.days ?? [];
-  const dayImages = assignDayImages(days.length, media, cover);
+  const dayImages = assignDayImages(days.length, media);
   const tags = pkg.tags ?? [];
 
   const timelineInput: CreatorPackageDetail = {
@@ -859,7 +871,7 @@ export function PackageDetailView({
                     index={index}
                     image={dayImages[index]}
                     items={dayItems}
-                    stopImages={buildStopImages(dayItems.length, media, cover)}
+                    stopImages={buildStopImages(dayItems.length, media)}
                     expanded={expandedDays.has(key)}
                     onToggle={() => toggleDay(key)}
                     onOpenPhoto={(images, photoIndex) => setLightbox({ images, index: photoIndex })}
