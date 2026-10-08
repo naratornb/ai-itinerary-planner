@@ -53,6 +53,7 @@ export type AdminApprovalRecord = {
   reviewer_id?: string;
   decision: "approved" | "rejected";
   rejection_reason?: string | null;
+  notes?: string | null;
   reviewed_at?: string;
 };
 

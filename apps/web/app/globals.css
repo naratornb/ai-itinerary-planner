@@ -815,6 +815,19 @@ body {
 }
 .admin-detail-conflict strong { color: var(--fc-ink); }
 
+.admin-detail-last-decision {
+  margin-top: 16px;
+  padding: 20px 22px;
+  border: 1px solid var(--fc-border);
+  border-radius: var(--fc-radius-md);
+  background: var(--fc-white);
+}
+.admin-detail-last-decision h3 { margin: 0 0 8px; font-size: 16px; line-height: 24px; }
+.admin-detail-last-decision p { margin: 8px 0 0; color: var(--fc-secondary); font-size: 14px; line-height: 21px; overflow-wrap: anywhere; }
+.admin-detail-last-decision p b { display: block; color: var(--fc-ink); font-weight: 600; }
+.admin-detail-last-decision__meta { display: flex; justify-content: space-between; gap: 12px; }
+.admin-detail-last-decision__meta strong { color: var(--fc-ink); }
+
 .admin-detail-state {
   margin-top: 28px;
   padding: 56px 24px;

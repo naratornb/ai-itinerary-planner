@@ -8,6 +8,7 @@ import {
   AdminApiError,
   approveAdminPackage,
   rejectAdminPackage,
+  type AdminApprovalRecord,
   type AdminPackageDetail,
 } from "../../lib/admin-api";
 import { loadAdminPackageForReview } from "../../lib/admin-package-supabase";
@@ -50,6 +51,15 @@ export type AdminReviewDetailViewProps = {
   onRetry: () => void;
   onSignOut: () => void;
 };
+
+// Shown when the package is no longer pending: either an admin opened a decided
+// package from the Reviewed list, or another admin decided it first.
+export function decisionNotice(status: string | undefined, fallback?: string): { title: string; message: string } {
+  if (status === "approved") return { title: "Already approved", message: "This package has been approved and can be published by its creator." };
+  if (status === "rejected") return { title: "Changes already requested", message: "This package was returned to its creator for changes." };
+  if (status === "live") return { title: "Already live", message: "This package is published in the marketplace." };
+  return { title: "No longer pending review", message: fallback || "This package is no longer pending review." };
+}
 
 export function rejectionReasonError(reason: string): string {
   return reason.trim().length < 10 ? "Enter at least 10 characters." : "";
@@ -287,6 +297,21 @@ function Pricing({ pkg }: { pkg: AdminPackageDetail }) {
   );
 }
 
+function LastDecision({ approval, pending }: { approval: AdminApprovalRecord; pending: boolean }) {
+  const approved = approval.decision === "approved";
+  return (
+    <section className="admin-detail-last-decision" aria-label="Previous decision">
+      <h3>{pending ? "Previous decision" : "Last decision"}</h3>
+      <p className="admin-detail-last-decision__meta">
+        <strong>{approved ? "Approved" : "Changes requested"}</strong>
+        <span>{formatSubmittedAt(approval.reviewed_at ?? null)}</span>
+      </p>
+      {approval.rejection_reason ? <p><b>Reason sent to creator</b>{approval.rejection_reason}</p> : null}
+      {approval.notes ? <p><b>Internal notes</b>{approval.notes}</p> : null}
+    </section>
+  );
+}
+
 function DecisionPanel({
   pkg,
   onOpenApprove,
@@ -321,6 +346,7 @@ function DecisionPanel({
         </button>
         {!canDecide ? <p className="admin-detail-decision__notice">This package is no longer pending review.</p> : null}
       </section>
+      {pkg.latest_approval ? <LastDecision approval={pkg.latest_approval} pending={canDecide} /> : null}
     </aside>
   );
 }
@@ -443,8 +469,8 @@ export function AdminReviewDetailView(props: AdminReviewDetailViewProps): ReactN
         <ReviewIntro pkg={props.packageDetail} />
         {props.status === "conflict" ? (
           <div className="admin-detail-conflict" role="status">
-            <strong>Review already completed</strong>
-            <span>{props.errorMessage || "This package is no longer pending review."}</span>
+            <strong>{decisionNotice(props.packageDetail.status, props.errorMessage).title}</strong>
+            <span>{decisionNotice(props.packageDetail.status, props.errorMessage).message}</span>
           </div>
         ) : null}
         <div className="admin-detail-layout">
@@ -548,9 +574,10 @@ export default function AdminReviewDetail({ packageId }: { packageId: string }) 
         return;
       }
       if (error instanceof AdminApiError && error.status === 409) {
+        // Another admin decided first — reload so the page (and its buttons)
+        // reflect the package's real status instead of staying actionable.
         setDialog(null);
-        setStatus("conflict");
-        setErrorMessage(error.message);
+        setRetryKey((current) => current + 1);
       } else {
         setDecisionError(error instanceof Error ? error.message : "Unable to save this decision.");
       }

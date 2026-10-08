@@ -10,6 +10,7 @@ import type {
 import {
   AdminApiError,
   fetchAdminPackage,
+  type AdminApprovalRecord,
   type AdminPackageCreator,
   type AdminPackageDetail,
 } from "./admin-api";
@@ -252,6 +253,36 @@ export async function fetchAdminPackageFromSupabase(
   return data ? mapAdminPackageRow(data) : null;
 }
 
+// package_approvals is admin-readable under RLS. Best-effort: a failed lookup
+// only hides the previous decision, it must not block the review itself.
+export async function fetchLatestApproval(
+  client: SupabaseClient,
+  packageId: string,
+): Promise<AdminApprovalRecord | null> {
+  try {
+    const { data, error } = await client
+      .from("package_approvals")
+      .select("approval_id,package_id,decision,rejection_reason,notes,reviewed_at")
+      .eq("package_id", packageId)
+      .order("reviewed_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error || !data) return null;
+    const row = asRow(data);
+    if (row.decision !== "approved" && row.decision !== "rejected") return null;
+    return {
+      approval_id: stringValue(row.approval_id),
+      package_id: stringValue(row.package_id),
+      decision: row.decision,
+      rejection_reason: nullableString(row.rejection_reason),
+      notes: nullableString(row.notes),
+      reviewed_at: stringValue(row.reviewed_at),
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function loadAdminPackageForReview(
   fetcher: typeof fetch,
   client: SupabaseClient,
@@ -264,7 +295,7 @@ export async function loadAdminPackageForReview(
   } catch (error) {
     if (!(error instanceof AdminApiError) || error.status !== 404) throw error;
     const detail = await fetchAdminPackageFromSupabase(client, packageId);
-    if (detail) return detail;
+    if (detail) return { ...detail, latest_approval: await fetchLatestApproval(client, packageId) };
     throw error;
   }
 }
