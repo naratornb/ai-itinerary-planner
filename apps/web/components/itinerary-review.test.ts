@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
+import { runInNewContext } from "node:vm";
+import ts from "typescript";
 
 import { buildReviewDayUpdates } from "./itinerary-review";
 import type { BuilderDay } from "../lib/itinerary-builder";
@@ -34,4 +37,95 @@ test("buildReviewDayUpdates matches the editor's null/empty conventions", () => 
   assert.deepEqual(updates[0], { day_number: 1, title: null, summary: null, meta: null, media_ids: [] });
   assert.equal(updates[1].day_number, 2);
   assert.equal(updates[1].title, "Markets");
+});
+
+// Execute the real handleSubmit binding without mounting the page — the same
+// AST/vm harness itinerary-publish.test.ts uses for the editor's submit path.
+const reviewSource = readFileSync(new URL("./itinerary-review.tsx", import.meta.url), "utf8");
+const reviewFile = ts.createSourceFile("review.tsx", reviewSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+let submitHandler = "";
+let persistHandler = "";
+function visitSubmit(node: ts.Node) {
+  if (ts.isVariableDeclaration(node) && node.name.getText(reviewFile) === "handleSubmit") {
+    submitHandler = `const handleSubmit = ${node.initializer!.getText(reviewFile)};`;
+  }
+  if (ts.isVariableDeclaration(node) && node.name.getText(reviewFile) === "persistReview") {
+    persistHandler = `const persistReview = ${node.initializer!.getText(reviewFile)};`;
+  }
+  ts.forEachChild(node, visitSubmit);
+}
+visitSubmit(reviewFile);
+
+async function runSubmit(updateFails = false) {
+  const calls: string[] = [];
+  const payloads: unknown[][] = [];
+  const context = {
+    fetch,
+    API_URL: "http://api.test",
+    pkg: { package_id: "pkg-1" },
+    packageTitle: "Tokyo Trip",
+    reviewDraft: { description: "typed on the review page", coverMediaId: null },
+    packagePrice: 120,
+    days: [],
+    buildReviewDayUpdates: () => [{ day_number: 1 }],
+    submitting: false,
+    uploadingCount: 0,
+    setSubmitting: () => {},
+    setSubmitResult: () => {},
+    accessToken: async () => "token",
+    updatePackage: async (...args: unknown[]) => {
+      calls.push("update");
+      payloads.push(args);
+      if (updateFails) throw new Error("Save failed");
+    },
+    submitPackage: async () => { calls.push("submit"); return { status: "in_review" }; },
+    SubmitPackageError: class SubmitPackageError extends Error {},
+    __result: undefined as Promise<void> | undefined,
+  };
+  assert.notEqual(persistHandler, "", "Submit must share a persistReview helper with Save Draft");
+  runInNewContext(ts.transpile(`${persistHandler}\n${submitHandler}\n__result = handleSubmit();`), context);
+  await context.__result;
+  return { calls, payloads };
+}
+
+test("Submit for Review persists the review-page draft before submitting", async () => {
+  // The description lives only in component state — submitting without saving
+  // first shipped the stale server copy and stranded this page's edits.
+  const { calls, payloads } = await runSubmit();
+
+  assert.deepEqual(calls, ["update", "submit"]);
+  const body = payloads[0][4] as Record<string, unknown>;
+  assert.equal(body.description, "typed on the review page");
+});
+
+test("a failed draft save blocks submission instead of shipping stale content", async () => {
+  const { calls } = await runSubmit(true);
+
+  assert.deepEqual(calls, ["update"]);
+});
+
+test("submit and save wait for in-flight cover uploads", () => {
+  // Regression: handleSubmit/saveDraft had no upload guard — submitting while
+  // addCoverPhoto was in flight shipped the package without the photo and
+  // left the finished upload orphaned (no day references it).
+  const source = readFileSync(new URL("./itinerary-review.tsx", import.meta.url), "utf8");
+  const handleSubmit = source.match(/const handleSubmit = async \(\) => \{[\s\S]*?\n  \};/);
+  const saveDraft = source.match(/const saveDraft = async \(\) => \{[\s\S]*?\n  \};/);
+  for (const [name, block] of [["handleSubmit", handleSubmit], ["saveDraft", saveDraft]] as const) {
+    assert.ok(block, `${name} must exist`);
+    assert.match(block[0], /uploadingCount > 0/, `${name} must bail while uploads are in flight`);
+  }
+});
+
+test("removing a pending cover upload stops it landing on the package", () => {
+  // Regression: the pending gallery entry (media_id "pending-…") had a live
+  // Remove button that called the delete API with a fake id — the 404 left
+  // the entry in place and the upload then completed anyway, resurrecting a
+  // photo the user had just removed. Pending ids must be cancelled
+  // client-side and the finished row deleted, matching the editor.
+  const source = readFileSync(new URL("./itinerary-review.tsx", import.meta.url), "utf8");
+  assert.match(source, /cancelledPreviews|cancelledTemp/, "must track cancelled pending uploads");
+  const removePhoto = source.match(/const removePhoto = async \(photo[^)]*\) => \{[\s\S]*?\n  \};/);
+  assert.ok(removePhoto, "removePhoto must exist");
+  assert.match(removePhoto[0], /pending-/, "removePhoto must short-circuit pending uploads client-side");
 });

@@ -87,6 +87,15 @@ export async function fetchMarketplacePackage(fetcher: typeof fetch, apiUrl: str
   return readJson<MarketplacePackageDetail>(response, "Unable to load this package.");
 }
 
+/**
+ * Live-search results are only safe to reuse for the exact query that
+ * produced them — a submit fired before the debounce would otherwise show
+ * an earlier query's results under the new text.
+ */
+export function reusableSearchResults<T>(query: string, forQuery: string, results: T[]): T[] | null {
+  return query === forQuery && results.length > 0 ? results : null;
+}
+
 export function uniqueDestinationSuggestions(packages: MarketplacePackageSummary[]) {
   const suggestions = new Set<string>();
   for (const pkg of packages) {

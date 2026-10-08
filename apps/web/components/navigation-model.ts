@@ -5,13 +5,6 @@ export const creatorDashboardBackLink = {
   href: APP_ROUTES.dashboard,
 } as const;
 
-export const marketplaceNavigationItems = [
-  "Flights",
-  "Stays",
-  "Tours",
-  "Deals",
-] as const;
-
 export const dashboardActionAlignment = {
   header: "center",
   buttons: "center",

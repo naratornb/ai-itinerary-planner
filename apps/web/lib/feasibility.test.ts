@@ -169,17 +169,20 @@ test("R16: a free stop priced at $0 is NOT flagged — 0 is a valid price", () =
   assert.ok(hard.every((issue) => issue.error_code !== "MISSING_PRICE"));
 });
 
-test("R9: an empty middle day is still a hard error", () => {
+test("R9: an empty middle day is a suggestion asking to confirm it, e.g. as a free day", () => {
   const days = [
     day(1, [activity("Arrival Transfer")]),
     day(2, []),
     day(3, [activity("Departure Transfer")]),
   ];
   const { hard, soft } = runCodeChecks(days);
-  assert.ok(soft.every((i) => i.error_code !== "EMPTY_DAY"));
-  const issue = hard.find((i) => i.error_code === "EMPTY_DAY");
-  assert.ok(issue, "expected a hard EMPTY_DAY error for the empty middle day");
+  assert.ok(hard.every((i) => i.error_code !== "EMPTY_DAY"), "an empty middle day must not block submission");
+  const issue = soft.find((i) => i.error_code === "EMPTY_DAY");
+  assert.ok(issue, "expected an EMPTY_DAY suggestion for the empty middle day");
+  assert.equal(issue?.severity, "warning");
   assert.equal(issue?.field, "Day 2");
+  assert.match(issue!.message, /confirm this is intentional/);
+  assert.match(issue!.message, /free day.*day summary/);
 });
 
 test("R9: an empty first day is a soft warning, not a hard block — arrival days often have no activity", () => {
@@ -245,6 +248,18 @@ test("R18: a package with zero photos anywhere is a hard error", () => {
 test("R18: a package with at least one photo passes", () => {
   const issue = checkPackagePhotos({ photo_count: 1 });
   assert.equal(issue, null);
+});
+
+test("slang costs more writing marks than a typo, and a trip name the activities don't match costs completeness", () => {
+  // Regression: "u gonna luv dis place nxt lvl fr fr" only cost 0.1 (grammar 0.9), and a
+  // "Beach & Relaxation Tour" of city culture activities cost nothing.
+  const prompt = buildSystemPrompt(FALLBACK_RULES);
+  assert.match(prompt, /subtract 0\.3 for each[^.]*slang or text-speak/);
+  assert.match(prompt, /subtract 0\.3 if the trip name/);
+  const r23 = FALLBACK_RULES.find((rule) => rule.rule_code === "R23");
+  assert.equal(r23?.rule_name, "Trip Name Match");
+  assert.match(r23!.rule_description, /SOFT WARNING/);
+  assert.match(r23!.rule_description, /Never flag a general name or a broad theme/, "\"Cultural Exploration\" was wrongly flagged");
 });
 
 test("buildSystemPrompt renders the supplied rule list", () => {
@@ -325,7 +340,8 @@ test("FALLBACK_RULES still covers every contextual rule code previously hardcode
   const codes = FALLBACK_RULES.map((r) => r.rule_code);
   // R8 (group size) was removed: the editor has no group-size input, so the AI was
   // judging "Private Edition" activities against a group size it never had.
-  assert.deepEqual(codes, ["R3", "R4", "R6", "R10", "R11", "R12", "R14", "R15"]);
+  // R23 (Trip Name Match) was added after these.
+  assert.deepEqual(codes, ["R3", "R4", "R6", "R10", "R11", "R12", "R14", "R15", "R23"]);
 });
 
 function longDayCodes(days: any[]) {
@@ -581,6 +597,36 @@ test("the AI is told scoring sets only the three numbers, never extra issues", (
 
 test("the AI is told to report opening hours only when the time is clearly outside them", () => {
   assert.match(buildSystemPrompt(FALLBACK_RULES), /R3[\s\S]*only when the scheduled time is clearly outside/);
+});
+
+test("a same-day connection leg on the outbound day is not the return flight", () => {
+  // Regression: returnFlight picked the last leg unconditionally when more
+  // than one flight existed, so a SYD→HKG→NRT connection on day 1 made every
+  // day-1 activity after 13:30 a bogus SHORT_DEPARTURE_BUFFER hard error.
+  const days = [
+    day(1, [activity("Evening market", { start_time: "19:00", duration_hours: 2 })], [
+      { ...flight("08:00", "international", "SYD to HKG"), departure_time: "08:00" },
+      { ...flight("20:00", "international", "HKG to NRT"), departure_time: "15:30" },
+    ]),
+    day(2, [activity("Temple")]),
+    day(3, [activity("Market")]),
+  ];
+  assert.equal(returnCodes(days).length, 0);
+});
+
+test("a mid-trip flight still gets the departure buffer on its own day", () => {
+  // A leg the traveller must catch mid-trip (day 3 of 5) keeps the check —
+  // it only breaks when the last leg shares the outbound's day.
+  const days = [
+    day(1, [activity("A")], [{ ...flight("10:00", "international", "SYD to BKK"), departure_time: "06:00" }]),
+    day(2, [activity("B")]),
+    day(3, [activity("Rushed lunch", { start_time: "14:00", duration_hours: 2 })], [returnFlight("17:00")]),
+    day(4, [activity("C")]),
+    day(5, [activity("D")]),
+  ];
+  const errors = returnCodes(days);
+  assert.equal(errors.length, 1);
+  assert.equal(errors[0].field, "Day 3");
 });
 
 test("buildUserPrompt sends each activity's whole description, not a cut-off one", () => {

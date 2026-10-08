@@ -6,8 +6,6 @@ import {
   createPackage,
   fetchOwnPackage,
   fetchOwnPackages,
-  fetchDashboardStats,
-  formatDashboardStats,
   formatCreatorPackage,
   publishPackage,
   resolveCreatorProfile,
@@ -217,6 +215,7 @@ test("formatCreatorPackage converts API fields for the dashboard", () => {
       id: "package-1",
       name: "Tokyo food tour",
       duration: "7 days",
+      created: "20 Aug 2026",
       destination: "Tokyo, Japan",
       price: "$3,200",
       status: "Under review",
@@ -325,36 +324,6 @@ test("resolveCreatorProfile falls back to auth metadata and initials", () => {
   );
 });
 
-test("formatDashboardStats uses dashes when booking data is unavailable", () => {
-  assert.deepEqual(
-    formatDashboardStats({
-      packageCount: 3,
-      bookingCount: null,
-      commissionRate: null,
-      commissionAud: null,
-    }),
-    [
-      { label: "Packages", value: "3", sub: "All your packages" },
-      { label: "Bookings", value: "—", sub: "Not available yet" },
-      { label: "Commission rate", value: "—", sub: "Not available yet" },
-      { label: "Your commission", value: "—", sub: "Available after bookings" },
-    ],
-  );
-});
-
-test("formatDashboardStats formats a future stats API response", () => {
-  const cards = formatDashboardStats({
-    packageCount: 3,
-    bookingCount: 20,
-    commissionRate: 0.2,
-    commissionAud: 14800,
-  });
-
-  assert.equal(cards[1]?.value, "20");
-  assert.equal(cards[2]?.value, "20%");
-  assert.equal(cards[3]?.value, "$14,800");
-});
-
 test("submitPackage posts to the submit endpoint and returns the new status", async () => {
   const fetcher: typeof fetch = async (url, init) => {
     assert.equal(String(url), "http://localhost:8000/packages/package-9/submit");
@@ -398,12 +367,12 @@ test("submitPackage surfaces the backend's message and error code on failure", a
   );
 });
 
-test("submitPackage reports a not-yet-deployed endpoint as a friendly 404", async () => {
+test("submitPackage reports a missing package as a friendly 404", async () => {
   const fetcher: typeof fetch = async () => new Response("Not Found", { status: 404 });
 
   await assert.rejects(
     submitPackage(fetcher, "http://localhost:8000", "access-token", "package-9"),
-    /try again later/i,
+    /can't be submitted/i,
   );
 });
 
@@ -416,25 +385,4 @@ test("submitPackage identifies an expired login", async () => {
   );
 });
 
-test("fetchDashboardStats maps the future dashboard stats endpoint", async () => {
-  const fetcher: typeof fetch = async (input, init) => {
-    assert.equal(String(input), "http://localhost:8000/dashboard/stats");
-    assert.deepEqual(init?.headers, { Authorization: "Bearer access-token" });
-    return new Response(JSON.stringify({
-      package_count: 3,
-      booking_count: 20,
-      commission_rate: 0.2,
-      commission_aud: 14800,
-    }), { status: 200, headers: { "Content-Type": "application/json" } });
-  };
 
-  assert.deepEqual(
-    await fetchDashboardStats(fetcher, "http://localhost:8000/", "access-token"),
-    {
-      packageCount: 3,
-      bookingCount: 20,
-      commissionRate: 0.2,
-      commissionAud: 14800,
-    },
-  );
-});

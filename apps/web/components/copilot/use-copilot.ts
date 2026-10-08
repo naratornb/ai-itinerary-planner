@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import type { CopilotClient, CopilotMessageV1 } from "../../lib/copilot";
 
@@ -15,6 +15,9 @@ export function useCopilot(client: CopilotClient) {
   const [messages, setMessages] = useState<CopilotMessageV1[]>([]);
   const [sending, setSending] = useState(false);
   const [requestError, setRequestError] = useState("");
+  // `sending` state re-renders too late to stop a second submit inside the
+  // same frame (double Enter); the ref is the synchronous source of truth.
+  const sendingRef = useRef(false);
 
   // The retrieval endpoint only knows a destination if it can find a
   // catalog city's name inside the prompt text — it has no separate "which
@@ -24,7 +27,8 @@ export function useCopilot(client: CopilotClient) {
   // typed.
   const send = async (prompt: string, city?: string | null) => {
     const content = prompt.trim();
-    if (!content || sending) return;
+    if (!content || sendingRef.current) return;
+    sendingRef.current = true;
 
     setMessages((current) => [
       ...current,
@@ -61,6 +65,7 @@ export function useCopilot(client: CopilotClient) {
           : "The response could not be loaded. Please try again.",
       );
     } finally {
+      sendingRef.current = false;
       setSending(false);
     }
   };

@@ -301,6 +301,12 @@ Default boundaries use `{colors.border}` (#E0E0E0) at 1px or 1.5px. Selected car
 - Default cards use white surfaces and borders; selection adds blue border, pale-blue surface, and a check icon.
 - **Confidence**: ✅ high
 
+#### AI disclaimer
+
+- One shared component (`AiDisclaimer`, class `.ai-disclaimer`) rendered wherever AI output is shown: Co-Pilot composer, generation loader, day-summary "AI write for me", and review "Generate with AI".
+- Copy: "AI can make mistakes. Double-check important info." — 12px secondary text, no product/vendor names.
+- **Confidence**: ✅ high
+
 ### 3.2 Signature components
 
 #### Creation Subnav
@@ -365,6 +371,7 @@ Default boundaries use `{colors.border}` (#E0E0E0) at 1px or 1.5px. Selected car
 
 - **What it is**: Quality, schedule, price, map, and hotel panels alongside the editor timeline.
 - **Submission rule**: The primary action says `Submit for review`; submission does not imply immediate publication.
+- **Preview rule**: Preview stays disabled until the current itinerary passes a fresh feasibility check, then saves the latest draft and opens the creator detail preview page.
 - **Composition**: 340px desktop column with border-first white panels.
 - **Confidence**: ✅ high
 
@@ -372,6 +379,7 @@ Default boundaries use `{colors.border}` (#E0E0E0) at 1px or 1.5px. Selected car
 
 - **What it is**: A task-focused assistant surface with a compact identity header, request shortcuts, conversation, and persistent composer.
 - **Composition**: 340px desktop sidebar that becomes a full-viewport mobile sheet below 700px.
+- **Trigger placement**: The trigger remains fixed in the lower-right corner; transient editor guidance uses the lower-left corner so the two never overlap.
 - **Confidence**: ✅ high
 
 #### Admin Review Summary

@@ -308,6 +308,38 @@ const COPILOT_TYPE_ICON: Record<string, IconName> = {
 };
 
 /**
+ * The clock time a flight stops occupying its day: the landing time when the
+ * leg lands the same day, else its departure. A relative leg's `time` is its
+ * departure — the landing lives on `arrivalTime` — so reading `time` alone
+ * lets a stop be scheduled inside the flight. Dated legs already carry the
+ * arrival clock in `time` (with an identical `arrivalTime`).
+ */
+export function flightEndClock(item: TimelineItem): string {
+  return item.arrivalTime && item.arrivalTime > item.time ? item.arrivalTime : item.time;
+}
+
+/**
+ * Ordering shared by the builder's load pass and the editor's re-sort after a
+ * time edit: check-out hotel rows pin to the top of the day, other hotel rows
+ * (check-in, overnight) to the bottom, everything else chronologically with
+ * sequence_order only breaking ties between untimed rows. A raw string sort
+ * on `time` used to push "Check-out"/"Check-in" labels below every clock time.
+ */
+export function compareDayItems(a: TimelineItem, b: TimelineItem): number {
+  const band = (item: TimelineItem) =>
+    item.type === "HOTEL" ? (item.stayMarker === "check-out" ? 0 : 3) : 1;
+  const bandDiff = band(a) - band(b);
+  if (bandDiff !== 0) return bandDiff;
+  const aReal = REAL_TIME_PATTERN.test(a.time);
+  const bReal = REAL_TIME_PATTERN.test(b.time);
+  if (aReal && bReal) return a.time.localeCompare(b.time);
+  if (a.sequenceOrder !== undefined || b.sequenceOrder !== undefined) {
+    return (a.sequenceOrder ?? Number.MAX_SAFE_INTEGER) - (b.sequenceOrder ?? Number.MAX_SAFE_INTEGER);
+  }
+  return a.time.localeCompare(b.time);
+}
+
+/**
  * Maps a Co-Pilot suggestion onto the editor's TimelineItem shape and
  * appends it after the day's current last item, since suggestions carry no
  * start time of their own.
@@ -318,8 +350,14 @@ export function copilotSuggestionToTimelineItem(
   previousItems: TimelineItem[] = [],
 ): TimelineItem {
   const type = suggestion.item_type.toUpperCase();
-  const previous = previousItems[previousItems.length - 1];
-  const time = previous ? getEndTime(previous.time, previous.duration ?? "0") : "09:00";
+  // Chain off the last item with a real clock time — hotel rows read
+  // "Check-in"/"Overnight stay", which getEndTime turns into "NaN:NaN".
+  const previous = [...previousItems].reverse().find((item) => REAL_TIME_PATTERN.test(item.time));
+  // A flight has already "ended" when it lands (see findTimeConflict) — adding
+  // its travel duration on top would land the suggestion mid-flight.
+  const time = previous
+    ? (previous.type === "FLIGHT" ? flightEndClock(previous) : getEndTime(previous.time, previous.duration ?? "0"))
+    : "09:00";
 
   return {
     id,
@@ -340,7 +378,7 @@ export function copilotSuggestionToTimelineItem(
   };
 }
 import type { CopilotSuggestionV1 } from "./copilot";
-import type { CreatorFlightDetail, CreatorPackageDetail, UpdatePackageInput } from "./creator-api";
+import type { CreatorFlightDetail, CreatorHotelDetail, CreatorPackageDetail, UpdatePackageInput } from "./creator-api";
 
 function parseDay(dateStr: string | null): number | null {
   if (!dateStr) return null;
@@ -426,6 +464,38 @@ export function flightArrivalDayOffset(
   const departureDate = Date.parse(`${departureKey}T00:00:00Z`);
   const arrivalDate = Date.parse(`${arrivalKey}T00:00:00Z`);
   return Math.round((arrivalDate - departureDate) / 86_400_000);
+}
+
+/**
+ * The "+1" badge value for a flight card: real datetimes when they exist, and
+ * for date-free legs the same clock heuristic arrivalLanding uses — an
+ * arrival_time earlier than departure_time can only be a next-day landing.
+ */
+export function flightArrivalOffset(flight: CreatorFlightDetail): number | null {
+  const dated = flightArrivalDayOffset(
+    flight.departure_datetime,
+    timezoneForIata(flight.origin_iata),
+    flight.arrival_datetime,
+    timezoneForIata(flight.destination_iata),
+  );
+  if (dated !== null) return dated;
+  const departure = flight.departure_time
+    ?? extractClockTimeInZone(flight.departure_datetime ?? null, timezoneForIata(flight.origin_iata));
+  const arrival = flight.arrival_time
+    ?? extractClockTimeInZone(flight.arrival_datetime ?? null, timezoneForIata(flight.destination_iata));
+  if (!departure || !arrival) return null;
+  return arrival < departure ? 1 : 0;
+}
+
+/**
+ * Identity of one booked stay. package_component_id is the junction row's own
+ * id — the only key that survives two stays at the same hotel (check in, side
+ * trip, come back). Keying on hotel_id/name alone merges those stays: deleting
+ * one deletes both, and buildPackageUpdate collapses them into a single row
+ * spanning the first check-in to the last check-out.
+ */
+export function hotelStayGroupKey(hotel: CreatorHotelDetail, index: number): string {
+  return `hotel-${hotel.package_component_id ?? `${hotel.hotel_id ?? hotel.hotel_name ?? "stay"}-${index}`}`;
 }
 
 /**
@@ -532,7 +602,7 @@ export function buildDaysFromPackage(pkg: CreatorPackageDetail): BuilderDay[] {
       // No start_time stays empty here — the ordering pass below slots it
       // after the previous activity instead of faking a shared 09:00.
       time: activity.start_time || "",
-      type: "ACTIVITY",
+      type: activity.item_type === "creator_pick" ? "CREATOR PICK" : "ACTIVITY",
       title: activity.activity_name || "Activity",
       price: `$${activity.price_aud ?? 0}`,
       icon: "star",
@@ -591,7 +661,7 @@ export function buildDaysFromPackage(pkg: CreatorPackageDetail): BuilderDay[] {
     });
   }
 
-  for (const hotel of pkg.hotels) {
+  for (const [hotelIndex, hotel] of pkg.hotels.entries()) {
     const checkInIndex = hotel.check_in_day
       ? dayIndexFromNumber(hotel.check_in_day)
       : dayIndexFor(hotel.check_in_date);
@@ -601,7 +671,7 @@ export function buildDaysFromPackage(pkg: CreatorPackageDetail): BuilderDay[] {
     const nights = hotel.check_in_day && hotel.check_out_day
       ? Math.max(1, checkOutIndex - checkInIndex)
       : Math.max(1, hotel.nights ?? checkOutIndex - checkInIndex);
-    const stayGroupId = `hotel-${hotel.hotel_id ?? hotel.hotel_name ?? nextId}`;
+    const stayGroupId = hotelStayGroupKey(hotel, hotelIndex);
     for (let offset = 0; offset <= nights; offset += 1) {
       const dayIndex = checkInIndex + offset;
       if (dayIndex >= days.length) break;
@@ -644,21 +714,10 @@ export function buildDaysFromPackage(pkg: CreatorPackageDetail): BuilderDay[] {
   // clock time, so a band pins check-out to the day's start and the stay row to its
   // end instead; sequenceOrder is only the tiebreaker for untimed items. Missing
   // activity times then chain off the previous activity's end rather than all
-  // collapsing onto "09:00".
-  const dayBand = (item: TimelineItem) =>
-    item.type === "HOTEL" ? (item.stayMarker === "check-out" ? 0 : 3) : 1;
+  // collapsing onto "09:00". The comparator itself is shared with the editor's
+  // post-edit re-sort — see compareDayItems.
   for (const day of days) {
-    day.items.sort((a, b) => {
-      const band = dayBand(a) - dayBand(b);
-      if (band !== 0) return band;
-      const aReal = REAL_TIME_PATTERN.test(a.time);
-      const bReal = REAL_TIME_PATTERN.test(b.time);
-      if (aReal && bReal) return a.time.localeCompare(b.time);
-      if (a.sequenceOrder !== undefined || b.sequenceOrder !== undefined) {
-        return (a.sequenceOrder ?? Number.MAX_SAFE_INTEGER) - (b.sequenceOrder ?? Number.MAX_SAFE_INTEGER);
-      }
-      return a.time.localeCompare(b.time);
-    });
+    day.items.sort(compareDayItems);
     let cursor = "09:00";
     for (const item of day.items) {
       if (item.type !== "ACTIVITY") continue;
@@ -710,6 +769,7 @@ export function buildPackageUpdate(
     .filter(({ item }) => item.type === "ACTIVITY" || item.type === "CREATOR PICK")
     .map(({ item, dayIndex, itemIndex }) => ({
       activity_name: item.title,
+      item_type: item.type === "CREATOR PICK" ? "creator_pick" : "activity",
       city: item.city || pkg.destination_city || "",
       duration_hours: item.duration ? Number(item.duration) / 60 : null,
       price_aud: priceNumber(item.price),
