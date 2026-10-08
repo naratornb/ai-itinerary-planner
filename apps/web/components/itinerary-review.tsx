@@ -285,8 +285,8 @@ export default function ItineraryReview({
       // The description lives in page state — submitting without persisting it
       // shipped the stale server copy and stranded this page's edits.
       await persistReview(token);
-      const result = await submitPackage(fetch, API_URL, token, pkg.package_id);
-      setSubmitResult({ kind: "success", message: `This package's status is now "${result.status}". An admin will review it next.` });
+      await submitPackage(fetch, API_URL, token, pkg.package_id);
+      setSubmitResult({ kind: "success", message: "Your package is now under review. You can track its status on your dashboard." });
     } catch (error) {
       if (error instanceof SubmitPackageError) {
         setSubmitResult({ kind: "error", message: error.message, code: error.code ?? String(error.status) });
