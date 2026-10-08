@@ -47,17 +47,6 @@ export function nextRecommendationInfoOpen(
   return interaction === "leave" ? false : open || interaction === "focus" || interaction === "click";
 }
 
-// ─── Image URLs ────────────────────────────────────────────────────────────────
-const IMG = {
-  hero:      "https://images.unsplash.com/photo-1510391532992-e1b94a277a3a?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=1400",
-  tokyo:     "https://images.unsplash.com/photo-1573455494060-c5595004fb6c?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=800",
-  iceland:   "https://images.unsplash.com/photo-1488415032361-b7e238421f1b?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=800",
-  bali:      "https://images.unsplash.com/photo-1711609110590-5ad5c4599e56?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=800",
-  morocco:   "https://images.unsplash.com/photo-1489749798305-4fea3ae63d43?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=800",
-  santorini: "https://images.unsplash.com/photo-1560703650-ef3e0f254ae0?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=800",
-  maldives:  "https://images.unsplash.com/photo-1514282401047-d79a71a590e8?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=800",
-};
-
 // ─── DS Tokens (mirrors CSS custom properties) ─────────────────────────────────
 const C = {
   red:           "#D40119",
@@ -914,14 +903,26 @@ export function MarketplaceScreen() {
                 cursor: "pointer",
               }}
             >
-              {/* Image */}
-              <div style={{ position: "relative", aspectRatio: "3/2", overflow: "hidden" }}>
-                <img className="trip-card-img" src={card.cover_image_url || IMG.hero} alt={card.title} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+              {/* Image — photo-less packages get a quiet placeholder instead of
+                  the shared stock photo (which made every such card identical). */}
+              <div style={{ position: "relative", aspectRatio: "3/2", overflow: "hidden", background: C.subtle }}>
+                {card.cover_image_url ? (
+                  <img className="trip-card-img" src={card.cover_image_url} alt={card.title} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                ) : (
+                  <div aria-hidden="true" style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", color: C.secondary }}>
+                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="3" y="4" width="18" height="16" rx="2" />
+                      <circle cx="9" cy="10" r="2" />
+                      <path d="m3 17 5-4 4 3 4-3 5 4" />
+                    </svg>
+                  </div>
+                )}
                 {card.tags.length > 0 && (
                   <div style={{ position: "absolute", left: 12, bottom: 12, display: "flex", gap: 6, flexWrap: "wrap" }}>
                     {card.tags.slice(0, 3).map((tag) => (
                       <span key={tag} style={{
                         background: "rgba(255,255,255,0.94)", color: C.ink,
+                        border: `1px solid ${C.border}`,
                         fontFamily: "var(--fc-font-body)", fontSize: 12, fontWeight: 600,
                         lineHeight: "16px", padding: "4px 10px", borderRadius: C.radiusPill,
                       }}>{tag}</span>
