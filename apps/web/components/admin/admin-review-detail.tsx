@@ -16,8 +16,11 @@ import {
   formatAdminDestination,
   formatAdminDuration,
   formatSubmittedAt,
+  reviewPhotos,
+  safeImageSrc,
+  type ReviewPhoto,
 } from "../../lib/admin-review";
-import { buildDaysFromPackage, type BuilderDay, type TimelineItem } from "../../lib/itinerary-builder";
+import { buildDaysFromPackage, type BuilderDay, type DayPhoto, type TimelineItem } from "../../lib/itinerary-builder";
 import { APP_ROUTES } from "../../lib/routes";
 import { supabase } from "../../lib/supabase/client";
 import Icon from "../icon";
@@ -157,10 +160,10 @@ function Cover({ pkg }: { pkg: AdminPackageDetail }) {
   return (
     <section className="admin-detail-cover" aria-labelledby="admin-detail-overview-title">
       <div className="admin-detail-cover__media">
-        {pkg.cover_image_url ? (
+        {safeImageSrc(pkg.cover_image_url) ? (
           // The API owns this URL and may return any configured storage host.
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={pkg.cover_image_url} alt={`Cover for ${pkg.title}`} />
+          <img src={safeImageSrc(pkg.cover_image_url)} alt={`Cover for ${pkg.title}`} />
         ) : (
           <div className="admin-detail-cover__placeholder">
             <Icon name="pin" size={24} />
@@ -183,6 +186,82 @@ function Cover({ pkg }: { pkg: AdminPackageDetail }) {
           </ul>
         ) : null}
       </div>
+    </section>
+  );
+}
+
+// Reviewers approve what travellers will see, so every uploaded image is shown
+// here and opens full size in a new tab. An unusable address is flagged instead
+// of silently dropped.
+function PhotoLink({ src, alt, label, className }: { src: string; alt: string; label: string; className?: string }) {
+  const safe = safeImageSrc(src);
+  if (!safe) {
+    return <span className={`admin-detail-photo__invalid ${className ?? ""}`}>Invalid image address</span>;
+  }
+  return (
+    <a className={`admin-detail-photo__link ${className ?? ""}`} href={safe} target="_blank" rel="noopener noreferrer" aria-label={label}>
+      {/* Storage hosts vary per environment, so next/image is not configured for them. */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={safe} alt={alt} loading="lazy" />
+    </a>
+  );
+}
+
+function PhotoStrip({ photos, label }: { photos: DayPhoto[]; label: string }) {
+  if (!photos.length) return null;
+  return (
+    <ul className="admin-detail-photo-strip" aria-label={label}>
+      {photos.map((photo, index) => (
+        <li key={`${photo.media_id ?? photo.src}-${index}`}>
+          <PhotoLink src={photo.src} alt={photo.alt} label={`Open ${photo.alt || "photo"} in a new tab`} />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function PhotoReview({ photos }: { photos: ReviewPhoto[] }) {
+  const unplaced = photos.filter((photo) => !photo.placements.length).length;
+  return (
+    <section className="admin-detail-photos" aria-labelledby="admin-detail-photos-title">
+      <div className="admin-detail-section-heading">
+        <div>
+          <h2 id="admin-detail-photos-title">Photos <span className="admin-detail-photos__count">{photos.length}</span></h2>
+          <p>Check every image the creator uploaded before approving. Select a photo to open it full size.</p>
+        </div>
+      </div>
+      {photos.length ? (
+        <>
+          {unplaced ? (
+            <p className="admin-detail-photos__note" role="status">
+              {unplaced} {unplaced === 1 ? "photo is" : "photos are"} not placed on a day or stop.
+            </p>
+          ) : null}
+          <ul className="admin-detail-photo-grid">
+            {photos.map((photo, index) => (
+              <li key={photo.mediaId || index}>
+                <figure>
+                  <PhotoLink
+                    src={photo.src}
+                    alt={photo.caption || `Package photo ${index + 1}`}
+                    label={`Open photo ${index + 1} in a new tab`}
+                  />
+                  <figcaption>
+                    <span className="admin-detail-photo__badges">
+                      {photo.isCover ? <b>Cover</b> : null}
+                      {photo.placements.length ? null : <b className="admin-detail-photo__warn">Not placed</b>}
+                    </span>
+                    {photo.caption ? <span>{photo.caption}</span> : null}
+                    {photo.placements.length ? <small>{photo.placements.join(", ")}</small> : null}
+                  </figcaption>
+                </figure>
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : (
+        <p className="admin-detail-empty-day">No photos were uploaded for this package.</p>
+      )}
     </section>
   );
 }
@@ -211,6 +290,7 @@ function ItineraryItem({ item }: { item: TimelineItem }) {
         <h4>{item.title}</h4>
         {metadata.length ? <p>{metadata.join(" · ")}</p> : null}
         {item.notes ? <p className="admin-detail-item__notes">{item.notes}</p> : null}
+        <PhotoStrip photos={item.photos ?? []} label={`Photos for ${item.title}`} />
       </div>
       <strong className="admin-detail-item__price">{item.price}</strong>
     </li>
@@ -259,6 +339,7 @@ function Itinerary({
             <strong>{activeDay.items.length} {activeDay.items.length === 1 ? "item" : "items"}</strong>
           </div>
           {activeDay.story ? <p className="admin-detail-day__story">{activeDay.story}</p> : null}
+          <PhotoStrip photos={activeDay.photos ?? []} label={`Photos for day ${activeDay.day}`} />
           {activeDay.items.length ? (
             <ol className="admin-detail-items">
               {activeDay.items.map((item) => <ItineraryItem item={item} key={`${activeDay.id}-${item.id}`} />)}
@@ -476,6 +557,7 @@ export function AdminReviewDetailView(props: AdminReviewDetailViewProps): ReactN
         <div className="admin-detail-layout">
           <div className="admin-detail-main">
             <Cover pkg={props.packageDetail} />
+            <PhotoReview photos={reviewPhotos(props.packageDetail, days)} />
             <Itinerary days={days} selectedDay={props.selectedDay} onSelectDay={props.onSelectDay} />
           </div>
           <DecisionPanel pkg={props.packageDetail} onOpenApprove={props.onOpenApprove} onOpenReject={props.onOpenReject} />

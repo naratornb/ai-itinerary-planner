@@ -235,3 +235,36 @@ test("approve and request-changes stay disabled once the package is not pending"
   const html = render({ status: "conflict", packageDetail: { ...packageDetail, status: "rejected" } });
   assert.equal((html.match(/disabled=""/g) ?? []).length >= 2, true);
 });
+
+test("the review page shows every uploaded photo, flags unplaced ones, and opens them safely", () => {
+  const html = render({
+    packageDetail: {
+      ...packageDetail,
+      cover_image_url: "https://images.example.com/a.jpg",
+      media: [
+        { media_id: "m1", url: "https://images.example.com/a.jpg", caption: "Rice terraces" },
+        { media_id: "m2", url: "https://images.example.com/b.jpg" },
+        { media_id: "m3", url: "javascript:alert(1)" },
+      ],
+      days: [
+        { id: "day-1", day_number: 1, title: "Arrive and settle in", summary: "A gentle first day.", media_ids: ["m1"] },
+        { id: "day-2", day_number: 2, title: "Ubud at your pace", summary: "Food and craft." },
+      ],
+    },
+  });
+
+  assert.match(html, /<h2 id="admin-detail-photos-title">Photos <span[^>]*>3<\/span><\/h2>/);
+  assert.match(html, /href="https:\/\/images\.example\.com\/a\.jpg" target="_blank" rel="noopener noreferrer"/);
+  assert.match(html, /aria-label="Open photo 2 in a new tab"/);
+  assert.match(html, /<b>Cover<\/b>/);
+  assert.match(html, /2 photos are not placed on a day or stop\./);
+  assert.match(html, /Invalid image address/);
+  assert.doesNotMatch(html, /javascript:alert/);
+  assert.match(html, /aria-label="Photos for day 1"/, "day photos appear inside the day panel");
+});
+
+test("a package with no uploads says so instead of hiding the photo section", () => {
+  const html = render();
+  assert.match(html, /Photos <span[^>]*>0<\/span>/);
+  assert.match(html, /No photos were uploaded for this package\./);
+});
