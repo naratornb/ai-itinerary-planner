@@ -531,11 +531,12 @@ export function LoginScreen({ onNav }: { onNav: (s: Screen) => void }) {
         {/* Email field — floating label style */}
         <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <div style={{ position: "relative" }}>
-            <label style={{
+            <label htmlFor="login-email" style={{
               position: "absolute", top: -9, left: 12, background: C.white,
               padding: "0 4px", fontSize: 12, color: C.secondary, lineHeight: 1,
             }}>Email address *</label>
             <input
+              id="login-email"
               type="email" value={email}
               onChange={(e) => setEmail(e.target.value)}
               autoComplete="email"
@@ -599,51 +600,14 @@ export function LoginScreen({ onNav }: { onNav: (s: Screen) => void }) {
           >{isSubmitting ? "Signing in…" : "Sign in"}</button>
         </form>
 
-        {/* OR divider */}
-        <div style={{ display: "flex", alignItems: "center", gap: 12, margin: "20px 0" }}>
-          <div style={{ flex: 1, height: 1, background: C.border }} />
-          <span style={{ fontSize: 13, color: C.secondary }}>OR</span>
-          <div style={{ flex: 1, height: 1, background: C.border }} />
-        </div>
-
-        {/* Social buttons */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {/* Google */}
-          <button style={{
-            display: "flex", alignItems: "center", gap: 14,
-            height: 48, padding: "0 18px",
-            background: C.white, border: `1px solid ${C.border}`, borderRadius: 6,
-            fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 500, color: C.ink,
-            cursor: "pointer",
-          }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = C.subtle; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = C.white; }}
-          >
-            <svg width="20" height="20" viewBox="0 0 18 18" fill="none">
-              <path d="M17.1 9.2c0-.6-.05-1.18-.14-1.74H9v3.3h4.56a3.9 3.9 0 01-1.69 2.56v2.13h2.74C16.3 13.95 17.1 11.77 17.1 9.2z" fill="#4285F4"/>
-              <path d="M9 18c2.29 0 4.21-.76 5.61-2.05l-2.74-2.13c-.76.51-1.73.81-2.87.81-2.2 0-4.07-1.49-4.73-3.49H1.45v2.2A8.99 8.99 0 009 18z" fill="#34A853"/>
-              <path d="M4.27 11.14A5.4 5.4 0 013.98 9c0-.74.13-1.46.29-2.14V4.66H1.45A9 9 0 000 9c0 1.45.35 2.82.96 4.04l2.93-1.9z" fill="#FBBC05"/>
-              <path d="M9 3.58c1.25 0 2.37.43 3.25 1.27l2.43-2.43A8.84 8.84 0 009 0 8.99 8.99 0 001.45 4.66l2.82 2.2C4.93 5.06 6.8 3.58 9 3.58z" fill="#EA4335"/>
-            </svg>
-            Continue with Google
-          </button>
-
-          {/* Facebook */}
-          <button style={{
-            display: "flex", alignItems: "center", gap: 14,
-            height: 48, padding: "0 18px",
-            background: C.white, border: `1px solid ${C.border}`, borderRadius: 6,
-            fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 500, color: C.ink,
-            cursor: "pointer",
-          }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = C.subtle; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = C.white; }}
-          >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="#1877F2">
-              <path d="M24 12.073C24 5.405 18.627 0 12 0S0 5.405 0 12.073C0 18.1 4.388 23.094 10.125 24v-8.437H7.078v-3.49h3.047V9.413c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.234 2.686.234v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.49h-2.796V24C19.612 23.094 24 18.1 24 12.073z"/>
-            </svg>
-            Continue with Facebook
-          </button>
+        {/* Secondary actions */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", margin: "16px 0 0" }}>
+          <Link href="/forgot-password" style={{ fontSize: 13, color: C.blue, textDecoration: "none", fontFamily: "var(--fc-font-body)" }}>
+            Forgot password?
+          </Link>
+          <Link href="/register" style={{ fontSize: 13, color: C.blue, textDecoration: "none", fontFamily: "var(--fc-font-body)" }}>
+            Create account
+          </Link>
         </div>
 
         {/* Partner logos */}
@@ -652,11 +616,6 @@ export function LoginScreen({ onNav }: { onNav: (s: Screen) => void }) {
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", lineHeight: 1 }}>
             <span style={{ fontSize: 8, color: "#00AACC", fontWeight: 700, letterSpacing: "0.05em" }}>cruise</span>
             <span style={{ fontSize: 10, color: "#00AACC", fontWeight: 700 }}>about</span>
-          </div>
-          {/* Travel Marketplace text logo */}
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", lineHeight: 1 }}>
-            <span style={{ fontSize: 9, fontWeight: 900, color: C.red, letterSpacing: "0.04em" }}>FLIGHT</span>
-            <span style={{ fontSize: 9, fontWeight: 900, color: C.red, letterSpacing: "0.04em" }}>CENTRE</span>
           </div>
           {/* Travel Associates */}
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", lineHeight: 1 }}>
