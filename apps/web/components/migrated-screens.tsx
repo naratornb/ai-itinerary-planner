@@ -1126,6 +1126,7 @@ export function MarketplaceScreen() {
 export const CREATOR_DASHBOARD_TABS = [
   "All",
   "Approved",
+  "Live",
   "Under review",
   "Rejected",
   "Drafts",
