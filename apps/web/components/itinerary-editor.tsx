@@ -273,6 +273,16 @@ function subtractMinutes(time: string, durationMinutes: string) {
   return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
 }
 
+/** Marks a field the creator must fill in; the input itself carries aria-required for screen readers. */
+function RequiredMark() {
+  return <span className="required-mark" title="Required" aria-hidden="true">*</span>;
+}
+
+/** A creator pick needs a title and a description: the description is what travellers read. */
+export function isCreatorPickComplete({ title, description }: { title: string; description: string }): boolean {
+  return Boolean(title.trim() && description.trim());
+}
+
 // A stop can only be scheduled after the previous one has actually ended,
 // and must itself end before the next one starts — duration is fixed, so
 // only the start time can move, and moving it can't create an overlap.
@@ -920,14 +930,14 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
                   {p.addFlow === "creator" && <>
                     <div className="inline-add-head"><button className="inline-back" onClick={() => p.setAddFlow("type")} aria-label="Back to item types">‹</button><h4>Add creator pick</h4><button onClick={() => p.setAddingAfter(null)}>Cancel</button></div>
                     <div className="activity-form">
-                      <label className="full"><span>Title</span><input value={p.creatorDraft.title} onChange={(event) => p.setCreatorDraft({ ...p.creatorDraft, title: event.target.value })} placeholder="Your recommendation" /></label>
+                      <label className="full"><span>Title<RequiredMark /></span><input aria-required="true" value={p.creatorDraft.title} onChange={(event) => p.setCreatorDraft({ ...p.creatorDraft, title: event.target.value })} placeholder="Your recommendation" /></label>
                       <label><span>Category</span><SelectField value={p.creatorDraft.category} onChange={(category) => p.setCreatorDraft({ ...p.creatorDraft, category })} options={ACTIVITY_CATEGORIES} ariaLabel="Category" /></label>
                       <label><span>Start time</span><TimeField value={p.creatorDraft.time} onChange={(time) => p.setCreatorDraft({ ...p.creatorDraft, time })} ariaLabel="Start time" /></label>
                       <label><span>Duration (min)</span><SelectField value={p.creatorDraft.duration} onChange={(duration) => p.setCreatorDraft({ ...p.creatorDraft, duration })} options={DURATION_OPTIONS} ariaLabel="Duration (min)" /></label>
                       <label><span>Ends at</span><input value={getEndTime(p.creatorDraft.time, p.creatorDraft.duration)} readOnly /></label>
                       <label className="three-quarter"><span>Address</span><input value={p.creatorDraft.address} onChange={(event) => p.setCreatorDraft({ ...p.creatorDraft, address: event.target.value })} /></label>
                       <label><span>Price</span><div className="price-input"><b>$</b><input inputMode="decimal" value={p.creatorDraft.price} onChange={(event) => p.setCreatorDraft({ ...p.creatorDraft, price: event.target.value.replace(/[^0-9.]/g, "") })} /></div></label>
-                      <label className="full"><span>Why you recommend it</span><textarea value={p.creatorDraft.reason} onChange={(event) => p.setCreatorDraft({ ...p.creatorDraft, reason: event.target.value })} placeholder="Share the detail travellers should know" /></label>
+                      <label className="full"><span>Description<RequiredMark /></span><textarea aria-required="true" value={p.creatorDraft.reason} onChange={(event) => p.setCreatorDraft({ ...p.creatorDraft, reason: event.target.value })} placeholder="Share the detail travellers should know" /></label>
                     </div>
                     <div className="edit-photo">
                       <div className="edit-photo-head"><span>Photos</span><small>Optional &middot; {p.creatorPhotos.length} / {MAX_ITEM_PHOTOS}</small></div>
@@ -942,7 +952,7 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
                         {p.creatorPhotos.length < MAX_ITEM_PHOTOS && <label><input type="file" accept="image/png,image/jpeg" multiple onChange={(event) => { const files = Array.from(event.target.files ?? []).slice(0, MAX_ITEM_PHOTOS - p.creatorPhotos.length); event.target.value = ""; if (files.length) void p.trackUpload(p.addCreatorPhotos(files)); }} /><span className="edit-photo-add-icon"><Icon name="plus" size={16} /></span><span className="edit-photo-add-label">Add photo</span></label>}
                       </div>
                     </div>
-                    <div className="activity-form-actions"><button className="publish-button" disabled={!p.creatorDraft.title.trim()} onClick={p.createCreatorPick}>Add creator pick</button></div>
+                    <div className="activity-form-actions"><button className="publish-button" disabled={!isCreatorPickComplete({ title: p.creatorDraft.title, description: p.creatorDraft.reason })} onClick={p.createCreatorPick}>Add creator pick</button></div>
                   </>}
 
                   {p.addFlow === "activities" && <>
@@ -2176,7 +2186,7 @@ export default function ItineraryEditor({
   };
 
   const createCreatorPick = () => {
-    if (addingAfter === null || !creatorDraft.title.trim()) return;
+    if (addingAfter === null || !isCreatorPickComplete({ title: creatorDraft.title, description: creatorDraft.reason })) return;
     insertItem(addingAfter, {
       time: creatorDraft.time,
       type: "CREATOR PICK",
@@ -2216,8 +2226,9 @@ export default function ItineraryEditor({
 
   const hardErrors = feasResult?.hard_errors ?? [];
   const softWarnings = feasResult?.soft_warnings ?? [];
-  const hasEmptyDay = days.some((day) => day.items.length === 0);
-  const displayScore = hasEmptyDay ? 0 : feasResult?.quality_score;
+  // No score while critical issues block submission — the check leaves it out too.
+  const scoreWithheld = Boolean(feasResult) && hardErrors.length > 0;
+  const displayScore = scoreWithheld ? undefined : feasResult?.quality_score;
 
   const isReadyToSubmit = Boolean(
     feasResult &&
@@ -2235,7 +2246,6 @@ export default function ItineraryEditor({
   const passedChecklist = [
     { label: "All stops have pricing", passed: hardErrors.every((e) => e.error_code !== "MISSING_PRICE") },
     { label: "Accommodation is included", passed: hardErrors.every((e) => e.error_code !== "MISSING_ACCOMMODATION") },
-    { label: "Every day has at least one activity", passed: hardErrors.every((e) => e.error_code !== "EMPTY_DAY") },
     { label: "Flights have enough transfer time after landing", passed: hardErrors.every((e) => e.error_code !== "SHORT_TRANSFER" && e.error_code !== "ACTIVITY_BEFORE_LANDING") },
     { label: "No scheduling conflicts between activities", passed: hardErrors.every((e) => e.error_code !== "TIME_OVERLAP") },
     { label: "Enough travel time between stops", passed: hardErrors.every((e) => e.error_code !== "SHORT_ACTIVITY_GAP" && e.error_code !== "SHORT_TRAVEL_TIME") },
@@ -2270,7 +2280,7 @@ export default function ItineraryEditor({
         void runFeasibilityCheck();
         return;
       }
-      showNotice((displayScore ?? 0) < 70
+      showNotice(!scoreWithheld && (displayScore ?? 0) < 70
         ? `Your trip score is ${displayScore ?? 0}/100. A minimum score of 70 is required to continue. Improve your itinerary and check content again.`
         : "Fix critical feasibility issues and check content again before continuing.");
       return;
@@ -2677,13 +2687,13 @@ export default function ItineraryEditor({
                   </> : <>
                     <div className="edit-categories"><span>Category</span><div>{ACTIVITY_CATEGORIES.map((category) => <button key={category} className={editingItem.category === category ? "selected" : ""} onClick={() => setEditingItem({ ...editingItem, category })}>{category}</button>)}</div></div>
                     <div className="inline-edit-grid activity-details-grid">
-                      <label className="edit-title"><span>Activity</span><input value={editingItem.title} onChange={(event) => setEditingItem({ ...editingItem, title: event.target.value })} autoFocus /></label>
+                      <label className="edit-title"><span>Activity<RequiredMark /></span><input aria-required="true" value={editingItem.title} onChange={(event) => setEditingItem({ ...editingItem, title: event.target.value })} autoFocus /></label>
                       <label><span>Price</span><div className="price-input"><b>$</b><input inputMode="decimal" value={editingItem.price} onChange={(event) => setEditingItem({ ...editingItem, price: event.target.value.replace(/[^0-9.]/g, "") })} /></div></label>
                       <label className="edit-address"><span>Address</span><input value={editingItem.address} onChange={(event) => setEditingItem({ ...editingItem, address: event.target.value })} placeholder="Add an address" /></label>
                       <label><span>Start time</span><TimeField value={editingItem.time} onChange={(time) => setEditingItem({ ...editingItem, time })} ariaLabel="Start time" /></label>
                       <label><span>Duration (min)</span><SelectField value={editingItem.duration} onChange={(duration) => setEditingItem({ ...editingItem, duration })} options={DURATION_OPTIONS} ariaLabel="Duration (min)" /></label>
                       <label><span>Ends at</span><input value={getEndTime(editingItem.time, editingItem.duration)} readOnly /></label>
-                      <label className="edit-notes"><span>Notes</span><textarea value={editingItem.notes} onChange={(event) => setEditingItem({ ...editingItem, notes: event.target.value })} placeholder="Share why this is worth a stop" /></label>
+                      <label className="edit-notes"><span>Description<RequiredMark /></span><textarea aria-required="true" value={editingItem.notes} onChange={(event) => setEditingItem({ ...editingItem, notes: event.target.value })} placeholder="Share why this is worth a stop" /></label>
                     </div>
                   </>}
                   <div className="edit-photo">
@@ -2699,7 +2709,7 @@ export default function ItineraryEditor({
                       {editingItem.photos.length < MAX_ITEM_PHOTOS && <label><input type="file" accept="image/png,image/jpeg" multiple onChange={(event) => { const files = Array.from(event.target.files ?? []).slice(0, MAX_ITEM_PHOTOS - editingItem.photos.length); event.target.value = ""; if (files.length) void trackUpload(addItemPhotos(files)); }} /><span className="edit-photo-add-icon"><Icon name="plus" size={16} /></span><span className="edit-photo-add-label">Add photo</span></label>}
                     </div>
                   </div>
-                  <div className="inline-edit-actions"><button className="quiet-button" onClick={() => setEditingItem(null)}>Cancel</button><button className="publish-button" disabled={!editingItem.title.trim()} onClick={saveEditedItem}>Save changes</button></div>
+                  <div className="inline-edit-actions"><button className="quiet-button" onClick={() => setEditingItem(null)}>Cancel</button><button className="publish-button" disabled={isFixedActivity ? !editingItem.title.trim() : !isCreatorPickComplete({ title: editingItem.title, description: editingItem.notes })} onClick={saveEditedItem}>Save changes</button></div>
                 </section>}
                 <AddStopFlow index={index} {...addFlowProps} />
               </div>})}
@@ -2747,7 +2757,8 @@ export default function ItineraryEditor({
                 <div className={`feas-score-display${!feasResult || resultStale ? " feas-score-display-stale" : scorePassing ? " feas-score-display-pass" : ""}`}>
                   <strong>{displayScore !== undefined ? displayScore : "—"}</strong><span>/100</span>
                 </div>
-                <div className={`score-track${resultStale ? " score-track-stale" : scorePassing ? " score-track-pass" : ""}`} role="meter" aria-label={displayScore !== undefined ? `Package quality score, ${displayScore} out of 100${resultStale ? " (stale — content changed since this was calculated)" : ""}. Minimum score to submit is 70.` : "Package quality score not yet checked. Minimum score to submit is 70."} aria-valuemin={0} aria-valuemax={100} aria-valuenow={displayScore ?? 0}>
+                {scoreWithheld && !resultStale && <p className="feas-score-hint">Fix the critical issues to see your score.</p>}
+                <div className={`score-track${resultStale ? " score-track-stale" : scorePassing ? " score-track-pass" : ""}`} role="meter" aria-label={displayScore !== undefined ? `Package quality score, ${displayScore} out of 100${resultStale ? " (stale — content changed since this was calculated)" : ""}. Minimum score to submit is 70.` : scoreWithheld ? "Package quality score not shown until the critical issues are fixed. Minimum score to submit is 70." : "Package quality score not yet checked. Minimum score to submit is 70."} aria-valuemin={0} aria-valuemax={100} aria-valuenow={displayScore ?? 0}>
                   <span className="score-fill" style={{ width: displayScore !== undefined ? `${Math.min(100, Math.max(0, displayScore))}%` : "0%" }} />
                   <i aria-hidden="true" />
                 </div>

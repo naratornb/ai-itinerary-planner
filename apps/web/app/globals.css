@@ -746,6 +746,7 @@ figure .remove-photo-btn:focus-visible { outline: 2px solid var(--fc-focus-ring)
 .activity-form { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 16px 12px; }
 .activity-form label { min-width: 0; display: grid; gap: 6px; }.activity-form label.full { grid-column: 1 / -1; }.activity-form label.half { grid-column: span 2; }.activity-form label.three-quarter { grid-column: span 3; }
 .activity-form label > span { color: var(--fc-secondary); font-size: 12px; line-height: 16px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+.required-mark { margin-left: 3px; color: var(--fc-red); font-size: 13px; font-weight: 700; line-height: 1; cursor: help; }
 .activity-form input,.activity-form select,.activity-form textarea { width: 100%; min-height: 44px; padding: 0 12px; border: 1px solid var(--fc-border); border-radius: 8px; background-color: #fff; color: var(--fc-ink); font-size: 14px; outline: 0; }
 .activity-form textarea { min-height: 88px; padding: 12px; resize: vertical; }
 .activity-form input:focus,.activity-form select:focus,.activity-form textarea:focus { border-color: var(--fc-blue); box-shadow: 0 0 0 3px var(--fc-focus-ring); }
@@ -934,6 +935,7 @@ figure .remove-photo-btn:focus-visible { outline: 2px solid var(--fc-focus-ring)
 .feas-score-display strong { color: var(--fc-ink); font-size: 36px; line-height: 1; font-weight: 800; font-variant-numeric: tabular-nums; }
 .feas-score-display span { color: var(--fc-secondary); font-size: 15px; line-height: 1; }
 .feas-score-display-stale strong { color: var(--fc-disabled); }
+.feas-score-hint { margin: -6px 0 14px; color: var(--fc-secondary); font-size: 12px; line-height: 16px; }
 .feas-score-display-pass strong { color: var(--fc-success); }
 .score-track { position: relative; height: 8px; border-radius: 999px; background: var(--fc-border); }
 .score-fill { display: block; width: 0%; height: 100%; border-radius: inherit; background: var(--fc-secondary); transition: width 300ms ease-out; }

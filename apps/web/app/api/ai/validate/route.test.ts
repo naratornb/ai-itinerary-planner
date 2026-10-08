@@ -28,6 +28,9 @@ import {
   distanceKm,
   checkTravelTimes,
   keepOutOfCityDailyRange,
+  qualityScore,
+  buildAiProfanityIssue,
+  withFallbackRules,
 } from "./route";
 
 const NO_WAR_ZONES: string[] = [];
@@ -161,6 +164,29 @@ test("isTransferTimeIssue recognizes an R2 duplicate by error_code or rule, so i
   assert.equal(isTransferTimeIssue({ error_code: "OTHER", rule: "R2 – Transfer Time" }), true);
   assert.equal(isTransferTimeIssue({ error_code: "OPENING_HOURS", rule: "R3 – Opening Hours" }), false);
   assert.equal(isTransferTimeIssue(undefined), false);
+});
+
+test("an AI claim about the arrival flight is R2's job whatever rule the AI files it under", () => {
+  // Regression: "before the flight arrival (08:00)" for an 08:30 stop came through under
+  // R15, next to R2's correct "only 30 min later" critical issue.
+  const r15 = { rule: "R15 – General Feasibility", message: "The itinerary schedules an activity (Melbourne Laneways City Tour) before the flight arrival (08:00) on the same day." };
+  const r3 = { rule: "R3 – Opening Hours", message: "The 'Historic Bangkok City Walking Tour' is scheduled to start at 14:00, but the flight arrives at 18:31." };
+  const landed = { rule: "R15 – General Feasibility", message: "Dinner is booked 20 minutes after the plane lands." };
+  for (const issue of [r15, r3, landed]) assert.equal(isTransferTimeIssue(issue), true, issue.message);
+  const unrelated = { rule: "R15 – General Feasibility", message: "An activity named 'Night Market' is scheduled for the morning." };
+  const arriveEarly = { rule: "R3 – Opening Hours", message: "Arrive early: the museum closes at 17:00." };
+  for (const issue of [unrelated, arriveEarly]) assert.equal(isTransferTimeIssue(issue), false, issue.message);
+});
+
+test("an AI travel-time claim is dropped once the gap is an hour or more — no trip across one city takes longer", () => {
+  // Regression: two Melbourne venues ~2 km apart with a 270-min gap got "the trip takes
+  // about 300 min" (the creator pick has no catalog coordinates to check against).
+  const days = [{ day_number: 1, activities: [
+    { activity_name: "Melbourne Laneways City Tour", start_time: "08:30", duration_hours: 1 },
+    { activity_name: "Melbourne Street Food Walking Tour", start_time: "14:00", duration_hours: 2.7 },
+  ] }];
+  const issue = { rule: "R12 – Activity Transfer Time", message: 'Not enough time to get from "Melbourne Laneways City Tour" to "Melbourne Street Food Walking Tour": 270 min between them, but the trip takes about 300 min.' };
+  assert.deepEqual(verifyTransferGaps([issue], days), { blocks: [], warnings: [] });
 });
 
 test("partitionAiHardErrors keeps R3 and R4 as hard errors, demoting everything else to a warning", () => {
@@ -302,6 +328,57 @@ test("a crashed check blocks submission with a retry message instead of passing 
   assert.equal(result.hard_errors.length, 1);
   assert.equal(result.hard_errors[0].error_code, "CHECK_FAILED");
   assert.equal(result.hard_errors[0].severity, "error");
+});
+
+test("no score while there's a critical issue, so a blocked package never reads 100/100", () => {
+  // Regression: a re-check showed 100/100 next to "Day 1 has no accommodation attached".
+  const aiScores = { grammar_score: 1, completeness_score: 1, feasibility_score: 1 };
+  assert.equal(qualityScore(aiScores, 1, 1), 100);
+  assert.equal(qualityScore({ grammar_score: 0.6, completeness_score: 0.8, feasibility_score: 0.9 }, 1, 1), 81);
+});
+
+test("safety blocks and other critical issues leave the score out rather than showing 0", () => {
+  const aiScores = { grammar_score: 1, completeness_score: 1, feasibility_score: 1 };
+  assert.equal(qualityScore(aiScores, 1, 1, 1), undefined, "one critical issue");
+  assert.equal(qualityScore(aiScores, 0, 1, 1), undefined, "safety block");
+  assert.equal(qualityScore(aiScores, 1, 0, 1), undefined, "brand-safety block");
+});
+
+test("a competitor and profanity in the same package are both reported, not just the first", () => {
+  // Regression: "the queue here is shit, so book on Expedia" only showed the competitor error.
+  const days = [{ day_number: 2, activities: [{ activity_name: "Food crawl", description: "The queue here is shit, so book on Expedia instead." }] }];
+  const result = runHardBlockFilters(pkg({ days }), NO_WAR_ZONES, days);
+  assert.deepEqual(result.blocks.map((b) => b.type), ["BrandSafety", "SafetyStatus"]);
+  assert.match(result.blocks[0].message, /expedia/);
+  assert.match(result.blocks[1].message, /Profanity detected in Day 2/);
+});
+
+test("an AI profanity flag blocks only when its quote holds a listed word, even disguised", () => {
+  const days = [{ day_number: 2, activities: [{ activity_name: "Noodles", description: "The S.H.I.T noodles here are great, sh1t you will love them. Honestly shit." }] }];
+  for (const evidence of ["shit", "The S.H.I.T noodles here are great", "sh1t you will love them"]) {
+    const issue = buildAiProfanityIssue({ scores: { contains_profanity: true }, profanity_evidence: evidence }, days);
+    assert.equal(issue?.severity, "error", evidence);
+    assert.match(issue.message, /Profanity detected in Day 2/);
+  }
+});
+
+test("an AI profanity flag on harmless slang only asks the creator to check the wording", () => {
+  // Regression: "gr8 tour tbh ... its lit" was flagged as profanity and zeroed the score.
+  const text = "gr8 tour tbh, u can snap pics of old stuff n temples n stuff its lit";
+  const days = [{ day_number: 2, activities: [{ activity_name: "Photo tour", description: text }] }];
+  const issue = buildAiProfanityIssue({ scores: { contains_profanity: true }, profanity_evidence: text }, days);
+  assert.equal(issue?.severity, "warning");
+  assert.equal(issue.error_code, "CHECK_WORDING");
+  assert.match(issue.message, /Day 2/);
+  assert.equal(buildAiProfanityIssue({ scores: { contains_profanity: false } }, days), null);
+});
+
+test("a rule the code knows but the database doesn't have yet still reaches the AI", () => {
+  const db = [{ rule_code: "R3", rule_name: "Opening Hours", rule_description: "DB wording" }];
+  const rules = withFallbackRules(db);
+  assert.equal(rules.find((r) => r.rule_code === "R3")?.rule_description, "DB wording", "database wording wins");
+  assert.ok(rules.some((r) => r.rule_code === "R23"), "a new code-only rule is added");
+  assert.equal(new Set(rules.map((r) => r.rule_code)).size, rules.length, "no duplicates");
 });
 
 test("the AI's own note about the illegal activity isn't repeated as a warning under the critical issue", () => {

@@ -67,7 +67,9 @@ async function clickSubmit(
     days: [],
     window: { sessionStorage: { setItem: (key: string, value: string) => { sessionStorageWrites[key] = value; } } },
     itinerarySnapshotStorageKey: (id: string) => `package-itinerary-snapshot:${id}`,
-    displayScore: score,
+    // Mirrors the editor: a checked result with critical issues carries no score.
+    scoreWithheld: score !== undefined && critical,
+    displayScore: critical ? undefined : score,
     feasResult: score === undefined ? null : { is_feasible: !critical },
     hardErrors: critical ? [{}] : [],
     isReadyToSubmit: score !== undefined && score >= 70 && !critical && !stale,
