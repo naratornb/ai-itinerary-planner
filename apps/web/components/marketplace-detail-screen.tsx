@@ -704,23 +704,12 @@ export function PackageDetailView({
   return (
     <main style={{ background: color.surface, minHeight: "100vh", color: color.textPrimary }}>
       <div style={{ width: "min(calc(100% - 48px), 1280px)", margin: "0 auto", padding: "0 0 96px" }}>
-        {previewLabel && <div className="creator-preview-notice" role="status" style={{ margin: "24px 0" }}><strong>{previewLabel}</strong><span>Only you can view this package until it is published.</span></div>}
-
-        <HeroOverlay image={cover} alt={pkg.title} height={560} fullBleed overlayTop={
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <button
-              type="button"
-              onClick={onBack}
-              style={{
-                display: "inline-flex", alignItems: "center", gap: 8,
-                border: "none", borderRadius: radius.pill, padding: "10px 16px",
-                background: "rgba(255,255,255,0.94)", color: color.textPrimary,
-                fontSize: 14, fontWeight: 600, cursor: "pointer",
-                boxShadow: "0 2px 8px rgba(0,0,0,0.2)", backdropFilter: "blur(6px)",
-              }}
-            >
+        {previewLabel && (
+          // Sticky so there is always a way out: the in-hero button below scrolls away with the photo.
+          <div className="creator-preview-bar">
+            <button type="button" className="creator-preview-bar__back" onClick={onBack}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M19 12H5M12 19l-7-7 7-7"/>
+                <path d="M19 12H5M12 19l-7-7 7-7" />
               </svg>
               {backLabel}
             </button>
@@ -750,6 +739,30 @@ export function PackageDetailView({
             {tripLength && (
               <span style={{ display: "flex", alignItems: "center", gap: 6 }}><CalendarIcon /> {tripLength}</span>
             )}
+            <div className="creator-preview-notice" role="status"><strong>{previewLabel}</strong><span>Only you can view this package until it is published.</span></div>
+          </div>
+        )}
+
+        <HeroOverlay image={cover} alt={pkg.title} height={560} fullBleed overlayTop={
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            {!previewLabel ? (
+              <button
+                type="button"
+                onClick={onBack}
+                style={{
+                  display: "inline-flex", alignItems: "center", gap: 8,
+                  border: "none", borderRadius: radius.pill, padding: "10px 16px",
+                  background: "rgba(255,255,255,0.94)", color: color.textPrimary,
+                  fontSize: 14, fontWeight: 600, cursor: "pointer",
+                  boxShadow: "0 2px 8px rgba(0,0,0,0.2)", backdropFilter: "blur(6px)",
+                }}
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M19 12H5M12 19l-7-7 7-7"/>
+                </svg>
+                {backLabel}
+              </button>
+            ) : <span />}
             {pkg.max_group_size ? (
               <span style={{ display: "flex", alignItems: "center", gap: 6 }}><PeopleIcon /> Max {pkg.max_group_size} travelers</span>
             ) : null}
