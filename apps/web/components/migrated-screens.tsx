@@ -171,7 +171,7 @@ function BtnSecondary({
 }
 
 // Brand wordmark: Travel Marketplace® and tagline
-function MarketplaceBrandLogo() {
+export function MarketplaceBrandLogo() {
   return (
     <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", gap: 2 }}>
       <div style={{

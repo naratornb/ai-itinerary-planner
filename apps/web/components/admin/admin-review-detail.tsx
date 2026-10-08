@@ -20,6 +20,7 @@ import { buildDaysFromPackage, type BuilderDay, type TimelineItem } from "../../
 import { APP_ROUTES } from "../../lib/routes";
 import { supabase } from "../../lib/supabase/client";
 import Icon from "../icon";
+import { AdminHeader } from "./admin-header";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -121,16 +122,6 @@ function LoadingState() {
       </div>
       <span className="admin-review-sr-only">Loading package review.</span>
     </main>
-  );
-}
-
-function Header({ onSignOut }: { onSignOut: () => void }) {
-  return (
-    <header className="admin-review-header">
-      <Link href={APP_ROUTES.marketplace} className="admin-review-brand">Travel Marketplace</Link>
-      <span className="admin-review-context">Admin workspace</span>
-      <button type="button" onClick={onSignOut}>Sign out</button>
-    </header>
   );
 }
 
@@ -418,7 +409,7 @@ function DecisionModal(props: Pick<
 
 export function AdminReviewDetailView(props: AdminReviewDetailViewProps): ReactNode {
   if (props.status === "loading") {
-    return <div className="admin-review-page"><Header onSignOut={props.onSignOut} /><LoadingState /></div>;
+    return <div className="admin-review-page"><AdminHeader onSignOut={props.onSignOut} /><LoadingState /></div>;
   }
 
   if (!props.packageDetail || props.status === "not-found" || props.status === "forbidden" || props.status === "error") {
@@ -429,7 +420,7 @@ export function AdminReviewDetailView(props: AdminReviewDetailViewProps): ReactN
         : { title: "This package could not be loaded", message: props.errorMessage || "Please check the connection and try again." };
     return (
       <div className="admin-review-page">
-        <Header onSignOut={props.onSignOut} />
+        <AdminHeader onSignOut={props.onSignOut} />
         <main className="admin-detail-shell">
           <Link className="admin-detail-back" href={APP_ROUTES.admin}>← Back to review dashboard</Link>
           <StatePanel
@@ -447,7 +438,7 @@ export function AdminReviewDetailView(props: AdminReviewDetailViewProps): ReactN
   const days = buildDaysFromPackage(props.packageDetail);
   return (
     <div className="admin-review-page">
-      <Header onSignOut={props.onSignOut} />
+      <AdminHeader onSignOut={props.onSignOut} />
       <main className="admin-detail-shell">
         <ReviewIntro pkg={props.packageDetail} />
         {props.status === "conflict" ? (
