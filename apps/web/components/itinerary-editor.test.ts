@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { annotateItems, deriveFlightType, findTimeConflict, flightForItem, referenceFlightPresentation } from "./itinerary-editor";
-import type { TimelineItem } from "../lib/itinerary-builder";
+import { annotateItems, deriveFlightType, findTimeConflict, flightForItem, placeUnassociatedMedia, referenceFlightPresentation, removeItemPhotoFromDays } from "./itinerary-editor";
+import type { BuilderDay, TimelineItem } from "../lib/itinerary-builder";
 
 function item(overrides: Partial<TimelineItem> & { id: number; time: string }): TimelineItem {
   return {
@@ -225,6 +225,79 @@ test("deriveFlightType: missing IATA codes fall back to destination_country", ()
   assert.equal(deriveFlightType(undefined, undefined, "Indonesia"), "international");
 });
 
+function builderDay(day: number, overrides: Partial<BuilderDay> = {}): BuilderDay {
+  return { id: `day-${day}`, day, title: `Day ${day}`, meta: "", items: [], story: "", photos: [], ...overrides };
+}
+
+test("placeUnassociatedMedia returns an unsaved upload to its recorded day", () => {
+  // Regression: a day-3 upload refreshed before Save Draft used to land on
+  // day 1 — media rows have no server-side day, so the pending stash is
+  // the only record of where the photo belongs.
+  const days = [builderDay(1), builderDay(2), builderDay(3)];
+  const media = [{ media_id: "m1", url: "u1", caption: null }];
+
+  const placed = placeUnassociatedMedia(days, media, { m1: 3 });
+
+  assert.equal(placed[2].photos[0]?.media_id, "m1");
+  assert.equal(placed[0].photos.length, 0);
+});
+
+test("placeUnassociatedMedia keeps the day-1 fallback when no pending day was recorded", () => {
+  const days = [builderDay(1), builderDay(2)];
+
+  const placed = placeUnassociatedMedia(days, [{ media_id: "m1", url: "u1" }], {});
+
+  assert.equal(placed[0].photos[0]?.media_id, "m1");
+});
+
+test("placeUnassociatedMedia skips media already associated with a day or an item", () => {
+  const days = [
+    builderDay(1, { photos: [{ src: "u1", alt: "a", media_id: "m1" }] }),
+    builderDay(2, { items: [item({ id: 1, time: "09:00", photos: [{ src: "u2", alt: "b", media_id: "m2" }] })] }),
+  ];
+  const media = [
+    { media_id: "m1", url: "u1" },
+    { media_id: "m2", url: "u2" },
+    { media_id: "m3", url: "u3" },
+  ];
+
+  const placed = placeUnassociatedMedia(days, media, {});
+
+  assert.deepEqual(placed[0].photos.map((photo) => photo.media_id), ["m3", "m1"]);
+  assert.equal(placed[1].photos.length, 0);
+});
+
+test("placeUnassociatedMedia falls back to day 1 when the pending day no longer exists", () => {
+  // The pending stash remembers day 3 but the day was deleted before a
+  // save — the photo still has to surface somewhere rather than vanish.
+  const placed = placeUnassociatedMedia([builderDay(1)], [{ media_id: "m1", url: "u1" }], { m1: 5 });
+
+  assert.equal(placed[0].photos[0]?.media_id, "m1");
+});
+
+test("removing a persisted item photo also clears it from the canonical day state", () => {
+  const days = [
+    builderDay(1, {
+      items: [item({
+        id: 7,
+        time: "09:00",
+        photos: [
+          { src: "target.jpg", alt: "Target", media_id: "m1" },
+          { src: "keep.jpg", alt: "Keep", media_id: "m2" },
+        ],
+      })],
+    }),
+    builderDay(2, {
+      items: [item({ id: 8, time: "10:00", photos: [{ src: "other.jpg", alt: "Other", media_id: "m3" }] })],
+    }),
+  ];
+
+  const updated = removeItemPhotoFromDays(days, 7, "m1");
+
+  assert.deepEqual(updated[0].items[0].photos?.map((photo) => photo.media_id), ["m2"]);
+  assert.deepEqual(updated[1].items[0].photos?.map((photo) => photo.media_id), ["m3"]);
+});
+
 test("flightForItem resolves details for a flight added via Add Stop, which never lands in pkg.flights", () => {
   // Regression: the editor mapped the Nth FLIGHT item to flights[N] of the
   // package. A flight added via "+ Add Stop" isn't in that array, so it
@@ -324,4 +397,15 @@ test("an activity starting after the full buffer is fine", () => {
     { id: 2, time: "20:01", type: "ACTIVITY", title: "Night Market", price: "$0", icon: "star", status: "pass", duration: "60" },
   ] as TimelineItem[];
   assert.equal(annotateItems(items, { time: "18:31", bufferMin: 90, international: true })[0].problem, undefined);
+});
+
+test("on a day before the arrival flight lands, every stop gets the before-landing warning", () => {
+  const items = [
+    { id: 1, time: "09:09", type: "ACTIVITY", title: "Museum", price: "$0", icon: "star", status: "pass", duration: "258" },
+    { id: 2, time: "15:00", type: "FLIGHT", title: "SYD to BKK", price: "$0", icon: "plane", status: "pass" },
+  ] as TimelineItem[];
+  const [museum, flight] = annotateItems(items, { time: "00:31", departureTime: "15:00", bufferMin: 90, international: true, landsOnLaterDay: 2 });
+  assert.equal(museum.problem, "Starts before your flight lands");
+  assert.equal(museum.problemDetail, "Your flight leaves at 15:00 and lands at 00:31 the next day (Day 2), so you're still travelling. Move this to after you arrive.");
+  assert.notEqual(flight.problem, "Starts before your flight lands");
 });

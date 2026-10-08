@@ -60,13 +60,18 @@
       "detail-sidebar-width": { "$value": "320px", "$type": "dimension", "$description": "Wide-screen decision column for one package review" },
       "detail-content-gap": { "$value": "24px", "$type": "dimension", "$description": "Gap between package evidence and the decision column" },
       "detail-stack-breakpoint": { "$value": "900px", "$type": "dimension", "$description": "Breakpoint where the decision column follows the package content" }
+    },
+    "hotel-detail-drawer": {
+      "desktop-width": { "$value": "440px", "$type": "dimension", "$description": "Booking hotel details drawer width" },
+      "mobile-breakpoint": { "$value": "640px", "$type": "dimension", "$description": "Full-width hotel details sheet transition" },
+      "media-aspect-ratio": { "$value": "16 / 9", "$type": "string", "$description": "Neutral hotel photo placeholder ratio" }
     }
   },
   "$extensions": {
     "anydesign": {
       "source": "repository root",
-      "captured_at": "2026-08-13",
-      "method": "source CSS and design documentation inspection",
+      "captured_at": "2026-10-07",
+      "method": "source CSS, booking screenshot, and reference hotel detail structure inspection",
       "spec": "W3C Design Tokens Community Group 2025.10"
     }
   }

@@ -25,3 +25,8 @@ export function creatorPackageRoute(packageId: string, status: string): string {
 export function adminApprovalRoute(packageId: string): string {
   return `/admin/approvals/${encodeURIComponent(packageId)}`;
 }
+
+export function creatorPackageShareRoute(packageId: string, status: string): string | null {
+  if (status !== "live") return null;
+  return `/marketplace/packages/${encodeURIComponent(packageId)}`;
+}

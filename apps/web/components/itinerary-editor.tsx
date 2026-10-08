@@ -40,6 +40,7 @@ import {
   type CreatorHotelDetail,
   type CreatorPackageDetail,
 } from "../lib/creator-api";
+import { pendingMediaStorageKey, parsePendingMediaDays, type PendingMediaDays } from "../lib/pending-media";
 import { itinerarySnapshotStorageKey, parseWizardVibesDraft, wizardVibesStorageKey } from "../lib/review-draft";
 import { APP_ROUTES } from "../lib/routes";
 import { iataOf } from "../lib/ai/itinerary";
@@ -202,6 +203,44 @@ export function referenceFlightPresentation(item: TimelineItem) {
     price: item.price,
     guidance: REFERENCE_FLIGHT_GUIDANCE,
   };
+}
+
+// Media rows carry no day association server-side — Save Draft is what
+// writes package_days.media_ids. Unassociated rows found on load land on
+// their recorded pending day when one exists (uploaded, then refreshed
+// before saving), else on day 1 as they always have.
+// ponytail: a package_media.day_number column is the real fix; this
+// sessionStorage stash only covers the tab that did the upload.
+export function placeUnassociatedMedia(
+  days: BuilderDay[],
+  media: { media_id: string; url: string; caption?: string | null }[],
+  pendingDays: PendingMediaDays,
+): BuilderDay[] {
+  const associatedIds = new Set(days.flatMap((day) => [
+    ...day.photos.flatMap((photo) => photo.media_id ? [photo.media_id] : []),
+    ...day.items.flatMap((item) => item.photos?.flatMap((photo) => photo.media_id ? [photo.media_id] : []) ?? []),
+  ]));
+  const byDay = new Map<number, DayPhoto[]>();
+  for (const entry of media) {
+    if (associatedIds.has(entry.media_id)) continue;
+    const pending = pendingDays[entry.media_id];
+    const index = pending !== undefined && pending >= 1 && pending <= days.length ? pending - 1 : 0;
+    byDay.set(index, [...(byDay.get(index) ?? []), { src: entry.url, alt: entry.caption || "Trip photo", media_id: entry.media_id }]);
+  }
+  if (!byDay.size) return days;
+  return days.map((day, index) => {
+    const orphans = byDay.get(index);
+    return orphans ? { ...day, photos: [...orphans, ...day.photos] } : day;
+  });
+}
+
+export function removeItemPhotoFromDays(days: BuilderDay[], itemId: number, mediaId: string): BuilderDay[] {
+  return days.map((day) => ({
+    ...day,
+    items: day.items.map((item) => item.id === itemId
+      ? { ...item, photos: item.photos?.filter((photo) => photo.media_id !== mediaId) }
+      : item),
+  }));
 }
 
 // Flights resolve their detail data from the item itself — both
@@ -474,7 +513,7 @@ function detectGibberish(text: string): boolean {
  */
 export function annotateItems(
   raw: TimelineItem[],
-  landing?: { time: string; bufferMin: number; international: boolean },
+  landing?: { time: string; departureTime?: string; bufferMin: number; international: boolean; landsOnLaterDay?: number },
 ): TimelineItem[] {
   const isTimedStop = (item: TimelineItem) =>
     item.type !== "FLIGHT" && item.type !== "HOTEL" && REAL_TIME_PATTERN.test(item.time);
@@ -485,6 +524,17 @@ export function annotateItems(
     : undefined;
 
   return raw.map((item, i) => {
+    if (landing?.landsOnLaterDay && isTimedStop(item)) {
+      // A day before the arrival flight lands (an overnight flight lands the next day).
+      return {
+        ...item,
+        status: "critical" as const,
+        problem: "Starts before your flight lands",
+        problemDetail: landing.departureTime
+          ? `Your flight leaves at ${landing.departureTime} and lands at ${landing.time} the next day (Day ${landing.landsOnLaterDay}), so you're still travelling. Move this to after you arrive.`
+          : `Your flight lands at ${landing.time} on Day ${landing.landsOnLaterDay}, so you're still travelling. Move this to after you arrive.`,
+      };
+    }
     if (landing && isTimedStop(item) && toMinutes(item.time) < landingMin) {
       return {
         ...item,
@@ -493,7 +543,7 @@ export function annotateItems(
         problemDetail: `Your flight lands at ${landing.time}. Move this to after you arrive.`,
       };
     }
-    if (landing && item === firstAfterLanding && toMinutes(item.time) < landingMin + landing.bufferMin) {
+    if (landing && !landing.landsOnLaterDay && item === firstAfterLanding && toMinutes(item.time) < landingMin + landing.bufferMin) {
       return {
         ...item,
         status: "critical" as const,
@@ -715,7 +765,7 @@ type AddStopFlowProps = {
   creatorPhotos: DayPhoto[];
   setCreatorPhotos: Dispatch<SetStateAction<DayPhoto[]>>;
   addCreatorPhotos: (files: File[]) => Promise<void>;
-  removeCreatorPhoto: (photo: DayPhoto) => void;
+  removeCreatorPhoto: (photo: DayPhoto) => Promise<void>;
   trackUpload: <T,>(operation: Promise<T>) => Promise<T>;
   toSafeImageSrc: (value: string) => string;
   createCreatorPick: () => void;
@@ -888,7 +938,7 @@ function AddStopFlow({ index, ...p }: AddStopFlowProps & { index: number }) {
                           {index === 0
                             ? <b><Icon name="star" size={10} />Cover</b>
                             : <button type="button" className="set-cover-btn" onClick={() => p.setCreatorPhotos([photo, ...p.creatorPhotos.filter((_, i) => i !== index)])}>Set as cover</button>}
-                          <button type="button" className="remove-photo-btn" aria-label="Remove photo" onClick={() => p.removeCreatorPhoto(photo)}><Icon name="plus" size={10} /></button>
+                          <button type="button" className="remove-photo-btn" aria-label="Remove photo" onClick={() => void p.removeCreatorPhoto(photo)}><Icon name="plus" size={10} /></button>
                         </figure>)}
                         {p.creatorPhotos.length < MAX_ITEM_PHOTOS && <label><input type="file" accept="image/png,image/jpeg" multiple onChange={(event) => { const files = Array.from(event.target.files ?? []).slice(0, MAX_ITEM_PHOTOS - p.creatorPhotos.length); event.target.value = ""; if (files.length) void p.trackUpload(p.addCreatorPhotos(files)); }} /><span className="edit-photo-add-icon"><Icon name="plus" size={16} /></span><span className="edit-photo-add-label">Add photo</span></label>}
                       </div>
@@ -955,6 +1005,10 @@ export default function ItineraryEditor({
   );
   const nextItemId = useRef(1000);
   const pendingUploads = useRef<Set<Promise<unknown>>>(new Set());
+  // Blob previews removed while their upload is still in flight — the
+  // upload's completion handler must not resurrect them (or leave an
+  // orphan media row a refresh would dump back onto a day).
+  const cancelledPreviews = useRef<Set<string>>(new Set());
   const submittingRef = useRef(false);
   const [packageTitle, setPackageTitle] = useState(pkg.title);
   const [titleDraft, setTitleDraft] = useState(pkg.title);
@@ -1036,10 +1090,15 @@ export default function ItineraryEditor({
     const arrival = arrivalLanding(days);
     if (!arrival) return null;
     const international = deriveFlightType(arrival.flight.originIata, arrival.flight.destinationIata, pkg.destination_country) === "international";
-    return { ...arrival, international, bufferMin: TRANSFER_BUFFER_MIN[international ? "international" : "domestic"] };
+    return { ...arrival, departureTime: arrival.flight.departureTime, international, bufferMin: TRANSFER_BUFFER_MIN[international ? "international" : "domestic"] };
   }, [days, pkg.destination_country]);
   const items = useMemo(
-    () => annotateItems(activeDayData?.items ?? [], landing?.dayIndex === activeDay ? landing : undefined),
+    () => annotateItems(
+      activeDayData?.items ?? [],
+      !landing || activeDay > landing.dayIndex ? undefined
+        : activeDay === landing.dayIndex ? landing
+        : { ...landing, landsOnLaterDay: landing.dayIndex + 1 },
+    ),
     [activeDayData, activeDay, landing],
   );
   const story = activeDayData?.story ?? "";
@@ -1153,7 +1212,7 @@ export default function ItineraryEditor({
       // No group_size: there's no editor input for it and no rule uses it (R8 removed).
       // Where the arrival flight lands (overnight flights land the next day) — R2.
       arrival_landing: landing
-        ? { day_number: landing.dayIndex + 1, time: landing.time, flight_type: landing.international ? "international" : "domestic", title: landing.flight.title }
+        ? { day_number: landing.dayIndex + 1, time: landing.time, departure_time: landing.departureTime, flight_type: landing.international ? "international" : "domestic", title: landing.flight.title }
         : null,
       travel_season: travelSeason,
       total_days: days.length,
@@ -1203,6 +1262,8 @@ export default function ItineraryEditor({
               // Catalog activities can't be edited by the creator — the AI is told not
               // to flag their name/address/duration (see buildSystemPrompt).
               source: item.type === "CREATOR PICK" ? "creator" : "catalog",
+              // Catalog id, so R12 can look up the activity's coordinates.
+              source_id: item.type === "CREATOR PICK" ? undefined : item.sourceId,
             })),
         }))
       ),
@@ -1570,8 +1631,16 @@ export default function ItineraryEditor({
     }
   };
 
-  // ponytail: media rows carry no day association server-side, so every
-  // existing photo lands on day 1. Add a day column when it matters.
+  const readPendingDays = (): PendingMediaDays =>
+    parsePendingMediaDays(window.sessionStorage.getItem(pendingMediaStorageKey(pkg.package_id)));
+  const writePendingDays = (next: PendingMediaDays) => {
+    try {
+      window.sessionStorage.setItem(pendingMediaStorageKey(pkg.package_id), JSON.stringify(next));
+    } catch {
+      // best-effort only
+    }
+  };
+
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -1580,26 +1649,26 @@ export default function ItineraryEditor({
       try {
         const media = await listPackageMedia(fetch, API_URL, token, pkg.package_id);
         if (cancelled || !media.length) return;
-        setDays((current) => {
-          const associatedIds = new Set(current.flatMap((day) => [
-            ...day.photos.flatMap((photo) => photo.media_id ? [photo.media_id] : []),
-            ...day.items.flatMap((item) => item.photos?.flatMap((photo) => photo.media_id ? [photo.media_id] : []) ?? []),
-          ]));
-          const legacyMedia = media.filter((entry) => !associatedIds.has(entry.media_id));
-          return current.map((day, index) => index === 0 && legacyMedia.length
-            ? { ...day, photos: [...legacyMedia.map((entry) => ({ src: entry.url, alt: entry.caption || "Trip photo", media_id: entry.media_id })), ...day.photos] }
-            : day);
-        });
+        const pendingDays = readPendingDays();
+        setDays((current) => placeUnassociatedMedia(current, media, pendingDays));
+        // Drop stash entries for rows that no longer exist; entries whose
+        // save has since landed stay inert (associated ids are skipped) and
+        // get swept here once the row is deleted.
+        const live = new Set(media.map((entry) => entry.media_id));
+        const stillPending = Object.fromEntries(Object.entries(pendingDays).filter(([id]) => live.has(id)));
+        if (Object.keys(stillPending).length !== Object.keys(pendingDays).length) writePendingDays(stillPending);
       } catch {
         // A photo list that won't load isn't worth blocking the editor over.
       }
     })();
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pkg.package_id]);
 
   const addDayPhoto = async (file: File) => {
     const dayId = activeDayData?.id;
-    if (!dayId) return;
+    const dayNumber = activeDayData?.day;
+    if (!dayId || dayNumber === undefined) return;
     const preview = URL.createObjectURL(file);
     const dropPreview = () => setDays((current) => current.map((day) => day.id === dayId
       ? { ...day, photos: day.photos.filter((photo) => photo.src !== preview) }
@@ -1611,6 +1680,14 @@ export default function ItineraryEditor({
       const token = await accessToken();
       if (!token) throw new Error("Your session expired. Please sign in again.");
       const uploaded = await uploadPackageMedia(fetch, API_URL, token, pkg.package_id, file);
+      if (cancelledPreviews.current.has(preview)) {
+        // Removed while the upload was in flight — delete the row so a
+        // refresh can't resurrect it as an unassociated photo.
+        cancelledPreviews.current.delete(preview);
+        try { await deletePackageMedia(fetch, API_URL, token, uploaded.media_id); } catch { /* row lingers unassociated; harmless */ }
+        return;
+      }
+      writePendingDays({ ...readPendingDays(), [uploaded.media_id]: dayNumber });
       setDays((current) => current.map((day) => day.id === dayId ? {
         ...day,
         photos: day.photos.map((photo) => photo.src === preview
@@ -1629,11 +1706,20 @@ export default function ItineraryEditor({
   const removeDayPhoto = async (photo: DayPhoto) => {
     const dayId = activeDayData?.id;
     if (!dayId) return;
-    if (photo.media_id) {
+    if (!photo.media_id) {
+      // Still uploading — flag the preview so its completion handler
+      // deletes the fresh row instead of swapping it into state.
+      cancelledPreviews.current.add(photo.src);
+    } else {
       try {
         const token = await accessToken();
         if (!token) throw new Error("Your session expired. Please sign in again.");
         await deletePackageMedia(fetch, API_URL, token, photo.media_id);
+        const pending = readPendingDays();
+        if (photo.media_id in pending) {
+          delete pending[photo.media_id];
+          writePendingDays(pending);
+        }
       } catch (error) {
         showNotice(error instanceof Error ? error.message : "Unable to remove this photo.");
         return;
@@ -1651,6 +1737,7 @@ export default function ItineraryEditor({
   };
 
   const addItemPhotos = async (files: File[]) => {
+    const dayNumber = activeDayData?.day;
     const previews = files.map((file) => ({
       file,
       photo: { src: URL.createObjectURL(file), alt: file.name } satisfies DayPhoto,
@@ -1666,16 +1753,32 @@ export default function ItineraryEditor({
         fileName: file.name,
         media: await uploadPackageMedia(fetch, API_URL, token, pkg.package_id, file),
       })));
+      const live: typeof uploaded = [];
+      for (const entry of uploaded) {
+        if (cancelledPreviews.current.has(entry.preview)) {
+          // Removed while the upload was in flight — delete the row so a
+          // refresh can't resurrect it as an unassociated photo.
+          cancelledPreviews.current.delete(entry.preview);
+          try { await deletePackageMedia(fetch, API_URL, token, entry.media.media_id); } catch { /* row lingers unassociated; harmless */ }
+        } else {
+          live.push(entry);
+        }
+      }
+      if (dayNumber !== undefined && live.length) {
+        const pending = readPendingDays();
+        live.forEach(({ media }) => { pending[media.media_id] = dayNumber; });
+        writePendingDays(pending);
+      }
       setEditingItem((current) => current ? {
         ...current,
         photos: current.photos.map((photo) => {
-          const match = uploaded.find(({ preview }) => preview === photo.src);
+          const match = live.find(({ preview }) => preview === photo.src);
           return match
             ? { src: match.media.url, alt: match.fileName, media_id: match.media.media_id }
             : photo;
         }),
       } : current);
-      showNotice(`${files.length} photo${files.length === 1 ? "" : "s"} uploaded`);
+      showNotice(`${live.length} photo${live.length === 1 ? "" : "s"} uploaded`);
     } catch (error) {
       const previewUrls = new Set(previews.map(({ photo }) => photo.src));
       setEditingItem((current) => current
@@ -1687,15 +1790,39 @@ export default function ItineraryEditor({
     }
   };
 
-  const removeItemPhoto = (photo: DayPhoto) => {
-    // Item edits are cancellable, so remove only the association here. The
-    // package media itself remains available until a later cleanup policy.
+  const removeItemPhoto = async (photo: DayPhoto) => {
+    const itemId = editingItem?.id;
+    const mediaId = photo.media_id;
+    if (!mediaId) {
+      // Still uploading — flag the preview so its completion handler
+      // deletes the fresh row instead of swapping it into state.
+      cancelledPreviews.current.add(photo.src);
+    } else {
+      try {
+        const token = await accessToken();
+        if (!token) throw new Error("Your session expired. Please sign in again.");
+        await deletePackageMedia(fetch, API_URL, token, mediaId);
+        const pending = readPendingDays();
+        if (mediaId in pending) {
+          delete pending[mediaId];
+          writePendingDays(pending);
+        }
+      } catch (error) {
+        showNotice(error instanceof Error ? error.message : "Unable to remove this photo.");
+        return;
+      }
+      if (itemId !== undefined) {
+        setDays((current) => removeItemPhotoFromDays(current, itemId, mediaId));
+      }
+    }
     setEditingItem((current) => current
+      && current.id === itemId
       ? { ...current, photos: current.photos.filter((entry) => entry.src !== photo.src) }
       : current);
   };
 
   const addCreatorPhotos = async (files: File[]) => {
+    const dayNumber = activeDayData?.day;
     const previews = files.map((file) => ({
       file,
       photo: { src: URL.createObjectURL(file), alt: file.name } satisfies DayPhoto,
@@ -1709,13 +1836,27 @@ export default function ItineraryEditor({
         fileName: file.name,
         media: await uploadPackageMedia(fetch, API_URL, token, pkg.package_id, file),
       })));
+      const live: typeof uploaded = [];
+      for (const entry of uploaded) {
+        if (cancelledPreviews.current.has(entry.preview)) {
+          cancelledPreviews.current.delete(entry.preview);
+          try { await deletePackageMedia(fetch, API_URL, token, entry.media.media_id); } catch { /* row lingers unassociated; harmless */ }
+        } else {
+          live.push(entry);
+        }
+      }
+      if (dayNumber !== undefined && live.length) {
+        const pending = readPendingDays();
+        live.forEach(({ media }) => { pending[media.media_id] = dayNumber; });
+        writePendingDays(pending);
+      }
       setCreatorPhotos((current) => current.map((photo) => {
-        const match = uploaded.find(({ preview }) => preview === photo.src);
+        const match = live.find(({ preview }) => preview === photo.src);
         return match
           ? { src: match.media.url, alt: match.fileName, media_id: match.media.media_id }
           : photo;
       }));
-      showNotice(`${files.length} photo${files.length === 1 ? "" : "s"} uploaded`);
+      showNotice(`${live.length} photo${live.length === 1 ? "" : "s"} uploaded`);
     } catch (error) {
       const previewUrls = new Set(previews.map(({ photo }) => photo.src));
       setCreatorPhotos((current) => current.filter((photo) => !previewUrls.has(photo.src)));
@@ -1725,7 +1866,24 @@ export default function ItineraryEditor({
     }
   };
 
-  const removeCreatorPhoto = (photo: DayPhoto) => {
+  const removeCreatorPhoto = async (photo: DayPhoto) => {
+    if (!photo.media_id) {
+      cancelledPreviews.current.add(photo.src);
+    } else {
+      try {
+        const token = await accessToken();
+        if (!token) throw new Error("Your session expired. Please sign in again.");
+        await deletePackageMedia(fetch, API_URL, token, photo.media_id);
+        const pending = readPendingDays();
+        if (photo.media_id in pending) {
+          delete pending[photo.media_id];
+          writePendingDays(pending);
+        }
+      } catch (error) {
+        showNotice(error instanceof Error ? error.message : "Unable to remove this photo.");
+        return;
+      }
+    }
     setCreatorPhotos((current) => current.filter((entry) => entry.src !== photo.src));
   };
 
@@ -2081,7 +2239,7 @@ export default function ItineraryEditor({
     { label: "Every day has at least one activity", passed: hardErrors.every((e) => e.error_code !== "EMPTY_DAY") },
     { label: "Flights have enough transfer time after landing", passed: hardErrors.every((e) => e.error_code !== "SHORT_TRANSFER" && e.error_code !== "ACTIVITY_BEFORE_LANDING") },
     { label: "No scheduling conflicts between activities", passed: hardErrors.every((e) => e.error_code !== "TIME_OVERLAP") },
-    { label: "Enough travel time between stops", passed: hardErrors.every((e) => e.error_code !== "SHORT_ACTIVITY_GAP") },
+    { label: "Enough travel time between stops", passed: hardErrors.every((e) => e.error_code !== "SHORT_ACTIVITY_GAP" && e.error_code !== "SHORT_TRAVEL_TIME") },
     { label: "Daily schedule leaves room for travel between stops", passed: hardErrors.every((e) => e.error_code !== "SCHEDULE_TOO_PACKED") },
     { label: "Package has at least one photo", passed: hardErrors.every((e) => e.error_code !== "MISSING_PHOTOS") },
     { label: "No banned competitor mentions", passed: hardErrors.every((e) => e.rule !== "BrandSafety") },
@@ -2283,6 +2441,7 @@ export default function ItineraryEditor({
               <div className="day-photo-single">
                 {photos.map((photo) => <figure key={photo.src}>
                   <img src={toSafeImageSrc(photo.src)} alt={photo.alt} />
+                  <button type="button" className="remove-photo-btn" aria-label="Remove photo" onClick={() => { void removeDayPhoto(photo); }}><Icon name="plus" size={10} /></button>
                   <label className="change-photo-btn" aria-label={`Change ${photo.alt}`}>
                     <input type="file" accept="image/png,image/jpeg" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (!file) return; void trackUpload(changeDayPhoto(photo, file)); }} />
                     Change photo
@@ -2541,7 +2700,7 @@ export default function ItineraryEditor({
                         {index === 0
                           ? <b><Icon name="star" size={10} />Cover</b>
                           : <button type="button" className="set-cover-btn" onClick={() => setEditingItem({ ...editingItem, photos: [photo, ...editingItem.photos.filter((_, i) => i !== index)] })}>Set as cover</button>}
-                        <button type="button" className="remove-photo-btn" aria-label="Remove photo" onClick={() => removeItemPhoto(photo)}><Icon name="plus" size={10} /></button>
+                        <button type="button" className="remove-photo-btn" aria-label="Remove photo" onClick={() => void removeItemPhoto(photo)}><Icon name="plus" size={10} /></button>
                       </figure>)}
                       {editingItem.photos.length < MAX_ITEM_PHOTOS && <label><input type="file" accept="image/png,image/jpeg" multiple onChange={(event) => { const files = Array.from(event.target.files ?? []).slice(0, MAX_ITEM_PHOTOS - editingItem.photos.length); event.target.value = ""; if (files.length) void trackUpload(addItemPhotos(files)); }} /><span className="edit-photo-add-icon"><Icon name="plus" size={16} /></span><span className="edit-photo-add-label">Add photo</span></label>}
                     </div>

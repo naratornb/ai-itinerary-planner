@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { adminApprovalRoute, APP_ROUTES, creatorPackageRoute, routeFor } from "./routes";
+import {
+  adminApprovalRoute,
+  APP_ROUTES,
+  creatorPackageRoute,
+  creatorPackageShareRoute,
+  routeFor,
+} from "./routes";
 
 test("every migrated screen has a stable absolute route", () => {
   assert.deepEqual(APP_ROUTES, {
@@ -28,6 +34,15 @@ test("a live package opens its public marketplace detail", () => {
     creatorPackageRoute("package/1", "live"),
     "/marketplace/packages/package%2F1",
   );
+});
+
+test("only a live package has a public share route", () => {
+  assert.equal(
+    creatorPackageShareRoute("package/1", "live"),
+    "/marketplace/packages/package%2F1",
+  );
+  assert.equal(creatorPackageShareRoute("package-1", "approved"), null);
+  assert.equal(creatorPackageShareRoute("package-1", "draft"), null);
 });
 
 test("a package that is neither approved nor live opens in the editor", () => {
