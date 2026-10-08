@@ -1,14 +1,16 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import Icon from "./icon";
+import AiDisclaimer from "./ai-disclaimer";
 import {
   computePackagePrice,
   buildDaysFromPackage,
   formatMinutes,
   summarizeDay,
   summarizePackageComponents,
+  type BuilderDay,
 } from "../lib/itinerary-builder";
 import {
   deletePackageMedia,
@@ -18,6 +20,7 @@ import {
   uploadPackageMedia,
   SubmitPackageError,
   type CreatorPackageDetail,
+  type PackageDayInput,
   type PackageMedia,
 } from "../lib/creator-api";
 import {
@@ -38,6 +41,20 @@ type SubmitResult = { kind: "success" | "error"; message: string; code?: string 
 
 const capitalize = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
 
+// The save RPC upserts every supplied day row wholesale: a day object sent
+// without media_ids/meta is written back with both emptied, so omitting them
+// here wipes day photos and meta the editor already saved. Mirrors the field
+// set itinerary-editor's buildPackageUpdate sends for days.
+export function buildReviewDayUpdates(days: BuilderDay[]): PackageDayInput[] {
+  return days.map((day, index) => ({
+    day_number: index + 1,
+    title: day.title === `Day ${index + 1}` ? null : day.title || null,
+    summary: day.story || null,
+    meta: day.meta || null,
+    media_ids: day.photos.flatMap((photo) => photo.media_id ? [photo.media_id] : []),
+  }));
+}
+
 export default function ItineraryReview({
   pkg,
   onBackToEditor,
@@ -47,11 +64,10 @@ export default function ItineraryReview({
   onBackToEditor: () => void;
   onBackToDashboard: () => void;
 }) {
-  // Flights/hotels/activities added in the editor this session aren't saved
-  // by PUT yet (see itinerary-editor.tsx's saveDraft), so this prefers the
-  // snapshot the editor wrote right before navigating here over a fresh —
-  // and possibly stale — fetch. Falls back to the fetched package for a
-  // direct visit (e.g. a reload, or a link from elsewhere).
+  // Prefers the snapshot the editor wrote right before navigating here so
+  // this page shows exactly what was on screen there, without re-fetching.
+  // Falls back to the fetched package for a direct visit (e.g. a reload, or
+  // a link from elsewhere).
   const [{ days, packageTitle }] = useState(() => {
     if (typeof window !== "undefined") {
       const snapshot = parseItinerarySnapshot(window.sessionStorage.getItem(itinerarySnapshotStorageKey(pkg.package_id)));
@@ -81,6 +97,11 @@ export default function ItineraryReview({
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [uploadingCount, setUploadingCount] = useState(0);
+  // A pending cover photo can be removed while its upload is still running —
+  // the temp media_id doesn't exist server-side yet, so the finished row must
+  // be deleted when the upload resolves rather than swapped into the list.
+  const cancelledPreviews = useRef(new Set<string>());
   const [submitResult, setSubmitResult] = useState<SubmitResult | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [notice, setNotice] = useState("");
@@ -95,9 +116,9 @@ export default function ItineraryReview({
   const backendCoverId = photos.find((photo) => photo.is_cover)?.media_id ?? null;
   const coverMediaId = reviewDraft.coverMediaId ?? backendCoverId ?? photos[0]?.media_id ?? null;
 
-  // Persisted client-side only: PUT /packages/{id} doesn't accept description
-  // or a cover reference yet (see the Sept 2026 save/submit handover) — this
-  // is what lets a trip to the editor and back resume exactly where it left off.
+  // The description persists via PUT, but the cover pick has no server field —
+  // this stash is what lets a trip to the editor and back resume exactly
+  // where it left off.
   useEffect(() => {
     try {
       window.sessionStorage.setItem(reviewDraftStorageKey(pkg.package_id), JSON.stringify(reviewDraft));
@@ -136,22 +157,22 @@ export default function ItineraryReview({
     });
   };
 
+  const persistReview = async (token: string) => {
+    await updatePackage(fetch, API_URL, token, pkg.package_id, {
+      title: packageTitle,
+      description: reviewDraft.description,
+      base_price_aud: Math.round(packagePrice),
+      days: buildReviewDayUpdates(days),
+    });
+  };
+
   const saveDraft = async () => {
-    if (saving) return;
+    if (saving || uploadingCount > 0) return;
     setSaving(true);
     try {
       const token = await accessToken();
       if (!token) throw new Error("Your session expired. Please sign in again.");
-      await updatePackage(fetch, API_URL, token, pkg.package_id, {
-        title: packageTitle,
-        description: reviewDraft.description,
-        base_price_aud: Math.round(packagePrice),
-        days: days.map((day, index) => ({
-          day_number: index + 1,
-          title: day.title === `Day ${index + 1}` ? null : day.title || null,
-          summary: day.story || null,
-        })),
-      });
+      await persistReview(token);
       showNotice("Draft saved");
     } catch (error) {
       showNotice(error instanceof Error ? error.message : "Unable to save this draft.");
@@ -212,22 +233,37 @@ export default function ItineraryReview({
     const isFirstCover = coverMediaId === null;
     const preview = URL.createObjectURL(file);
     const tempId = `pending-${preview}`;
+    setUploadingCount((count) => count + 1);
     setPhotos((current) => [...current, { media_id: tempId, package_id: pkg.package_id, media_type: "image", url: preview, caption: file.name, is_cover: isFirstCover }]);
     try {
       const token = await accessToken();
       if (!token) throw new Error("Your session expired. Please sign in again.");
       const uploaded = await uploadPackageMedia(fetch, API_URL, token, pkg.package_id, file, isFirstCover);
+      if (cancelledPreviews.current.has(tempId)) {
+        cancelledPreviews.current.delete(tempId);
+        await deletePackageMedia(fetch, API_URL, token, uploaded.media_id).catch(() => {});
+        return;
+      }
       setPhotos((current) => current.map((photo) => (photo.media_id === tempId ? uploaded : photo)));
       showNotice("Photo uploaded");
     } catch (error) {
+      cancelledPreviews.current.delete(tempId);
       setPhotos((current) => current.filter((photo) => photo.media_id !== tempId));
       showNotice(error instanceof Error ? error.message : "Unable to upload this photo.");
     } finally {
+      setUploadingCount((count) => Math.max(0, count - 1));
       URL.revokeObjectURL(preview);
     }
   };
 
   const removePhoto = async (photo: PackageMedia) => {
+    // Still uploading — no server row exists to delete yet, so mark the
+    // preview cancelled; addCoverPhoto deletes the finished row instead.
+    if (photo.media_id.startsWith("pending-")) {
+      cancelledPreviews.current.add(photo.media_id);
+      setPhotos((current) => current.filter((entry) => entry.media_id !== photo.media_id));
+      return;
+    }
     try {
       const token = await accessToken();
       if (!token) throw new Error("Your session expired. Please sign in again.");
@@ -241,13 +277,16 @@ export default function ItineraryReview({
   };
 
   const handleSubmit = async () => {
-    if (submitting) return;
+    if (submitting || uploadingCount > 0) return;
     setSubmitting(true);
     try {
       const token = await accessToken();
       if (!token) throw new Error("Your session expired. Please sign in again.");
-      const result = await submitPackage(fetch, API_URL, token, pkg.package_id);
-      setSubmitResult({ kind: "success", message: `This package's status is now "${result.status}". An admin will review it next.` });
+      // The description lives in page state — submitting without persisting it
+      // shipped the stale server copy and stranded this page's edits.
+      await persistReview(token);
+      await submitPackage(fetch, API_URL, token, pkg.package_id);
+      setSubmitResult({ kind: "success", message: "Your package is now under review. You can track its status on your dashboard." });
     } catch (error) {
       if (error instanceof SubmitPackageError) {
         setSubmitResult({ kind: "error", message: error.message, code: error.code ?? String(error.status) });
@@ -265,9 +304,9 @@ export default function ItineraryReview({
         <button className="text-action back-action" onClick={onBackToEditor} aria-label="Back to editor"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg> Back to editor</button>
         <div className="editor-title-block"><span className="editor-kicker">Finalise & review</span><h1>Finalise your package</h1></div>
         <div className="editor-actions">
-          <button className="quiet-button" disabled={saving} onClick={() => { void saveDraft(); }}>{saving ? "Saving…" : "Save Draft"}</button>
+          <button className="quiet-button" disabled={saving || uploadingCount > 0} onClick={() => { void saveDraft(); }}>{saving ? "Saving…" : "Save Draft"}</button>
           <button className="quiet-button" onClick={() => setPreviewOpen(true)}>Preview</button>
-          <button className="publish-button" disabled={submitting} onClick={() => { void handleSubmit(); }}>{submitting ? "Submitting…" : "Submit for Review"}</button>
+          <button className="publish-button" disabled={submitting || uploadingCount > 0} onClick={() => { void handleSubmit(); }}>{uploadingCount > 0 ? `Uploading ${uploadingCount}…` : submitting ? "Submitting…" : "Submit for Review"}</button>
         </div>
       </header>
 
@@ -333,6 +372,7 @@ export default function ItineraryReview({
               <button className="ai-button" disabled={generating} aria-label="Generate description with AI" onClick={() => { void generateDescription(); }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m12 3 1.2 3.8L17 8l-3.8 1.2L12 13l-1.2-3.8L7 8l3.8-1.2zM18 14l.8 2.2L21 17l-2.2.8L18 20l-.8-2.2L15 17l2.2-.8z" /></svg> {generating ? "Generating…" : "Generate with AI"}</button>
             </div>
             <textarea value={reviewDraft.description} onChange={(event) => setReviewDraft((current) => ({ ...current, description: event.target.value }))} placeholder="Describe this package for travellers…" aria-label="Package description" />
+            <AiDisclaimer />
           </div>
         </section>
 

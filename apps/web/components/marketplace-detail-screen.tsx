@@ -7,7 +7,7 @@ import { fetchMarketplacePackage, type MarketplacePackageDetail, type Marketplac
 import { supabase } from "../lib/supabase/client";
 import { assignDayImages, buildStopImages, formatTripLength, initials } from "../lib/marketplace-detail";
 import { buildDaysFromPackage, type TimelineItem } from "../lib/itinerary-builder";
-import { dateAfter } from "../lib/booking-options";
+import { dateAfter, pickFlightLegs } from "../lib/booking-options";
 import { vibeLabelsFromTags } from "../lib/vibes";
 import type { CreatorPackageDetail } from "../lib/creator-api";
 
@@ -182,6 +182,18 @@ function Chevron({ up }: { up: boolean }) {
   );
 }
 
+// The picker's visible month: the selected value's, else the first catalog
+// date's, else today. "" → NaN dates (empty grid, "Invalid Date") and a
+// RangeError when the month nav runs toISOString on an Invalid Date.
+export function pickerMonth(value: string, dates: string[]): string {
+  const candidate = (value || dates[0] || "").slice(0, 7);
+  return /^\d{4}-\d{2}$/.test(candidate) ? candidate : new Date().toISOString().slice(0, 7);
+}
+
+export function includedFlightLabel(hasReturn: boolean): string {
+  return hasReturn ? "Return flights" : "Flight";
+}
+
 // Calendar popover for the departure field — a departure is only valid on a
 // day the outbound route actually flies, so the grid enables catalog dates
 // and disables the rest rather than allowing free input.
@@ -192,7 +204,7 @@ export function DepartureDatePicker({ label, dates, value, onChange }: {
   onChange: (id: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [month, setMonth] = useState(value.slice(0, 7)); // "YYYY-MM"
+  const [month, setMonth] = useState(() => pickerMonth(value, dates)); // "YYYY-MM"
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const valid = new Set(dates);
@@ -248,7 +260,7 @@ export function DepartureDatePicker({ label, dates, value, onChange }: {
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-label={label}
-        onClick={() => { setMonth(value.slice(0, 7)); setOpen((o) => !o); }}
+        onClick={() => { setMonth(pickerMonth(value, dates)); setOpen((o) => !o); }}
         style={{
           ...fieldStyle,
           marginTop: 0,
@@ -256,7 +268,7 @@ export function DepartureDatePicker({ label, dates, value, onChange }: {
           padding: "10px 12px", cursor: "pointer", fontFamily: "inherit",
         }}
       >
-        <span style={{ flex: 1, minWidth: 0, textAlign: "left" }}>{formatDateLabel(value)}</span>
+        <span style={{ flex: 1, minWidth: 0, textAlign: "left", ...(value ? {} : { color: color.textDisabled, fontWeight: 400 }) }}>{value ? formatDateLabel(value) : "Select a departure date"}</span>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={color.textSecondary} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
           <rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4M8 2v4M3 10h18" />
         </svg>
@@ -594,9 +606,7 @@ export function PackageDetailView({
   };
   const builderDays = buildDaysFromPackage(timelineInput);
 
-  const legs = [...(pkg.flights ?? [])].sort((a, b) => (a.day_number ?? 0) - (b.day_number ?? 0));
-  const outboundFlight = legs.find((f) => f.day_number === 1) ?? legs[0] ?? null;
-  const returnFlight = legs.length > 1 ? legs[legs.length - 1] : null;
+  const { outbound: outboundFlight, returnLeg: returnFlight } = pickFlightLegs(pkg.flights);
   const primaryHotel = pkg.hotels?.[0] ?? null;
   const hotelNights = primaryHotel?.check_in_day != null && primaryHotel?.check_out_day != null
     ? primaryHotel.check_out_day - primaryHotel.check_in_day
@@ -630,7 +640,7 @@ export function PackageDetailView({
   const includedItems = [
     outboundFlight && {
       icon: <StopIcon name="plane" size={20} stroke={color.action} />,
-      label: "Return flights",
+      label: includedFlightLabel(returnFlight !== null),
       value: [iataCode(outboundFlight.origin_iata), iataCode(outboundFlight.destination_iata)].filter(Boolean).join(" – "),
       sub: outboundFlight.airline ?? null,
     },
