@@ -6,42 +6,51 @@ export function formatTripLength(durationDays: number | null | undefined): strin
   return `${durationDays} Day${durationDays === 1 ? "" : "s"} / ${nights} Night${nights === 1 ? "" : "s"}`;
 }
 
-// Index-maps one media item per slot (a day, or a day's stop list) — the
-// caller decides what a "slot" is, this just needs how many there are. Slots
-// with no photo get null rather than a shared stand-in: reusing one stock
-// image plasters a photo-less package with the same picture everywhere.
-export function assignDayImages(
-  slotCount: number,
-  media: MediaLike[] | undefined,
-): (string | null)[] {
-  const sortedMedia = [...(media ?? [])].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
-  return Array.from({ length: slotCount }, (_, index) => sortedMedia[index]?.media_url || sortedMedia[index]?.url || null);
-}
+type PhotoLike = { src: string };
+export type PlannedDay = { photos?: PhotoLike[]; items?: { photos?: PhotoLike[] }[] };
 
-// Distributes a shared media pool across a day's stops: the first stop takes
-// up to 6 photos (so a richly-photographed stop can show a real mosaic),
-// everything after gets one each from what's left. Stops past the end of the
-// pool get an empty list — never fabricating a photo that doesn't exist.
-export function buildStopImages(
-  itemCount: number,
+/**
+ * Which photo goes where on the day-by-day list. Every photo is shown at most
+ * once, so the same picture is never repeated across days and stops (or across
+ * the per-night rows of one hotel stay), and a slot with no photo gets none —
+ * never a stand-in.
+ *
+ * - Photos linked to days and stops (media_ids) are used as the creator placed
+ *   them: a day's first photo is its header, a stop's photos its mosaic.
+ * - With no links at all, the uploads other than the cover (the hero already
+ *   shows it) become day headers in order, one each, until they run out.
+ */
+export function planItineraryPhotos(
+  days: PlannedDay[],
   media: MediaLike[] | undefined,
-): string[][] {
-  const sorted = [...(media ?? [])].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
-  const urlAt = (index: number) => sorted[index]?.media_url || sorted[index]?.url;
-  const result: string[][] = [];
-  let cursor = 0;
-  for (let i = 0; i < itemCount; i += 1) {
-    if (i === 0) {
-      const firstBatch = sorted.slice(0, 6).map((_, j) => urlAt(j)).filter((url): url is string => Boolean(url));
-      result.push(firstBatch);
-      cursor = firstBatch.length;
-    } else {
-      const url = urlAt(cursor);
-      result.push(url ? [url] : []);
-      cursor += 1;
-    }
+  coverUrl: string | null | undefined,
+): { dayImages: (string | null)[]; stopImages: string[][][] } {
+  const seen = new Set<string>();
+  const unseen = (src: string) => {
+    if (!src || seen.has(src)) return false;
+    seen.add(src);
+    return true;
+  };
+  const linked = days.some((day) =>
+    (day.photos?.length ?? 0) > 0 || (day.items ?? []).some((item) => (item.photos?.length ?? 0) > 0));
+
+  if (linked) {
+    const dayImages = days.map((day) => (day.photos ?? []).map((photo) => photo.src).find(unseen) ?? null);
+    const stopImages = days.map((day) =>
+      (day.items ?? []).map((item) => (item.photos ?? []).map((photo) => photo.src).filter(unseen).slice(0, 6)));
+    return { dayImages, stopImages };
   }
-  return result;
+
+  const pool = [...new Set(
+    [...(media ?? [])]
+      .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+      .map((item) => item.media_url || item.url)
+      .filter((url): url is string => Boolean(url) && url !== coverUrl),
+  )];
+  return {
+    dayImages: days.map((_, index) => pool[index] ?? null),
+    stopImages: days.map((day) => (day.items ?? []).map(() => [])),
+  };
 }
 
 export function initials(name: string): string {
