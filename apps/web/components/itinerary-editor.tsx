@@ -2512,7 +2512,7 @@ export default function ItineraryEditor({
               <div className="day-photo-single">
                 {photos.map((photo) => <figure key={photo.src}>
                   <img src={toSafeImageSrc(photo.src)} alt={photo.alt} />
-                  <button type="button" className="remove-photo-btn" aria-label="Remove photo" onClick={() => { void removeDayPhoto(photo); }}><Icon name="plus" size={10} /></button>
+                  <button type="button" className="remove-photo-btn" aria-label={`Remove ${photo.alt}`} onClick={() => { void trackUpload(removeDayPhoto(photo)); }}><Icon name="plus" size={10} /></button>
                   <label className="change-photo-btn" aria-label={`Change ${photo.alt}`}>
                     <input type="file" accept="image/png,image/jpeg" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (!file) return; void trackUpload(changeDayPhoto(photo, file)); }} />
                     Change photo

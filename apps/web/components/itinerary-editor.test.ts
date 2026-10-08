@@ -551,3 +551,14 @@ test("creator pick title and description are marked required, visually and for s
   assert.equal(source.split("<span>Description<RequiredMark /></span>").length - 1, 2, "both Description labels");
   assert.equal(source.split('aria-required="true"').length - 1, 4, "title and description inputs in both forms");
 });
+
+test("the day's main photo has a remove button wired to removeDayPhoto (DEV-163)", () => {
+  // Regression: the day photo — shown as the cover wherever travellers
+  // browse — rendered only "Change photo", so a photo could be replaced
+  // but never deleted. Every other photo surface (item photos, creator
+  // picks, the review gallery) already has a remove-photo-btn.
+  const source = readFileSync(new URL("./itinerary-editor.tsx", import.meta.url), "utf8");
+  const dayPhoto = source.match(/className="day-photo-single"[\s\S]*?<\/section>/)?.[0] ?? "";
+
+  assert.match(dayPhoto, /remove-photo-btn[\s\S]*?removeDayPhoto/);
+});
