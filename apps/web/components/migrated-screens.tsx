@@ -33,12 +33,14 @@ import { wizardVibesStorageKey } from "../lib/review-draft";
 import { VIBES } from "../lib/vibes";
 import { supabase } from "../lib/supabase/client";
 import { creatorPackageRoute, creatorPackageShareRoute } from "../lib/routes";
+import { hasAdminApprovalAccess } from "../lib/admin-api";
 import { creatorDashboardBackLink, dashboardActionAlignment } from "./navigation-model";
 import AiDisclaimer from "./ai-disclaimer";
 const creatorBannerImg = "/creator-banner.png";
+const LOGIN_API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 
-export type Screen = "login" | "marketplace" | "dashboard" | "builder" | "manual-builder" | "ai-wizard";
+export type Screen = "login" | "marketplace" | "dashboard" | "admin" | "builder" | "manual-builder" | "ai-wizard";
 
 export function nextRecommendationInfoOpen(
   open: boolean,
@@ -73,6 +75,7 @@ const C = {
   successBg:     "#ECFDF5",
   warning:       "#A45B00",
   warningBg:     "#FFF8EC",
+  danger:        "#D40119",
   dangerBg:      "#FEE2E2",   // --fc-danger-subtle
   focusRing:     "rgba(0,114,234,0.35)",
   shadowCard:    "0 1px 3px rgba(33,33,33,0.07)",
@@ -81,6 +84,19 @@ const C = {
   radiusLg:      16,
   radiusPill:    999,
 };
+
+export function creatorPackageStatusStyle(statusKey: string) {
+  if (statusKey === "live" || statusKey === "approved") {
+    return { color: C.success, background: C.successBg };
+  }
+  if (statusKey === "pending_review") {
+    return { color: C.warning, background: C.warningBg };
+  }
+  if (statusKey === "rejected") {
+    return { color: C.danger, background: C.dangerBg };
+  }
+  return { color: C.secondary, background: C.subtle };
+}
 
 export function destinationOptionBackground(selected: boolean, hovered: boolean) {
   if (selected) return "#EFF6FF";
@@ -456,8 +472,9 @@ export function LoginScreen({ onNav }: { onNav: (s: Screen) => void }) {
     setErrorMessage("");
     setIsSubmitting(true);
     try {
-      await signInWithEmail(supabase.auth, email, password);
-      onNav("dashboard");
+      const session = await signInWithEmail(supabase.auth, email, password);
+      const isAdmin = await hasAdminApprovalAccess(fetch, LOGIN_API_URL, session.access_token);
+      onNav(isAdmin ? "admin" : "dashboard");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Unable to sign in. Please try again.");
     } finally {
@@ -1105,6 +1122,20 @@ export function MarketplaceScreen() {
 }
 
 // ─── Dashboard Screen ──────────────────────────────────────────────────────────
+export const CREATOR_DASHBOARD_TABS = [
+  "All",
+  "Approved",
+  "Under review",
+  "Rejected",
+  "Drafts",
+] as const;
+
+export function creatorPackageMatchesTab(activeTab: string, packageStatus: string) {
+  return activeTab === "All"
+    || packageStatus === activeTab
+    || (activeTab === "Drafts" && packageStatus === "Draft");
+}
+
 export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void }) {
   const router = useRouter();
   const [packages, setPackages] = useState<CreatorPackage[]>([]);
@@ -1121,7 +1152,6 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
   const [isPublishing, setIsPublishing] = useState(false);
   const [dashboardNotice, setDashboardNotice] = useState("");
   const publishTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const tabs = ["All", "Approved", "Under review", "Rejected", "Drafts"];
 
   useEffect(() => {
     if (!pendingDelete) return;
@@ -1255,9 +1285,7 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
   const dashboardPackages = packages.map(formatCreatorPackage);
   const normalizedSearch = searchQ.trim().toLowerCase();
   const filtered = dashboardPackages.filter((pkg) => {
-    const matchesTab = activeTab === "All"
-      || pkg.status === activeTab
-      || (activeTab === "Drafts" && pkg.status === "Draft");
+    const matchesTab = creatorPackageMatchesTab(activeTab, pkg.status);
     const matchesSearch = !normalizedSearch
       || pkg.name.toLowerCase().includes(normalizedSearch)
       || pkg.destination.toLowerCase().includes(normalizedSearch);
@@ -1373,7 +1401,7 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
 
             {/* Filter tabs */}
             <div style={{ display: "flex", gap: 4 }}>
-              {tabs.map((t) => {
+              {CREATOR_DASHBOARD_TABS.map((t) => {
                 const on = activeTab === t;
                 return (
                   <button key={t} onClick={() => setActiveTab(t)} style={{
@@ -1437,13 +1465,7 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
           {filtered.map((pkg, i) => {
             const hov = hovRow === pkg.id;
             const packageHref = creatorPackageRoute(pkg.id, pkg.statusKey);
-            const statusStyle = pkg.statusKey === "live" || pkg.statusKey === "approved"
-              ? { color: C.success, background: C.successBg }
-              : pkg.statusKey === "pending_review"
-                ? { color: C.warning, background: C.warningBg }
-                : pkg.statusKey === "rejected"
-                  ? { color: C.red, background: C.dangerBg }
-                  : { color: C.secondary, background: C.subtle };
+            const statusStyle = creatorPackageStatusStyle(pkg.statusKey);
             return (
               <div key={pkg.id}
                 style={{

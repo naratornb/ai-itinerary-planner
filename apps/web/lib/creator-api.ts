@@ -3,7 +3,7 @@ type AuthClient = {
     email: string;
     password: string;
   }): Promise<{
-    data: { session: unknown | null };
+    data: { session: { access_token: string } | null };
     error: { message: string } | null;
   }>;
 };

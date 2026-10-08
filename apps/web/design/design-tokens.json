@@ -12,7 +12,9 @@
     },
     "border": { "$value": "#E0E0E0", "$type": "color", "$description": "Default boundary", "$extensions": { "anydesign": { "confidence": "high" } } },
     "success": { "$value": "#14804A", "$type": "color", "$description": "Positive state", "$extensions": { "anydesign": { "confidence": "high" } } },
-    "warning": { "$value": "#A45B00", "$type": "color", "$description": "Caution state", "$extensions": { "anydesign": { "confidence": "high" } } }
+    "warning": { "$value": "#A45B00", "$type": "color", "$description": "Caution state", "$extensions": { "anydesign": { "confidence": "high" } } },
+    "danger": { "$value": "#D40119", "$type": "color", "$description": "Rejected and destructive state", "$extensions": { "anydesign": { "confidence": "high" } } },
+    "danger-surface": { "$value": "#FEE2E2", "$type": "color", "$description": "Subtle rejected-state surface", "$extensions": { "anydesign": { "confidence": "high" } } }
   },
   "typography": {
     "font-family": {
@@ -47,6 +49,17 @@
       "desktop-width": { "$value": "340px", "$type": "dimension", "$description": "Desktop editor sidebar width" },
       "mobile-breakpoint": { "$value": "700px", "$type": "dimension", "$description": "Full-viewport Co-Pilot transition" },
       "composer-min-height": { "$value": "94px", "$type": "dimension", "$description": "Mock request composer height" }
+    },
+    "admin-review": {
+      "summary-card-min-height": { "$value": "112px", "$type": "dimension", "$description": "Minimum height for administrator queue summary cards" },
+      "queue-row-min-height": { "$value": "72px", "$type": "dimension", "$description": "Minimum height for desktop review queue rows" },
+      "control-min-height": { "$value": "40px", "$type": "dimension", "$description": "Compact height for administrator queue toolbar controls" },
+      "control-gap": { "$value": "12px", "$type": "dimension", "$description": "Gap between administrator queue controls" },
+      "control-radius": { "$value": "6px", "$type": "dimension", "$description": "Toolbar control radius shared with the creator dashboard" },
+      "mobile-breakpoint": { "$value": "720px", "$type": "dimension", "$description": "Breakpoint where the review queue switches from table rows to cards" },
+      "detail-sidebar-width": { "$value": "320px", "$type": "dimension", "$description": "Wide-screen decision column for one package review" },
+      "detail-content-gap": { "$value": "24px", "$type": "dimension", "$description": "Gap between package evidence and the decision column" },
+      "detail-stack-breakpoint": { "$value": "900px", "$type": "dimension", "$description": "Breakpoint where the decision column follows the package content" }
     },
     "hotel-detail-drawer": {
       "desktop-width": { "$value": "440px", "$type": "dimension", "$description": "Booking hotel details drawer width" },
