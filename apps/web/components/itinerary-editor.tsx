@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateActio
 import { useRouter } from "next/navigation";
 import CopilotPanel from "./copilot/copilot-panel";
 import AiDisclaimer from "./ai-disclaimer";
+import CreatorRevisionFeedback from "./creator-revision-feedback";
 import { HotelChoiceCard } from "./hotel-choice-card";
 import RouteMap, { type RouteStop } from "./route-map";
 import { createCopilotClient } from "../lib/copilot-client";
@@ -2443,7 +2444,7 @@ export default function ItineraryEditor({
         </div>
         <div className="editor-actions">
           <button className="quiet-button" disabled={saving || submitting || uploadingCount > 0 || isLocked} onClick={() => { void saveDraft(); }}>{uploadingCount > 0 ? `Uploading ${uploadingCount}…` : saving ? "Saving…" : saved ? "Saved" : "Save Draft"}</button>
-          <button className="quiet-button" disabled={!isReadyToSubmit || feasLoading || saving || uploadingCount > 0 || submitting || isLocked} onClick={() => { void handlePreview(); }}>Preview</button>
+          <button className="quiet-button" disabled={!isReadyToSubmit || feasLoading || saving || uploadingCount > 0 || submitting || isLocked} title={!isReadyToSubmit ? "Run Check content and resolve issues to preview" : undefined} onClick={() => { void handlePreview(); }}>Preview</button>
           <button className="publish-button" disabled={feasLoading || saving || uploadingCount > 0 || submitting || isLocked} onClick={() => { void handleSubmit(); }}>
             {submissionButtonLabel}
           </button>
@@ -2453,6 +2454,11 @@ export default function ItineraryEditor({
       {isLocked && <div className="locked-status-banner" role="status">
         This package is {(STATUS_LABELS[packageStatus] ?? packageStatus).toLowerCase()} and can no longer be edited here.
       </div>}
+
+      <CreatorRevisionFeedback
+        status={packageStatus}
+        approval={packageDetail.latest_approval}
+      />
 
       <nav className="day-strip" aria-label="Itinerary days">
         <button type="button" className="day-scroll-btn" disabled={!dayScroll.canLeft} onClick={() => scrollDayTabs(-1)} aria-label="Scroll days left"><Icon name="chevron" size={18} /></button>
@@ -2634,7 +2640,7 @@ export default function ItineraryEditor({
                   </div>
                   <div className="item-price"><span>{referenceFlight?.priceLabel ?? "Estimated"}</span><strong className={isPriceValue ? undefined : "item-price-word"}>{withWrapBeforeSlash(displayedPrice)}</strong></div>
                   <div className="item-actions">
-                    {canExpand && <button type="button" className="item-action-icon" aria-label={`Edit ${hotelTitle}`} onClick={toggleExpand}><Icon name="pencil" size={15} /></button>}
+                    {canExpand && item.type !== "FLIGHT" && <button type="button" className="item-action-icon" aria-label={`Edit ${hotelTitle}`} onClick={toggleExpand}><Icon name="pencil" size={15} /></button>}
                     <button type="button" className="item-action-icon item-action-icon-delete" aria-label={`Delete ${hotelTitle}`} onClick={() => requestDeleteItem(item)}><Icon name="trash" size={15} /></button>
                   </div>
                 </article>

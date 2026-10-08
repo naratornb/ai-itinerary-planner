@@ -300,6 +300,12 @@ button:focus-visible, textarea:focus-visible { outline: 3px solid var(--fc-focus
 .itinerary-editor { min-height: 100vh; background: #fafafa; color: var(--fc-ink); font-family: var(--fc-font-body); }
 .editor-topbar { min-height: 76px; padding: 12px max(32px, calc((100vw - 1440px) / 2 + 32px)); display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 24px; background: #fff; border-bottom: 1px solid var(--fc-border); position: sticky; top: 0; z-index: 20; }
 .locked-status-banner { padding: 12px max(32px, calc((100vw - 1440px) / 2 + 32px)); background: #fffaf2; border-bottom: 1px solid #efd2a8; color: var(--fc-warning); font-size: 14px; text-align: center; }
+.creator-revision-feedback { background: var(--fc-warning-subtle); border-bottom: 1px solid var(--fc-warning-border); }
+.creator-revision-feedback__inner { width: min(100%, 1440px); margin: 0 auto; padding: 18px 32px; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 12px; color: var(--fc-ink); }
+.creator-revision-feedback__icon { width: 36px; height: 36px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--fc-warning-border); border-radius: 50%; background: var(--fc-white); color: var(--fc-warning); }
+.creator-revision-feedback h2 { margin: 0; font-family: var(--fc-font-display); font-size: 15px; line-height: 21px; }
+.creator-revision-feedback p { margin: 4px 0 0; max-width: 80ch; color: var(--fc-ink); font-size: 14px; line-height: 21px; white-space: pre-wrap; }
+.creator-revision-feedback time { display: block; margin-top: 6px; color: var(--fc-secondary); font-size: 12px; line-height: 18px; }
 .editor-title-block { text-align: center; }
 .editor-title-block h1 { margin: 2px 0 0; font-family: var(--fc-font-display); font-size: 21px; line-height: 1.25; letter-spacing: -.02em; }
 .package-title-button { max-width: min(560px,45vw); margin: 2px auto 0; padding: 3px 8px; display: block; border: 0; border-radius: 7px; background: transparent; color: var(--fc-ink); cursor: text; }

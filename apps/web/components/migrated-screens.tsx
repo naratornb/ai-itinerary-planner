@@ -71,6 +71,7 @@ const C = {
   successBg:     "#ECFDF5",
   warning:       "#A45B00",
   warningBg:     "#FFF8EC",
+  dangerBg:      "#FEE2E2",   // --fc-danger-subtle
   focusRing:     "rgba(0,114,234,0.35)",
   shadowCard:    "0 1px 3px rgba(33,33,33,0.07)",
   shadowRaised:  "0 2px 8px rgba(33,33,33,0.09)",
@@ -1113,7 +1114,7 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
   const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string } | null>(null);
   const [deleteError, setDeleteError] = useState("");
   const [isDeleting, setIsDeleting] = useState(false);
-  const tabs = ["All", "Approved", "Under review", "Drafts"];
+  const tabs = ["All", "Approved", "Under review", "Rejected", "Drafts"];
 
   useEffect(() => {
     if (!pendingDelete) return;
@@ -1213,11 +1214,12 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
   ];
 
   const cols = {
-    grid: "minmax(0,1.8fr) minmax(140px,1fr) 100px 120px 140px 200px",
+    grid: "minmax(0,1.8fr) minmax(140px,1fr) 110px 90px 110px 130px 200px",
     gap: 24,
     headers: [
       { h: "Package",        align: "left"  },
       { h: "Destination",    align: "left"  },
+      { h: "Created",        align: "left"  },
       { h: "Duration",       align: "right" },
       { h: "Price",          align: "right" },
       { h: "Status",         align: "center" },
@@ -1236,7 +1238,7 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
               Creator dashboard
             </h1>
             <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, color: C.secondary, margin: 0 }}>
-              Manage your packages, bookings and earnings.
+              Manage your packages and track their review status.
             </p>
           </div>
           <BtnPrimary onClick={() => _onNav("builder")}>
@@ -1252,10 +1254,7 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
           {stats.map(({ label, value, sub }) => (
             <div key={label} style={{
               background: C.white,
-              borderTop: `1px solid ${C.border}`,
-              borderRight: `1px solid ${C.border}`,
-              borderBottom: `1px solid ${C.border}`,
-              borderLeft: `1px solid ${C.border}`,
+              border: `1px solid ${C.border}`,
               borderRadius: C.radiusMd,
               padding: "24px 24px 20px",
               boxShadow: C.shadowCard,
@@ -1277,7 +1276,7 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
         </div>
 
         {/* Packages table */}
-        <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 6, overflow: "hidden" }}>
+        <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 6, overflowX: "auto", overflowY: "hidden" }}>
 
           {/* Table toolbar */}
           {/* Toolbar: search + filter tabs */}
@@ -1292,9 +1291,10 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
                 value={searchQ}
                 onChange={(e) => setSearchQ(e.target.value)}
                 placeholder="Search packages..."
+                aria-label="Search packages"
                 style={{
                   width: "100%", boxSizing: "border-box",
-                  height: 42, paddingLeft: 38, paddingRight: 14,
+                  height: 42, paddingLeft: 38, paddingRight: 36,
                   fontFamily: "var(--fc-font-body)", fontSize: 14, color: C.ink,
                   background: C.white, border: `1px solid ${C.border}`,
                   borderRadius: 6, outline: "none",
@@ -1302,6 +1302,12 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
                 onFocus={(e) => { e.currentTarget.style.borderColor = "#9E9E9E"; }}
                 onBlur={(e) => { e.currentTarget.style.borderColor = C.border; }}
               />
+              {searchQ && (
+                <button type="button" aria-label="Clear package search" onClick={() => setSearchQ("")}
+                  style={{ position: "absolute", right: 4, top: "50%", transform: "translateY(-50%)", width: 34, height: 34, display: "grid", placeItems: "center", border: 0, background: "transparent", color: C.secondary, cursor: "pointer" }}>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M6 6l12 12M18 6 6 18" /></svg>
+                </button>
+              )}
             </div>
 
             {/* Spacer */}
@@ -1327,6 +1333,9 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
               })}
             </div>
           </div>
+
+          {/* Scrollable table body — min-width keeps Status/Actions reachable on narrow viewports */}
+          <div style={{ minWidth: 1020 }}>
 
           {/* Column headers */}
           <div style={{ display: "grid", gridTemplateColumns: cols.grid, columnGap: cols.gap, padding: "14px 28px", background: "#FAFAFA", borderBottom: `1px solid ${C.border}` }}>
@@ -1356,18 +1365,27 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
               <p style={{ margin: 0, color: C.secondary, fontSize: 14 }}>
                 {packages.length === 0 ? "Create your first package to get started." : "Try a different search or status."}
               </p>
+              {packages.length > 0 && (
+                <div style={{ marginTop: 16 }}>
+                  <BtnSecondary onClick={() => { setSearchQ(""); setActiveTab("All"); }}>
+                    Clear filters
+                  </BtnSecondary>
+                </div>
+              )}
             </div>
           ) : null}
 
           {/* Rows */}
           {filtered.map((pkg, i) => {
-            const hov = hovRow === pkg.name;
+            const hov = hovRow === pkg.id;
             const packageHref = creatorPackageRoute(pkg.id, pkg.statusKey);
             const statusStyle = pkg.statusKey === "live" || pkg.statusKey === "approved"
               ? { color: C.success, background: C.successBg }
               : pkg.statusKey === "pending_review"
                 ? { color: C.warning, background: C.warningBg }
-                : { color: C.secondary, background: C.subtle };
+                : pkg.statusKey === "rejected"
+                  ? { color: C.red, background: C.dangerBg }
+                  : { color: C.secondary, background: C.subtle };
             return (
               <div key={pkg.id}
                 style={{
@@ -1377,7 +1395,7 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
                   background: hov ? "#FAFAFA" : "transparent",
                   transition: "background 120ms",
                 }}
-                onMouseEnter={() => setHovRow(pkg.name)}
+                onMouseEnter={() => setHovRow(pkg.id)}
                 onMouseLeave={() => setHovRow(null)}
               >
                 {/* Package name */}
@@ -1396,6 +1414,10 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
 
                 <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, color: C.secondary, margin: 0 }}>
                   {pkg.destination}
+                </p>
+
+                <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, color: C.secondary, margin: 0, whiteSpace: "nowrap" }}>
+                  {pkg.created}
                 </p>
 
                 <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, color: C.ink, margin: 0, textAlign: "right" }}>
@@ -1435,6 +1457,7 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
               </div>
             );
           })}
+          </div>
         </div>
 
       </div>

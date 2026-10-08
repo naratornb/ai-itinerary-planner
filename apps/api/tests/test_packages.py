@@ -416,6 +416,38 @@ def test_get_detail(fake):
     assert missing.json()["error_code"] == "NOT_FOUND"
 
 
+def test_get_detail_rejected_returns_latest_approval(fake):
+    rejected = copy.deepcopy(DETAIL_ROW)
+    rejected["status"] = "rejected"
+    approval = {
+        "approval_id": "appr-1",
+        "package_id": PKG,
+        "decision": "rejected",
+        "rejection_reason": "Please clarify which transfers are included.",
+        "reviewed_at": "2026-10-07T04:22:00Z",
+    }
+    fake.route("GET", "travel_packages", FakeResp([rejected]))
+    fake.route("GET", "package_approvals", FakeResp([approval]))
+
+    resp = client.get(f"/packages/{PKG}")
+    assert resp.status_code == 200
+    assert resp.json()["latest_approval"] == approval
+
+    call = fake.find("GET", "package_approvals")[0]
+    # package_approvals RLS is admin-only — the creator path must read it
+    # through the service role after ownership is verified above.
+    assert call["headers"]["apikey"] == "service-key"
+    assert call["params"]["limit"] == 1
+
+
+def test_get_detail_draft_does_not_query_approvals(fake):
+    fake.route("GET", "travel_packages", FakeResp([DETAIL_ROW]))
+    resp = client.get(f"/packages/{PKG}")
+    assert resp.status_code == 200
+    assert resp.json()["latest_approval"] is None
+    assert fake.find("GET", "package_approvals") == []
+
+
 # Mixed fixture: one legacy linked component per type (details IS NULL,
 # catalog embed present) plus one new custom component per type (details is
 # its authoritative snapshot, catalog id/embed null). Exercises both branches

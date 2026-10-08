@@ -503,3 +503,18 @@ test("co-pilot send and suggestion-add are guarded by refs, not async state", ()
   assert.match(panel, /useRef/, "addSuggestion must use a ref-based added guard");
   assert.match(panel, /Ref\.current\.(has|includes)/, "addSuggestion must check the ref synchronously");
 });
+
+test("flight cards do not show an edit affordance — reference flights are read-only", () => {
+  // The pencil button only expands the read-only detail panel for flights;
+  // labelled "Edit", it implied flights could be edited. Flights keep
+  // expand-on-card-click; only the misleading icon is gated off.
+  const source = readFileSync(new URL("./itinerary-editor.tsx", import.meta.url), "utf8");
+  assert.match(source, /canExpand && item\.type !== "FLIGHT" && <button[^>]*aria-label=\{`Edit/);
+});
+
+test("preview button explains why it is disabled until the itinerary is ready", () => {
+  // Ready = feasible check passed and still fresh. Before that the button
+  // stays visible but disabled, with a hover hint explaining the blocker.
+  const source = readFileSync(new URL("./itinerary-editor.tsx", import.meta.url), "utf8");
+  assert.match(source, /<button[\s\S]{0,400}disabled=\{!isReadyToSubmit[\s\S]{0,400}title=\{!isReadyToSubmit \? "[^"]+" : undefined\}[\s\S]{0,400}>Preview<\/button>/);
+});

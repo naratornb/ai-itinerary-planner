@@ -7,7 +7,7 @@ import ts from "typescript";
 const source = readFileSync(new URL("./itinerary-editor.tsx", import.meta.url), "utf8");
 const file = ts.createSourceFile("editor.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 let previewHandler = "";
-let previewButton: ts.JsxOpeningElement | null = null;
+let previewButton: ts.JsxElement | null = null;
 
 function visit(node: ts.Node) {
   if (ts.isVariableDeclaration(node) && node.name.getText(file) === "handlePreview") {
@@ -18,16 +18,15 @@ function visit(node: ts.Node) {
     && node.openingElement.tagName.getText(file) === "button"
     && node.children.some((child) => child.getText(file).trim() === "Preview")
   ) {
-    previewButton = node.openingElement;
+    previewButton = node;
   }
   ts.forEachChild(node, visit);
 }
 visit(file);
 
 function buttonExpression(name: string) {
-  const button = previewButton as ts.JsxOpeningElement | null;
-  assert.ok(button, "Preview button must exist");
-  const attribute = button.attributes.properties.find(
+  assert.ok(previewButton, "Preview button must exist");
+  const attribute = previewButton.openingElement.attributes.properties.find(
     (entry) => ts.isJsxAttribute(entry) && entry.name.getText(file) === name,
   );
   if (!attribute || !ts.isJsxAttribute(attribute) || !attribute.initializer || !ts.isJsxExpression(attribute.initializer)) return "false";
@@ -87,9 +86,10 @@ async function runPreview(ready: boolean, failSave = false) {
   return { events, notices, sessionStorageWrites };
 }
 
-test("Preview stays disabled until the itinerary is ready to continue", () => {
+test("Preview is always rendered but disabled until the itinerary is ready, with a hint why", () => {
   assert.equal(previewDisabled(false), true);
   assert.equal(previewDisabled(true), false);
+  assert.match(buttonExpression("title"), /isReadyToSubmit/);
 });
 
 test("Preview saves the ready itinerary and opens its detail page", async () => {

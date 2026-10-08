@@ -136,7 +136,37 @@ def get_package_detail(package_id, headers, uid):
         headers=headers,
     )
     rows = response.json()
-    return _to_detail(rows[0]) if rows else None
+    if not rows:
+        return None
+    detail = _to_detail(rows[0])
+    if detail.get("status") == "rejected":
+        # Creator-scoped only — the public detail path must never see
+        # package_approvals data.
+        detail["latest_approval"] = _latest_approval(package_id)
+    return detail
+
+
+def _latest_approval(package_id):
+    """Newest review decision for the creator's own package. package_approvals
+    RLS is admin-only, so this reads through the service role — safe only
+    because callers already scoped the package to its owner. Best-effort: a
+    broken approvals read must not take the package detail down with it."""
+    try:
+        rows = _call(
+            "get",
+            "package_approvals",
+            params={
+                "package_id": f"eq.{package_id}",
+                "select": "approval_id,package_id,decision,rejection_reason,reviewed_at",
+                "order": "reviewed_at.desc",
+                "limit": 1,
+            },
+            headers=_admin_headers(),
+        ).json()
+    except UpstreamError:
+        logger.error("latest_approval lookup failed for package %s", package_id)
+        return None
+    return rows[0] if rows else None
 
 
 def get_public_package_detail(package_id):
@@ -352,7 +382,8 @@ def _to_detail(row):
         "base_price_aud": row.get("base_price_aud"),
     }
     row["cover_image_url"] = _cover_url(row["media"])
-    # ponytail: approvals RLS is admin-only, wire when the approvals feature lands.
+    # Populated by get_package_detail for rejected creator-owned packages;
+    # stays None on the public detail path so review data never leaks.
     row["latest_approval"] = None
     return row
 

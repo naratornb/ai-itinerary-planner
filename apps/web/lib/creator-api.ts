@@ -113,6 +113,15 @@ export type CreatorMediaDetail = {
   caption?: string | null;
 };
 
+export type CreatorApprovalRecord = {
+  approval_id?: string;
+  package_id?: string;
+  reviewer_id?: string;
+  decision: "approved" | "rejected";
+  rejection_reason?: string | null;
+  reviewed_at?: string | null;
+};
+
 export type CreatorPackageDetail = {
   package_id: string;
   title: string;
@@ -131,6 +140,7 @@ export type CreatorPackageDetail = {
   activities: CreatorActivityDetail[];
   days: CreatorPackageDay[];
   media?: CreatorMediaDetail[];
+  latest_approval?: CreatorApprovalRecord | null;
 };
 
 type ProfileRow = {
@@ -174,10 +184,14 @@ export const STATUS_LABELS: Record<string, string> = {
 };
 
 export function formatCreatorPackage(pkg: CreatorPackage) {
+  const createdDate = new Date(pkg.created_at);
   return {
     id: pkg.package_id,
     name: pkg.title,
     duration: `${pkg.duration_days} day${pkg.duration_days === 1 ? "" : "s"}`,
+    created: Number.isFinite(createdDate.getTime())
+      ? new Intl.DateTimeFormat("en-AU", { day: "numeric", month: "short", year: "numeric" }).format(createdDate)
+      : "—",
     destination: [pkg.destination_city, pkg.destination_country].filter(Boolean).join(", "),
     price: new Intl.NumberFormat("en-AU", {
       style: "currency",

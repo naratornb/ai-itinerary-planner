@@ -214,6 +214,7 @@ test("formatCreatorPackage converts API fields for the dashboard", () => {
       id: "package-1",
       name: "Tokyo food tour",
       duration: "7 days",
+      created: "20 Aug 2026",
       destination: "Tokyo, Japan",
       price: "$3,200",
       status: "Under review",
