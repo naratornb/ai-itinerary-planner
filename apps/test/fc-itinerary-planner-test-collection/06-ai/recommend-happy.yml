@@ -1,0 +1,42 @@
+info:
+  name: recommend-happy
+  type: http
+  seq: 9
+
+http:
+  method: POST
+  url: "{{host-api}}/ai/recommend"
+  headers:
+    - name: content-type
+      value: application/json
+    - name: accept
+      value: application/json
+  auth:
+    type: bearer
+    token: "{{access-token}}"
+  body:
+    type: json
+    data: |-
+      {
+        "query": "5 day food trip to Tokyo for 2 travellers",
+        "origin_city": "Sydney"
+      }
+
+runtime:
+  assertions:
+    - expression: res.status
+      operator: eq
+      value: "200"
+  scripts:
+    - type: tests
+      code: |-
+        test("returns a day-by-day itinerary", function() {
+          expect(res.body.days).to.be.an("array").and.not.be.empty;
+          expect(res.body.bookable).to.be.a("boolean");
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 180000
+  followRedirects: true
+  maxRedirects: 5

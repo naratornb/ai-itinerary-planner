@@ -2,13 +2,128 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  CreatorApiError,
+  createPackage,
+  fetchOwnPackage,
   fetchOwnPackages,
-  fetchDashboardStats,
-  formatDashboardStats,
   formatCreatorPackage,
+  publishPackage,
   resolveCreatorProfile,
   signInWithEmail,
+  submitPackage,
+  updatePackage,
+  SubmitPackageError,
 } from "./creator-api";
+
+test("fetchOwnPackage loads authenticated hotel details", async () => {
+  const responseBody = {
+    package_id: "package-1",
+    title: "Tokyo food tour",
+    flights: [{
+      flight_id: "flight-1",
+      airline: "Qantas",
+      flight_number: "QF25",
+      origin_iata: "SYD",
+      destination_iata: "HND",
+      departure_datetime: "2026-09-10T20:55:00+10:00",
+      arrival_datetime: "2026-09-11T05:55:00+09:00",
+      cabin_class: "Economy",
+      price_aud: 850,
+    }],
+    hotels: [{
+      hotel_id: "hotel-1",
+      hotel_name: "Shibuya Excel Hotel Tokyu",
+      room_type: "Standard twin room",
+      check_in_date: "2026-09-10",
+      check_out_date: "2026-09-12",
+      star_rating: 4,
+      city: "Tokyo",
+      address: "Shibuya, Tokyo",
+      price_per_night_aud: 360,
+    }],
+  };
+  const fetcher: typeof fetch = async (input, init) => {
+    assert.equal(String(input), "http://localhost:8000/packages/package-1");
+    assert.deepEqual(init?.headers, { Authorization: "Bearer access-token" });
+    return new Response(JSON.stringify(responseBody), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  const result = await fetchOwnPackage(fetcher, "http://localhost:8000/", "access-token", "package-1");
+  assert.equal(result.flights[0]?.flight_number, "QF25");
+  assert.deepEqual(result, responseBody);
+});
+
+test("fetchOwnPackage identifies an expired login", async () => {
+  const fetcher: typeof fetch = async () => new Response("{}", { status: 401 });
+
+  await assert.rejects(
+    fetchOwnPackage(fetcher, "http://localhost:8000", "expired-token", "package-1"),
+    /sign in again/i,
+  );
+});
+
+test("updatePackage preserves a 409 status so the editor can become read-only", async () => {
+  const fetcher: typeof fetch = async () => new Response(JSON.stringify({
+    message: "This package can no longer be edited.",
+  }), {
+    status: 409,
+    headers: { "Content-Type": "application/json" },
+  });
+
+  await assert.rejects(
+    updatePackage(fetcher, "http://localhost:8000", "token", "package-1", { title: "Updated" }),
+    (error) => error instanceof CreatorApiError
+      && error.status === 409
+      && /no longer be edited/i.test(error.message),
+  );
+});
+
+test("createPackage posts the draft and returns the new package id", async () => {
+  const input = {
+    title: "Kyoto Autumn Escape",
+    description: "A slow week exploring temples and food.",
+    destination_country: "Japan",
+    destination_city: "Kyoto",
+    duration_days: 5,
+    base_price_aud: 2200,
+    max_group_size: 6,
+  };
+  const fetcher: typeof fetch = async (url, init) => {
+    assert.equal(String(url), "http://localhost:8000/packages");
+    assert.equal(init?.method, "POST");
+    assert.deepEqual(init?.headers, {
+      "Content-Type": "application/json",
+      Authorization: "Bearer access-token",
+    });
+    assert.deepEqual(JSON.parse(String(init?.body)), input);
+    return new Response(JSON.stringify({ package_id: "package-9", ...input }), {
+      status: 201,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  const result = await createPackage(fetcher, "http://localhost:8000", "access-token", input);
+  assert.equal(result.package_id, "package-9");
+});
+
+test("createPackage identifies an expired login", async () => {
+  const fetcher: typeof fetch = async () => new Response("{}", { status: 401 });
+
+  await assert.rejects(
+    createPackage(fetcher, "http://localhost:8000", "expired-token", {
+      title: "Trip",
+      description: "Desc",
+      destination_country: "Japan",
+      destination_city: "Kyoto",
+      duration_days: 5,
+      base_price_aud: 2200,
+    }),
+    /sign in again/i,
+  );
+});
 
 test("signInWithEmail returns the authenticated session", async () => {
   const session = { access_token: "access-token" };
@@ -100,6 +215,7 @@ test("formatCreatorPackage converts API fields for the dashboard", () => {
       id: "package-1",
       name: "Tokyo food tour",
       duration: "7 days",
+      created: "20 Aug 2026",
       destination: "Tokyo, Japan",
       price: "$3,200",
       status: "Under review",
@@ -125,6 +241,67 @@ test("formatCreatorPackage uses a concise edit action for drafts", () => {
   assert.equal(formatted.rowAction, "Edit");
 });
 
+test("formatCreatorPackage labels an approved package as a preview", () => {
+  const formatted = formatCreatorPackage({
+    package_id: "package-1",
+    title: "Approved trip",
+    destination_country: "Japan",
+    destination_city: "Tokyo",
+    duration_days: 5,
+    base_price_aud: 2485,
+    status: "approved",
+    creator_id: "creator-1",
+    created_at: "2026-08-20T00:00:00Z",
+  });
+
+  assert.equal(formatted.rowAction, "Preview");
+});
+
+test("publishPackage makes an approved package live", async () => {
+  const published = {
+    package_id: "package-1",
+    title: "Approved trip",
+    destination_country: "Japan",
+    destination_city: "Tokyo",
+    duration_days: 5,
+    base_price_aud: 2485,
+    status: "live",
+    creator_id: "creator-1",
+    created_at: "2026-08-20T00:00:00Z",
+    published_at: "2026-10-07T01:00:00Z",
+  };
+  const fetcher: typeof fetch = async (url, init) => {
+    assert.equal(String(url), "http://localhost:8000/approvals/package%2F1/publish");
+    assert.equal(init?.method, "POST");
+    assert.deepEqual(init?.headers, { Authorization: "Bearer access-token" });
+    return new Response(JSON.stringify(published), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  assert.deepEqual(
+    await publishPackage(fetcher, "http://localhost:8000/", "access-token", "package/1"),
+    published,
+  );
+});
+
+test("publishPackage surfaces an invalid status transition", async () => {
+  const fetcher: typeof fetch = async () => new Response(JSON.stringify({
+    message: "Cannot publish a package in status 'draft'; it must be 'approved'.",
+  }), {
+    status: 409,
+    headers: { "Content-Type": "application/json" },
+  });
+
+  await assert.rejects(
+    publishPackage(fetcher, "http://localhost:8000", "access-token", "package-1"),
+    (error) => error instanceof CreatorApiError
+      && error.status === 409
+      && /must be 'approved'/i.test(error.message),
+  );
+});
+
 test("resolveCreatorProfile prefers the database profile", () => {
   assert.deepEqual(
     resolveCreatorProfile(
@@ -147,55 +324,65 @@ test("resolveCreatorProfile falls back to auth metadata and initials", () => {
   );
 });
 
-test("formatDashboardStats uses dashes when booking data is unavailable", () => {
-  assert.deepEqual(
-    formatDashboardStats({
-      packageCount: 3,
-      bookingCount: null,
-      commissionRate: null,
-      commissionAud: null,
-    }),
-    [
-      { label: "Packages", value: "3", sub: "All your packages" },
-      { label: "Bookings", value: "—", sub: "Not available yet" },
-      { label: "Commission rate", value: "—", sub: "Not available yet" },
-      { label: "Your commission", value: "—", sub: "Available after bookings" },
-    ],
-  );
-});
-
-test("formatDashboardStats formats a future stats API response", () => {
-  const cards = formatDashboardStats({
-    packageCount: 3,
-    bookingCount: 20,
-    commissionRate: 0.2,
-    commissionAud: 14800,
-  });
-
-  assert.equal(cards[1]?.value, "20");
-  assert.equal(cards[2]?.value, "20%");
-  assert.equal(cards[3]?.value, "$14,800");
-});
-
-test("fetchDashboardStats maps the future dashboard stats endpoint", async () => {
-  const fetcher: typeof fetch = async (input, init) => {
-    assert.equal(String(input), "http://localhost:8000/dashboard/stats");
-    assert.deepEqual(init?.headers, { Authorization: "Bearer access-token" });
-    return new Response(JSON.stringify({
-      package_count: 3,
-      booking_count: 20,
-      commission_rate: 0.2,
-      commission_aud: 14800,
-    }), { status: 200, headers: { "Content-Type": "application/json" } });
+test("submitPackage posts to the submit endpoint and returns the new status", async () => {
+  const fetcher: typeof fetch = async (url, init) => {
+    assert.equal(String(url), "http://localhost:8000/packages/package-9/submit");
+    assert.equal(init?.method, "POST");
+    assert.deepEqual(JSON.parse(String(init?.body)), { submission_note: "Ready for review." });
+    return new Response(JSON.stringify({ package_id: "package-9", status: "pending_review" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
   };
 
-  assert.deepEqual(
-    await fetchDashboardStats(fetcher, "http://localhost:8000/", "access-token"),
-    {
-      packageCount: 3,
-      bookingCount: 20,
-      commissionRate: 0.2,
-      commissionAud: 14800,
+  const result = await submitPackage(fetcher, "http://localhost:8000", "access-token", "package-9", "Ready for review.");
+  assert.deepEqual(result, { package_id: "package-9", status: "pending_review" });
+});
+
+test("submitPackage sends an empty body when no submission note is given", async () => {
+  const fetcher: typeof fetch = async (_url, init) => {
+    assert.deepEqual(JSON.parse(String(init?.body)), {});
+    return new Response(JSON.stringify({ package_id: "package-9", status: "pending_review" }), { status: 200 });
+  };
+
+  await submitPackage(fetcher, "http://localhost:8000", "access-token", "package-9");
+});
+
+test("submitPackage surfaces the backend's message and error code on failure", async () => {
+  const fetcher: typeof fetch = async () =>
+    new Response(JSON.stringify({ message: "At least one activity is required.", error_code: "SUBMISSION_PRECONDITION_FAILED" }), {
+      status: 422,
+      headers: { "Content-Type": "application/json" },
+    });
+
+  await assert.rejects(
+    submitPackage(fetcher, "http://localhost:8000", "access-token", "package-9"),
+    (error: unknown) => {
+      assert.ok(error instanceof SubmitPackageError);
+      assert.equal(error.status, 422);
+      assert.equal(error.code, "SUBMISSION_PRECONDITION_FAILED");
+      assert.equal(error.message, "At least one activity is required.");
+      return true;
     },
   );
 });
+
+test("submitPackage reports a missing package as a friendly 404", async () => {
+  const fetcher: typeof fetch = async () => new Response("Not Found", { status: 404 });
+
+  await assert.rejects(
+    submitPackage(fetcher, "http://localhost:8000", "access-token", "package-9"),
+    /can't be submitted/i,
+  );
+});
+
+test("submitPackage identifies an expired login", async () => {
+  const fetcher: typeof fetch = async () => new Response("{}", { status: 401 });
+
+  await assert.rejects(
+    submitPackage(fetcher, "http://localhost:8000", "expired-token", "package-9"),
+    /sign in again/i,
+  );
+});
+
+

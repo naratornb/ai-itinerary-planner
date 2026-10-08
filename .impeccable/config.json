@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "apps/web/components/marketplace-detail-screen.tsx"
+        ],
+        "createdAt": "2026-09-11T13:49:21.298Z",
+        "reason": "Matches the actual Figma 'Locked Tip' callout (node 638:406) fetched for this feature — a left accent border on a lock/note box, not an arbitrary AI default"
+      }
+    ]
+  }
+}

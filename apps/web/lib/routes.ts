@@ -2,13 +2,31 @@ export const APP_ROUTES = {
   login: "/login",
   marketplace: "/marketplace",
   dashboard: "/dashboard",
+  admin: "/admin",
   builder: "/packages/new",
+  manualBuilder: "/packages/new/manual",
   wizard: "/packages/new/ai",
-  editor: "/packages/editor",
 } as const;
 
 export type AppScreen = keyof typeof APP_ROUTES;
 
 export function routeFor(screen: AppScreen): string {
   return APP_ROUTES[screen];
+}
+
+export function creatorPackageRoute(packageId: string, status: string): string {
+  const encodedId = encodeURIComponent(packageId);
+
+  if (status === "live") return `/marketplace/packages/${encodedId}`;
+  if (status === "approved") return `/packages/preview/${encodedId}`;
+  return `/packages/editor/${encodedId}`;
+}
+
+export function adminApprovalRoute(packageId: string): string {
+  return `/admin/approvals/${encodeURIComponent(packageId)}`;
+}
+
+export function creatorPackageShareRoute(packageId: string, status: string): string | null {
+  if (status !== "live") return null;
+  return `/marketplace/packages/${encodeURIComponent(packageId)}`;
 }

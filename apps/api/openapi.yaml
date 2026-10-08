@@ -16,7 +16,7 @@ info:
 
     ## Architecture
 
-    - **Backend:** FastAPI (Python), deployed on Railway *— Phase 2 target; Phase 1 is Flask 3.0.3 on port 5000 with no `/v1` prefix. See [apps/api/docs/adr/0001-flask-now-fastapi-for-ai.md](../apps/api/docs/adr/0001-flask-now-fastapi-for-ai.md).*
+    - **Backend:** FastAPI (Python), targeting Vercel serverless. Routes currently have no `/v1` prefix.
     - **Database:** Supabase PostgreSQL (13 tables)
     - **AI:** LangChain RAG pipeline with GPT-4o (NFR-P-101: responses < 10 seconds)
     - **Frontend:** Next.js + Tailwind CSS, deployed on Vercel
@@ -36,21 +36,23 @@ info:
 
     ## Assessor Notes
 
-    This specification covers all six API groups: `auth`, `packages`, `approvals`, `media`, `ai`, `marketplace`.
-    Error responses use a consistent `ErrorResponse` schema throughout.
+    This specification covers `auth`, `users`, `packages`, `approvals`, `media`, `ai`, `marketplace`, and Co-Pilot operations.
+    Error responses use `ErrorResponse`, except user-management upstream failures, which return an `error` string.
     All monetary values are stored and returned as **whole AUD dollars** (integer), matching the database columns.
 
-  version: "2.0.0"
+  version: "2.7.0"
   license:
     name: Academic Use Only
 
 servers:
-  - url: https://api.example.com/v1
-    description: Production (Railway)
-  - url: http://localhost:8000/v1
+  - url: http://localhost:8000
     description: Local development
+  - url: https://api.example.com
+    description: Production placeholder; replace with the deployed API origin
 
 tags:
+  - name: users
+    description: User management backed by Supabase Auth. Currently requires a valid session, without an admin-role check.
   - name: auth
     description: |
       Authentication endpoints. Issues JWT Bearer tokens for all three roles.
@@ -113,6 +115,240 @@ components:
   #  REUSABLE SCHEMAS
   # ─────────────────────────────────────────────
   schemas:
+    ManagedUser:
+      type: object
+      required: [id, email, createdAt, status, role, username]
+      properties:
+        id:
+          type: string
+          nullable: true
+        email:
+          type: string
+        createdAt:
+          type: string
+          nullable: true
+          description: User metadata override, falling back to the Auth creation timestamp.
+        status:
+          type: string
+          nullable: true
+          description: App metadata status; defaults to active when absent.
+        role:
+          type: string
+          nullable: true
+          description: App metadata role; defaults to member when absent.
+        username:
+          type: string
+    ManagedUserUpdate:
+      type: object
+      description: All fields are optional. Null and empty strings are ignored; unknown fields are ignored.
+      properties:
+        email:
+          type: string
+          nullable: true
+        status:
+          type: string
+          nullable: true
+          description: Written to app_metadata.status; no local enum validation.
+        createdAt:
+          type: string
+          nullable: true
+          description: Written to user_metadata.createdAt, not the Auth creation timestamp. No local date validation.
+    FeedbackInput:
+      properties:
+        status:
+          type: string
+          enum:
+          - accepted
+          - dismissed
+          title: Status
+        auto_apply:
+          type: boolean
+          title: Auto Apply
+          default: false
+          enum:
+          - false
+      additionalProperties: false
+      type: object
+      required:
+      - status
+      title: FeedbackInput
+    NextAction:
+      properties:
+        type:
+          type: string
+          enum:
+          - recommend
+          - ask_clarification
+          - warn
+          - none
+          title: Type
+        label:
+          type: string
+          maxLength: 100
+          minLength: 1
+          title: Label
+      additionalProperties: false
+      type: object
+      required:
+      - type
+      - label
+      title: NextAction
+    PromptInput:
+      properties:
+        prompt:
+          type: string
+          maxLength: 1000
+          minLength: 1
+          title: Prompt
+      additionalProperties: false
+      type: object
+      required:
+      - prompt
+      title: PromptInput
+    Suggestion:
+      properties:
+        item_id:
+          type: string
+          title: Item Id
+        item_type:
+          type: string
+          enum:
+          - activity
+          - hotel
+          - flight
+          title: Item Type
+        item_name:
+          type: string
+          title: Item Name
+        city:
+          type: string
+          title: City
+        country:
+          title: Country
+          type: string
+          nullable: true
+        price_aud:
+          title: Price Aud
+          type: number
+          nullable: true
+        price_unit:
+          type: string
+          enum:
+          - per_person
+          - per_night
+          title: Price Unit
+        rating:
+          title: Rating
+          type: number
+          nullable: true
+        details:
+          additionalProperties: true
+          type: object
+          title: Details
+        why_recommended:
+          type: string
+          title: Why Recommended
+        status:
+          type: string
+          enum:
+          - pending
+          - accepted
+          - dismissed
+          title: Status
+          default: pending
+      type: object
+      required:
+      - item_id
+      - item_type
+      - item_name
+      - city
+      - price_unit
+      - details
+      - why_recommended
+      title: Suggestion
+    TurnList:
+      properties:
+        data:
+          items:
+            $ref: '#/components/schemas/TurnRead'
+          type: array
+          title: Data
+        meta:
+          $ref: '#/components/schemas/PaginationMeta'
+      type: object
+      required:
+      - data
+      - meta
+      title: TurnList
+    TurnRead:
+      properties:
+        turn_id:
+          type: string
+          format: uuid
+          title: Turn Id
+        package_id:
+          type: string
+          format: uuid
+          title: Package Id
+        prompt:
+          type: string
+          title: Prompt
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        message:
+          type: string
+          title: Message
+        next_action:
+          $ref: '#/components/schemas/NextAction'
+        warnings:
+          items:
+            $ref: '#/components/schemas/Warning'
+          type: array
+          title: Warnings
+        suggestions:
+          items:
+            $ref: '#/components/schemas/Suggestion'
+          type: array
+          title: Suggestions
+        generation_mode:
+          type: string
+          enum:
+          - llm
+          - inventory_fallback
+          - clarification
+          title: Generation Mode
+        response_time_ms:
+          type: integer
+          minimum: 0.0
+          title: Response Time Ms
+      type: object
+      required:
+      - turn_id
+      - package_id
+      - prompt
+      - created_at
+      - message
+      - next_action
+      - warnings
+      - suggestions
+      - generation_mode
+      - response_time_ms
+      title: TurnRead
+    Warning:
+      properties:
+        code:
+          type: string
+          title: Code
+        message:
+          type: string
+          title: Message
+      type: object
+      required:
+      - code
+      - message
+      title: Warning
 
     # ── Auth ──────────────────────────────────
     LoginRequest:
@@ -233,6 +469,19 @@ components:
           items:
             type: string
           example: ["beach", "culture", "food", "surf"]
+        vibes:
+          type: array
+          description: Vibe tags from the creation wizard's fixed vocabulary. Defaults to [].
+          items:
+            type: string
+            enum: [chill, adventure, luxury, local, foodie, scenic]
+          example: ["adventure", "foodie"]
+        season:
+          type: string
+          nullable: true
+          description: Recommended travel season selected at creation. Defaults to null.
+          enum: [spring, summer, autumn, winter]
+          example: "summer"
 
     TravelPackageCreate:
       allOf:
@@ -241,6 +490,7 @@ components:
           properties:
             flights:
               type: array
+              description: Optional. Omit or send an empty array for a local travel package without flights.
               items:
                 $ref: '#/components/schemas/FlightInput'
             hotels:
@@ -251,6 +501,11 @@ components:
               type: array
               items:
                 $ref: '#/components/schemas/ActivityInput'
+            days:
+              type: array
+              description: Per-day narrative. Days need not be contiguous; day_number values must be unique within the request.
+              items:
+                $ref: '#/components/schemas/PackageDayInput'
 
     TravelPackageSummary:
       type: object
@@ -264,12 +519,15 @@ components:
           example: "10-Day Bali Escape: Culture, Surf & Cuisine"
         destination_country:
           type: string
+          nullable: true
           example: "Indonesia"
         destination_city:
           type: string
+          nullable: true
           example: "Bali"
         duration_days:
           type: integer
+          nullable: true
           example: 10
         base_price_aud:
           type: integer
@@ -295,6 +553,15 @@ components:
           format: uri
           nullable: true
           example: "https://storage.supabase.co/object/public/media/pkg-00001/cover.jpg"
+        vibes:
+          type: array
+          items:
+            type: string
+          example: ["adventure", "foodie"]
+        season:
+          type: string
+          nullable: true
+          example: "summer"
 
     TravelPackageDetail:
       allOf:
@@ -303,6 +570,7 @@ components:
           properties:
             description:
               type: string
+              nullable: true
             max_group_size:
               type: integer
               nullable: true
@@ -314,6 +582,7 @@ components:
               type: array
               items:
                 $ref: '#/components/schemas/FlightDetail'
+              description: Empty for a local travel package without flight components.
             hotels:
               type: array
               items:
@@ -337,6 +606,35 @@ components:
             latest_approval:
               $ref: '#/components/schemas/ApprovalRecord'
               nullable: true
+            pricing:
+              $ref: '#/components/schemas/Pricing'
+              nullable: true
+
+    Pricing:
+      type: object
+      description: |
+        Informational price breakdown computed from the package's itinerary
+        components (null component prices and null hotel nights count as 0).
+        `base_price_aud` is the
+        creator-set display price and may differ from `components_total`; the
+        API asserts nothing about which is authoritative.
+      properties:
+        flights_total:
+          type: integer
+          description: Sum of flight prices in whole AUD.
+        hotels_total:
+          type: integer
+          description: Sum of price-per-night × nights across hotels, whole AUD.
+        activities_total:
+          type: integer
+          description: Sum of activity prices in whole AUD.
+        components_total:
+          type: integer
+          description: flights_total + hotels_total + activities_total.
+        base_price_aud:
+          type: integer
+          nullable: true
+          description: The package's creator-set display price, repeated for convenience.
 
     PackageStatus:
       type: string
@@ -352,7 +650,24 @@ components:
 
     TravelPackageUpdate:
       type: object
-      description: All fields are optional; only provided fields are updated.
+      description: |
+        All metadata fields are optional; only provided fields are updated.
+
+        `tags` and `vibes` follow replace semantics: omit to leave unchanged,
+        supply an array to replace, or supply `[]` to deliberately clear them.
+        Explicit `null` for either is rejected with `422`.
+
+        `flights`, `hotels`, and `activities` follow replace semantics: omit
+        the key to leave the stored collection unchanged, supply an array to
+        replace it entirely (scoped to this package only), or supply `[]` to
+        deliberately clear it. Supplying an explicit JSON `null` for any of
+        these three is rejected with `422` — it is not a supported way to
+        clear a collection.
+
+        `days` differs for backward compatibility: `null` (or omission) means
+        no change, while `[]` clears all day narratives. A supplied `days`
+        array replaces day rows by exact `day_number` (days need not be
+        contiguous), not by array length/position.
       properties:
         title:
           type: string
@@ -366,6 +681,7 @@ components:
         duration_days:
           type: integer
           minimum: 1
+          description: The final merged package (including any collections left unchanged) is validated against this value, e.g. a shrinking duration_days is rejected if it would leave an existing flight/activity's day_number out of range.
         base_price_aud:
           type: integer
           minimum: 0
@@ -376,11 +692,74 @@ components:
           type: array
           items:
             type: string
+        vibes:
+          type: array
+          description: Replace semantics like tags — omit to leave unchanged, [] to clear; explicit null is rejected with 422.
+          items:
+            type: string
+            enum: [chill, adventure, luxury, local, foodie, scenic]
+        season:
+          type: string
+          nullable: true
+          description: Omit to leave unchanged; explicit null clears the season.
+          enum: [spring, summer, autumn, winter]
+        flights:
+          type: array
+          items:
+            $ref: '#/components/schemas/FlightInput'
+        hotels:
+          type: array
+          items:
+            $ref: '#/components/schemas/HotelInput'
+        activities:
+          type: array
+          items:
+            $ref: '#/components/schemas/ActivityInput'
+        days:
+          type: array
+          nullable: true
+          items:
+            $ref: '#/components/schemas/PackageDayInput'
 
     # ── Package Components ─────────────────────
+    PackageDayInput:
+      type: object
+      required: [day_number]
+      properties:
+        day_number:
+          type: integer
+          minimum: 1
+        title:
+          type: string
+          nullable: true
+        summary:
+          type: string
+          nullable: true
+          description: The day's story/narrative, shown on the detail page. Distinct from any component's own `notes`.
+        meta:
+          type: string
+          nullable: true
+        media_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          default: []
+          description: Must not contain duplicates; every ID must already belong to this package or the request is rejected with 422.
+
     FlightInput:
       type: object
-      required: [origin_iata, destination_iata, airline, departure_datetime, arrival_datetime]
+      required: [origin_iata, destination_iata, airline]
+      description: |
+        A package flight is a reference flight: it defines the intended route
+        and itinerary flow, not a seat every buyer takes. Buyers choose real
+        travel dates and departure airport later.
+        Supply either `departure_datetime`/`arrival_datetime` (both together;
+        dated flights), or `day_number` + `departure_time` (relative
+        schedule, no calendar dates). Otherwise 422 "flight requires
+        departure_datetime/arrival_datetime or day_number/departure_time".
+        Sending only one of the datetimes returns 422 "flight requires both
+        departure_datetime and arrival_datetime".
       properties:
         origin_iata:
           type: string
@@ -402,11 +781,33 @@ components:
         departure_datetime:
           type: string
           format: date-time
+          nullable: true
+          description: Dated flights only. Required together with arrival_datetime.
           example: "2025-07-14T06:30:00+10:00"
         arrival_datetime:
           type: string
           format: date-time
+          nullable: true
+          description: Dated flights only. Must be strictly after departure_datetime.
           example: "2025-07-14T11:45:00+08:00"
+        departure_time:
+          type: string
+          pattern: '^([01]\d|2[0-3]):[0-5]\d$'
+          nullable: true
+          description: Local clock time at the origin (HH:MM). Required with day_number when no datetimes are supplied.
+          example: "21:00"
+        arrival_time:
+          type: string
+          pattern: '^([01]\d|2[0-3]):[0-5]\d$'
+          nullable: true
+          description: Local clock time at the destination (HH:MM). Not compared with departure_time — they are in different time zones.
+          example: "06:00"
+        duration_minutes:
+          type: integer
+          minimum: 1
+          nullable: true
+          description: Elapsed flight time; disambiguates overnight arrivals.
+          example: 585
         cabin_class:
           type: string
           enum: [economy, premium_economy, business, first]
@@ -415,6 +816,31 @@ components:
           type: integer
           description: Per-person flight price in whole AUD dollars.
           example: 850
+        day_number:
+          type: integer
+          minimum: 1
+          nullable: true
+          description: Timeline placement (1..duration_days, checked on save → 422 SAVE_PRECONDITION_FAILED). Required with departure_time for relative-schedule flights.
+        sequence_order:
+          type: integer
+          minimum: 1
+          nullable: true
+          description: Position among this package's flights when supplied; ties fall back to component type then package_component_id.
+        notes:
+          type: string
+          nullable: true
+          description: Creator-authored note, distinct from any description-like field.
+        media_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          default: []
+          description: Must not contain duplicates; every ID must already belong to this package.
+        source_id:
+          type: string
+          nullable: true
+          description: Provenance only (e.g. an inventory catalog reference the editor copied from). Not permission to read or modify inventory; the saved flight is a fully independent record.
 
     FlightDetail:
       allOf:
@@ -423,6 +849,13 @@ components:
             flight_id:
               type: string
               format: uuid
+              nullable: true
+              description: Legacy shared-catalog reference. Null for custom package components saved via the editor.
+            package_component_id:
+              type: string
+              format: uuid
+              nullable: true
+              description: Identifies the actual package_flights row. Use this, not flight_id, to reference "this flight in this package" — a full collection replacement issues new package_component_id values.
             sequence_order:
               type: integer
               example: 1
@@ -430,7 +863,14 @@ components:
 
     HotelInput:
       type: object
-      required: [hotel_name, check_in_date, check_out_date, city]
+      required: [hotel_name, city]
+      description: |
+        One HotelInput represents one full stay (its complete interval), not
+        a per-night row. Repeated nightly renderings and the check-out marker
+        in an editor UI are views of this one object, not separate stays.
+        Supply either `check_in_date`/`check_out_date`, or
+        `check_in_day`/`check_out_day` (both of a pair are required
+        together); at least one representation is required.
       properties:
         hotel_name:
           type: string
@@ -451,11 +891,24 @@ components:
         check_in_date:
           type: string
           format: date
+          nullable: true
           example: "2025-07-14"
         check_out_date:
           type: string
           format: date
+          nullable: true
+          description: Must be strictly after check_in_date when both dates are supplied.
           example: "2025-07-21"
+        check_in_day:
+          type: integer
+          minimum: 1
+          nullable: true
+          description: Relative day placement, for undated drafts. Must be between 1 and duration_days.
+        check_out_day:
+          type: integer
+          minimum: 1
+          nullable: true
+          description: Must be strictly after check_in_day; may be duration_days + 1 to represent the departure boundary.
         price_per_night_aud:
           type: integer
           description: Per-night price in whole AUD dollars.
@@ -465,6 +918,25 @@ components:
           type: string
           nullable: true
           example: "Pool Villa, King Bed"
+        sequence_order:
+          type: integer
+          minimum: 1
+          nullable: true
+          description: Round-trips inside the saved details for this stay. Not a native DB ordering column — do not rely on the database to order hotels by position; the API returns them in save order / array index as a fallback.
+        notes:
+          type: string
+          nullable: true
+        media_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          default: []
+          description: Must not contain duplicates; every ID must already belong to this package.
+        source_id:
+          type: string
+          nullable: true
+          description: Provenance only, not permission to read/modify shared hotel inventory.
 
     HotelDetail:
       allOf:
@@ -473,6 +945,13 @@ components:
             hotel_id:
               type: string
               format: uuid
+              nullable: true
+              description: Legacy shared-catalog reference. Null for custom package components saved via the editor.
+            package_component_id:
+              type: string
+              format: uuid
+              nullable: true
+              description: Identifies the actual package_hotels row.
             sequence_order:
               type: integer
               example: 1
@@ -480,7 +959,11 @@ components:
 
     ActivityInput:
       type: object
-      required: [activity_name, activity_date, city]
+      required: [activity_name, city]
+      description: |
+        Requires either `activity_date` or `day_number` (at least one).
+        Existing date-based inputs continue to work unchanged; `day_number`
+        additionally supports an undated draft placement.
       properties:
         activity_name:
           type: string
@@ -488,10 +971,27 @@ components:
         activity_date:
           type: string
           format: date
+          nullable: true
           example: "2025-07-16"
         city:
           type: string
           example: "Ubud, Bali"
+        day_number:
+          type: integer
+          minimum: 1
+          nullable: true
+          description: Timeline placement (1..duration_days) for undated drafts.
+        sequence_order:
+          type: integer
+          minimum: 1
+          nullable: true
+          description: Position among this package's activities when supplied; ties fall back to component type then package_component_id.
+        start_time:
+          type: string
+          pattern: '^([01]\d|2[0-3]):[0-5]\d$'
+          nullable: true
+          description: 24-hour HH:MM.
+          example: "10:30"
         duration_hours:
           type: number
           format: float
@@ -502,6 +1002,22 @@ components:
           nullable: true
           description: Per-person activity price in whole AUD dollars.
           example: 120
+        item_type:
+          type: string
+          nullable: true
+          description: Component kind — `activity` (default) or `creator_pick` for a creator's own non-bookable recommendation.
+          enum: [activity, creator_pick]
+          example: "creator_pick"
+        category:
+          type: string
+          nullable: true
+        address:
+          type: string
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+          description: Creator-authored note, stored independently from `description`.
         description:
           type: string
           nullable: true
@@ -509,6 +1025,17 @@ components:
         booking_required:
           type: boolean
           example: true
+        media_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          default: []
+          description: Must not contain duplicates; every ID must already belong to this package.
+        source_id:
+          type: string
+          nullable: true
+          description: Provenance only, not permission to read/modify shared activity inventory.
 
     ActivityDetail:
       allOf:
@@ -517,6 +1044,13 @@ components:
             activity_id:
               type: string
               format: uuid
+              nullable: true
+              description: Legacy shared-catalog reference. Null for custom package components saved via the editor.
+            package_component_id:
+              type: string
+              format: uuid
+              nullable: true
+              description: Identifies the actual package_activities row.
             sequence_order:
               type: integer
               example: 1
@@ -634,6 +1168,14 @@ components:
           type: string
           nullable: true
           example: "Land at Narita, check in near Shinjuku and ease in with an evening izakaya crawl."
+        meta:
+          type: string
+          nullable: true
+        media_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
 
     PackageCreator:
       type: object
@@ -774,6 +1316,292 @@ components:
             suggestion accepted without modifying the package.
           example: true
 
+    AIRecommendRequest:
+      type: object
+      required: [query]
+      properties:
+        query:
+          type: string
+          minLength: 1
+          description: |
+            Natural-language trip request. The engine parses destination, duration,
+            theme, group size and budget out of this free text.
+          example: "5 day food trip to Tokyo for 2 travellers"
+        origin_city:
+          type: string
+          default: "Sydney"
+          description: City the traveller departs from, used to pick outbound flights.
+          example: "Sydney"
+
+    AIItineraryFlight:
+      type: object
+      description: A single flight leg selected from the flight inventory.
+      properties:
+        flight_id:
+          type: string
+          example: "QF25-20260401"
+        leg:
+          type: string
+          enum: [outbound, return]
+          example: "outbound"
+        airline:
+          type: string
+          example: "Qantas"
+        origin:
+          type: string
+          example: "Sydney (SYD)"
+        destination:
+          type: string
+          example: "Tokyo (HND)"
+        departure_datetime:
+          type: string
+          description: Departure timestamp as stored in the flight inventory.
+          example: "2026-04-01T09:50:00.000Z"
+        arrival_datetime:
+          type: string
+          description: Arrival timestamp as stored in the flight inventory.
+          example: "2026-04-01T18:05:00.000Z"
+        cabin_class:
+          type: string
+          example: "economy"
+        price_aud:
+          type: number
+          example: 1184
+        seats_available:
+          type: integer
+          example: 999
+        booking_class:
+          type: string
+          example: "Standard"
+        stops:
+          type: integer
+          example: 0
+        baggage_kg:
+          type: number
+          example: 30
+        refundable:
+          type: boolean
+          example: false
+
+    AIItineraryAccommodation:
+      type: object
+      description: A hotel stay selected from the hotel inventory.
+      properties:
+        hotel_id:
+          type: string
+          example: "HT-TYO-003"
+        hotel_name:
+          type: string
+          example: "Shinjuku Garden Hotel"
+        city:
+          type: string
+          example: "Tokyo"
+        star_rating:
+          type: number
+          example: 4.5
+        room_type:
+          type: string
+          example: "Deluxe Twin"
+        price_per_night_aud:
+          type: number
+          example: 312
+        nights:
+          type: integer
+          example: 4
+        total_price_aud:
+          type: number
+          example: 1248
+        check_in:
+          type: string
+          format: date
+          example: "2026-04-01"
+        check_out:
+          type: string
+          format: date
+          example: "2026-04-05"
+        amenities:
+          type: string
+          description: Comma-separated amenity list as stored in the hotel inventory.
+          example: "wifi, onsen, restaurant, breakfast included"
+        breakfast_included:
+          type: boolean
+          example: true
+        cancellation_policy:
+          type: string
+          example: "Free cancellation up to 48 hours before check-in."
+
+    AIItineraryActivity:
+      type: object
+      description: A scheduled activity within an itinerary day.
+      properties:
+        activity_id:
+          type: string
+          example: "AC-TYO-014"
+        activity_name:
+          type: string
+          example: "Tsukiji Outer Market Food Walk"
+        category:
+          type: string
+          example: "food"
+        start_time:
+          type: string
+          example: "10:00"
+        duration_hours:
+          type: number
+          example: 3
+        price_aud:
+          type: number
+          example: 95
+        rating:
+          type: number
+          example: 4.7
+        address:
+          type: string
+          nullable: true
+          example: "4-16-2 Tsukiji, Chuo City, Tokyo"
+        notes:
+          type: string
+          nullable: true
+          example: "Go hungry — most stalls are cash only."
+
+    AIItineraryDay:
+      type: object
+      description: One day of the generated itinerary.
+      properties:
+        day_number:
+          type: integer
+          minimum: 1
+          example: 1
+        date:
+          type: string
+          format: date
+          example: "2026-04-01"
+        city:
+          type: string
+          example: "Tokyo"
+        title:
+          type: string
+          example: "Arrival & Orientation"
+        description:
+          type: string
+          example: "Land at Haneda, settle into Shinjuku and ease in with an evening izakaya crawl."
+        activities:
+          type: array
+          items:
+            $ref: '#/components/schemas/AIItineraryActivity'
+
+    AIItinerary:
+      type: object
+      description: |
+        A complete generated itinerary. Flights, hotels and activities are drawn from
+        real inventory; the narrative and day plan come from the LLM. Costs are
+        recomputed deterministically from the selected components, so
+        `budget_breakdown` is authoritative rather than LLM-generated.
+      properties:
+        meta:
+          type: object
+          properties:
+            trip_id:
+              type: string
+              format: uuid
+            created_at:
+              type: string
+              format: date-time
+            version:
+              type: string
+              example: "1.0"
+        trip:
+          type: object
+          properties:
+            title:
+              type: string
+              example: "5-Day Tokyo Food Trail"
+            destination_cities:
+              type: array
+              items:
+                type: string
+              example: ["Tokyo"]
+            duration_days:
+              type: integer
+              example: 5
+            theme:
+              type: string
+              example: "food"
+            travel_dates:
+              type: object
+              properties:
+                depart_date:
+                  type: string
+                  format: date
+                  example: "2026-04-01"
+                return_date:
+                  type: string
+                  format: date
+                  example: "2026-04-05"
+            total_cost_aud:
+              type: number
+              example: 4820
+            currency:
+              type: string
+              example: "AUD"
+            group_size:
+              type: integer
+              example: 2
+            status:
+              type: string
+              example: "draft"
+        description:
+          type: string
+          description: Narrative summary of the trip.
+        flights:
+          type: array
+          items:
+            $ref: '#/components/schemas/AIItineraryFlight'
+        accommodation:
+          type: array
+          items:
+            $ref: '#/components/schemas/AIItineraryAccommodation'
+        days:
+          type: array
+          items:
+            $ref: '#/components/schemas/AIItineraryDay'
+        budget_breakdown:
+          type: object
+          description: Deterministic cost breakdown recomputed from the selected components.
+          properties:
+            flights_aud:
+              type: number
+            accommodation_aud:
+              type: number
+            activities_aud:
+              type: number
+            estimated_meals_aud:
+              type: number
+            estimated_transport_aud:
+              type: number
+            total_aud:
+              type: number
+        validation:
+          type: object
+          description: Result of the post-generation feasibility checks.
+          properties:
+            is_valid:
+              type: boolean
+            bookable:
+              type: boolean
+            warnings:
+              type: array
+              items:
+                type: string
+            errors:
+              type: array
+              items:
+                type: string
+        bookable:
+          type: boolean
+          description: Convenience mirror of `validation.bookable`.
+          example: true
+
     # ── Marketplace ───────────────────────────
     MarketplacePackageSummary:
       type: object
@@ -787,12 +1615,15 @@ components:
           example: "10-Day Bali Escape: Culture, Surf & Cuisine"
         destination_country:
           type: string
+          nullable: true
           example: "Indonesia"
         destination_city:
           type: string
+          nullable: true
           example: "Bali"
         duration_days:
           type: integer
+          nullable: true
           example: 10
         base_price_aud:
           type: integer
@@ -805,6 +1636,15 @@ components:
           type: array
           items:
             type: string
+        vibes:
+          type: array
+          items:
+            type: string
+          example: ["scenic"]
+        season:
+          type: string
+          nullable: true
+          example: "spring"
         influencer:
           type: object
           properties:
@@ -952,6 +1792,89 @@ paths:
   # ══════════════════════════════════════════
   #  AUTH
   # ══════════════════════════════════════════
+
+  /users:
+    get:
+      tags: [users]
+      summary: List Auth users
+      operationId: usersList
+      description: |
+        Returns normalized users from the Supabase Auth admin API.
+        Requires a valid Supabase bearer token; the current handler does not check the caller's role.
+        No pagination parameters are exposed; the upstream default page is returned.
+      responses:
+        "200":
+          description: Normalized users.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [users]
+                properties:
+                  users:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ManagedUser'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        default:
+          description: Upstream failures preserve the upstream HTTP status and return an error string. Authentication service or configuration failures use ErrorResponse.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    required: [error]
+                    properties:
+                      error:
+                        type: string
+                  - $ref: '#/components/schemas/ErrorResponse'
+
+  /users/{user_id}:
+    patch:
+      tags: [users]
+      summary: Update an Auth user's email or metadata
+      operationId: usersUpdate
+      description: |
+        Requires a valid Supabase bearer token; the current handler does not check the caller's role.
+        Updates email, app_metadata.status, and user_metadata.createdAt when non-empty values are supplied.
+        Returns the upstream Supabase Auth JSON unchanged, not a normalized ManagedUser.
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ManagedUserUpdate'
+      responses:
+        "200":
+          description: Unmodified Supabase Auth update response.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "422":
+          $ref: '#/components/responses/UnprocessableEntity'
+        default:
+          description: Upstream failures preserve the upstream HTTP status and return an error string. Authentication service or configuration failures use ErrorResponse.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    required: [error]
+                    properties:
+                      error:
+                        type: string
+                  - $ref: '#/components/schemas/ErrorResponse'
 
   /auth/login:
     post:
@@ -1106,9 +2029,15 @@ paths:
       description: |
         Creates a new travel package in `draft` status. The package may include
         initial flights, hotels, and activities, or these can be added later.
+        Flights are optional throughout the review and publication workflow.
+        A package with zero flight components is a local travel package.
 
         The package is not visible in the marketplace until it has been submitted,
         approved, and published.
+
+        Any `media_ids` supplied on flights, hotels, activities, or days are
+        rejected: a new package cannot yet own uploaded media, so it has none to
+        reference. Upload media and attach it via a subsequent `PUT` instead.
 
         **Roles:** `influencer`
         **FR:** FR-I-100, FR-I-101
@@ -1157,7 +2086,19 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
         "422":
-          $ref: '#/components/responses/UnprocessableEntity'
+          description: |
+            Request body failed schema validation (`VALIDATION_ERROR`), or the
+            body was well-formed but the save RPC rejected it on a business
+            precondition — e.g. a `day_number` outside `1..duration_days`, or a
+            `media_ids` reference that doesn't belong to this package
+            (`SAVE_PRECONDITION_FAILED`). Nothing is written either way.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error_code: "SAVE_PRECONDITION_FAILED"
+                message: "flight day_number must be between 1 and duration_days"
 
   /packages/{package_id}:
     parameters:
@@ -1169,6 +2110,7 @@ paths:
       description: |
         Returns the full detail view of a package including all flights, hotels,
         activities, media, and the latest approval record.
+        Local travel packages return `flights: []`.
 
         Influencers may only retrieve their own packages. Admins may retrieve any package.
 
@@ -1193,11 +2135,23 @@ paths:
       tags: [packages]
       summary: Update a package (partial or full update)
       description: |
-        Updates the metadata fields of a travel package. Only packages in `draft`
-        or `rejected` status may be updated; attempting to update a package in
-        any other status returns `409 Conflict`.
+        Partially updates a package's metadata, days, and itinerary components
+        in one atomic save. Only packages in `draft` or `rejected` status may
+        be updated; attempting to update a package in any other status
+        returns `409 Conflict`.
 
-        To update flights/hotels/activities, delete and re-add the components.
+        `flights`, `hotels`, and `activities` each replace the package's
+        stored collection when supplied as an array (`[]` clears it);
+        omitting the key leaves that collection unchanged. A full replacement
+        assigns new `package_component_id` values in the response — clients
+        must not keep treating local/previous IDs as still valid. See
+        `TravelPackageUpdate` for the complete field-by-field semantics,
+        including the `days` exception (`null`/omission = unchanged,
+        `[]` = clear narratives).
+
+        Any validation failure (bounds, time format, duplicate media/day
+        numbers, foreign/missing media references, etc.) rolls back the
+        entire save — nothing is partially written.
 
         **Roles:** `influencer` (own packages only)
         **FR:** FR-I-101, FR-I-103 (revise after rejection)
@@ -1208,6 +2162,32 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/TravelPackageUpdate'
+            example:
+              title: "Tokyo food day"
+              description: "A creator-led day exploring local food."
+              base_price_aud: 450
+              days:
+                - day_number: 1
+                  title: "Markets and neighbourhoods"
+                  summary: "Start at the market, then explore nearby streets."
+                  meta: "Food and culture"
+                  media_ids: []
+              activities:
+                - activity_name: "Market walk"
+                  activity_date: "2026-10-01"
+                  city: "Tokyo"
+                  day_number: 1
+                  sequence_order: 1
+                  start_time: "10:30"
+                  duration_hours: 1.5
+                  price_aud: 40
+                  category: "Food"
+                  address: "Market entrance"
+                  description: "Explore the food stalls."
+                  notes: "Meet beside the gate"
+                  booking_required: false
+                  media_ids: []
+                  source_id: null
       responses:
         "200":
           description: Package updated successfully.
@@ -1231,7 +2211,20 @@ paths:
                 error_code: "PACKAGE_NOT_EDITABLE"
                 message: "This package cannot be edited because its status is 'pending_review'. Only packages in 'draft' or 'rejected' status may be updated."
         "422":
-          $ref: '#/components/responses/UnprocessableEntity'
+          description: |
+            Request body failed schema validation (`VALIDATION_ERROR`), or the
+            body was well-formed but the save RPC rejected it on a business
+            precondition — e.g. a `day_number` outside `1..duration_days`, or a
+            `media_ids` reference that doesn't belong to this package
+            (`SAVE_PRECONDITION_FAILED`). The update is rolled back entirely
+            either way.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error_code: "SAVE_PRECONDITION_FAILED"
+                message: "flight day_number must be between 1 and duration_days"
 
     delete:
       tags: [packages]
@@ -1274,10 +2267,12 @@ paths:
 
         **Pre-conditions (all must be met or 422 is returned):**
         - Package status is `draft` or `rejected`
-        - Package has at least one flight
         - Package has at least one hotel
         - Package has at least one activity
         - `base_price_aud` > 0
+
+        Flights are optional. A package with zero flight components is a local
+        travel package and follows the same approval and publication workflow.
 
         **Roles:** `influencer` (own packages only)
         **FR:** FR-I-102
@@ -1316,8 +2311,9 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
               example:
                 error_code: "SUBMISSION_PRECONDITION_FAILED"
-                message: "Package cannot be submitted: at least one hotel must be included."
+                message: "Package must have at least one hotel."
                 details:
+                  failures: ["Package must have at least one hotel."]
                   missing: ["hotel"]
 
   # ══════════════════════════════════════════
@@ -1862,6 +2858,73 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
 
+  /ai/recommend:
+    post:
+      tags: [ai]
+      summary: Generate a full itinerary from a natural-language trip request
+      description: |
+        Parses a free-text trip request, pulls matching flights, hotels and activities
+        from the Supabase inventory, and asks the LLM to assemble them into a day-by-day
+        itinerary. Costs and feasibility are then recomputed deterministically from the
+        selected components, so `budget_breakdown` and `validation` are computed by the
+        API rather than taken from the model.
+
+        If the LLM is unavailable the API still returns `200` with a draft itinerary
+        built straight from inventory — `bookable` is `false` and `validation.warnings`
+        explains why. A `502` is returned only when generation fails outright.
+
+        **Performance:** generation involves a Supabase fetch plus an LLM call and
+        routinely takes tens of seconds. Clients should allow a generous timeout.
+
+        **Roles:** Public (no authentication required)
+      operationId: recommendItinerary
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AIRecommendRequest'
+            example:
+              query: "5 day food trip to Tokyo for 2 travellers"
+              origin_city: "Sydney"
+      responses:
+        "200":
+          description: Itinerary generated (possibly an inventory-only fallback).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIItinerary'
+        "422":
+          $ref: '#/components/responses/UnprocessableEntity'
+        "429":
+          description: Too many itinerary requests; the upstream LLM quota is exhausted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error_code: "RATE_LIMITED"
+                message: "Too many itinerary requests. Please try again shortly."
+        "500":
+          description: The itinerary engine is not configured (missing LLM or Supabase credentials).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error_code: "CONFIG_ERROR"
+                message: "The itinerary engine is not configured on this environment."
+        "502":
+          description: The LLM call failed and no itinerary could be produced.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error_code: "LLM_FAILURE"
+                message: "The itinerary generator did not return a usable response. Please try again."
+
   # ══════════════════════════════════════════
   #  MARKETPLACE
   # ══════════════════════════════════════════
@@ -1985,6 +3048,7 @@ paths:
         Returns the complete public view of a package, including all itinerary
         components (flights, hotels, activities) and media. Only packages with
         status `live` are accessible via this endpoint.
+        Local travel packages return `flights: []`.
 
         **Roles:** Public (no authentication required), `customer`
         **FR:** FR-C-100
@@ -2098,3 +3162,210 @@ paths:
               example:
                 error_code: "SEARCH_QUERY_TOO_SHORT"
                 message: "The search query must be at least 2 characters long."
+
+  /ai/copilot/{package_id}/turns:
+    post:
+      tags:
+      - copilot
+      summary: Create Turn
+      operationId: create_turn_ai_copilot__package_id__turns_post
+      parameters:
+      - name: package_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Package Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PromptInput'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TurnRead'
+        '422':
+          description: Invalid request; auto_apply true is unsupported
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Package, turn or item not owned or not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '502':
+          description: Upstream database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Dependency unavailable or request budget exhausted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+      - BearerAuth: []
+    get:
+      tags:
+      - copilot
+      summary: List Turns
+      operationId: list_turns_ai_copilot__package_id__turns_get
+      parameters:
+      - name: package_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Package Id
+      - name: page
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          default: 1
+          title: Page
+      - name: per_page
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 20
+          title: Per Page
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TurnList'
+        '422':
+          description: Invalid request; auto_apply true is unsupported
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Package, turn or item not owned or not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '502':
+          description: Upstream database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Dependency unavailable or request budget exhausted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+      - BearerAuth: []
+  /ai/copilot/{package_id}/turns/{turn_id}/items/{item_id}:
+    patch:
+      tags:
+      - copilot
+      summary: Feedback
+      operationId: feedback_ai_copilot__package_id__turns__turn_id__items__item_id__patch
+      parameters:
+      - name: package_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Package Id
+      - name: turn_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Turn Id
+      - name: item_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Item Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FeedbackInput'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Suggestion'
+        '422':
+          description: Invalid request; auto_apply true is unsupported
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Package, turn or item not owned or not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '502':
+          description: Upstream database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Dependency unavailable or request budget exhausted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Suggestion already resolved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+      - BearerAuth: []

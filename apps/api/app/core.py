@@ -29,7 +29,7 @@ def _require_config():
         raise HTTPException(500, "Supabase admin credentials not configured.")
 
 
-def require_user(authorization: str = Header(default="")):
+def validate_user(authorization: str, *, timeout: float = 15):
     """Validate the caller's Supabase access token before exposing admin routes."""
     _require_config()
     if not authorization.startswith("Bearer "):
@@ -41,13 +41,17 @@ def require_user(authorization: str = Header(default="")):
                 "apikey": SUPABASE_SERVICE_ROLE_KEY,
                 "Authorization": authorization,
             },
-            timeout=15,
+            timeout=timeout,
         )
     except requests.RequestException:
         raise HTTPException(503, "Auth service unreachable.")
     if not response.ok:
         raise HTTPException(401, "Invalid or expired token.")
     return response.json()
+
+
+def require_user(authorization: str = Header(default="")):
+    return validate_user(authorization)
 
 
 def _err(status_code, error_code, message, details=None):

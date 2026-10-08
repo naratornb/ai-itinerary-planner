@@ -1,28 +1,53 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { Session } from "@supabase/supabase-js";
+import * as Dialog from "@radix-ui/react-dialog";
 
 import {
+  createPackage,
+  deletePackage,
   fetchOwnPackages,
-  formatDashboardStats,
   formatCreatorPackage,
+  publishPackage,
   resolveCreatorProfile,
   signInWithEmail,
+  type CreatePackageInput,
   type CreatorPackage,
 } from "../lib/creator-api";
 import {
   fetchMarketplacePackages,
+  reusableSearchResults,
   searchMarketplacePackages,
   uniqueDestinationSuggestions,
   type MarketplacePackageSummary,
 } from "../lib/marketplace-api";
+import {
+  generateItinerary,
+  itineraryToPackageInput,
+  type WizardSelection,
+} from "../lib/ai/itinerary";
+import { wizardVibesStorageKey } from "../lib/review-draft";
+import { VIBES } from "../lib/vibes";
 import { supabase } from "../lib/supabase/client";
+import { creatorPackageRoute, creatorPackageShareRoute } from "../lib/routes";
+import { hasAdminApprovalAccess } from "../lib/admin-api";
+import { creatorDashboardBackLink, dashboardActionAlignment } from "./navigation-model";
+import AiDisclaimer from "./ai-disclaimer";
 const creatorBannerImg = "/creator-banner.png";
+const LOGIN_API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 
-export type Screen = "login" | "marketplace" | "dashboard" | "builder" | "ai-wizard" | "editor";
+export type Screen = "login" | "marketplace" | "dashboard" | "admin" | "builder" | "manual-builder" | "ai-wizard";
+
+export function nextRecommendationInfoOpen(
+  open: boolean,
+  interaction: "focus" | "click" | "leave",
+) {
+  return interaction === "leave" ? false : open || interaction === "focus" || interaction === "click";
+}
 
 // ─── Image URLs ────────────────────────────────────────────────────────────────
 const IMG = {
@@ -50,6 +75,8 @@ const C = {
   successBg:     "#ECFDF5",
   warning:       "#A45B00",
   warningBg:     "#FFF8EC",
+  danger:        "#D40119",
+  dangerBg:      "#FEE2E2",   // --fc-danger-subtle
   focusRing:     "rgba(0,114,234,0.35)",
   shadowCard:    "0 1px 3px rgba(33,33,33,0.07)",
   shadowRaised:  "0 2px 8px rgba(33,33,33,0.09)",
@@ -57,6 +84,24 @@ const C = {
   radiusLg:      16,
   radiusPill:    999,
 };
+
+export function creatorPackageStatusStyle(statusKey: string) {
+  if (statusKey === "live" || statusKey === "approved") {
+    return { color: C.success, background: C.successBg };
+  }
+  if (statusKey === "pending_review") {
+    return { color: C.warning, background: C.warningBg };
+  }
+  if (statusKey === "rejected") {
+    return { color: C.danger, background: C.dangerBg };
+  }
+  return { color: C.secondary, background: C.subtle };
+}
+
+export function destinationOptionBackground(selected: boolean, hovered: boolean) {
+  if (selected) return "#EFF6FF";
+  return hovered ? C.subtle : "transparent";
+}
 
 // ─── Button primitives ─────────────────────────────────────────────────────────
 // Primary: blue fill, white text — "an action the user can take"
@@ -159,16 +204,6 @@ const navItemBase: React.CSSProperties = {
   gap: 8,
 };
 
-function MarketplaceControl({ children, onClick }: { children: React.ReactNode; onClick?: () => void }) {
-  const [hov, setHov] = useState(false);
-  return (
-    <button onClick={onClick} onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)}
-      style={{ ...navItemBase, background: hov ? "rgba(0,0,0,0.08)" : "none" }}>
-      {children}
-    </button>
-  );
-}
-
 function MarketplaceNavItem({ children, onClick, active }: { children: React.ReactNode; onClick?: () => void; active?: boolean }) {
   const [hov, setHov] = useState(false);
   return (
@@ -242,7 +277,6 @@ export function TopNav({ screen, onNav }: { screen: Screen; onNav: (s: Screen) =
 
   return (
     <header style={{
-      position: "sticky", top: 0, zIndex: 100,
       width: "100%", background: "#d40119", color: "#fff",
     }}>
       <div style={{
@@ -266,20 +300,6 @@ export function TopNav({ screen, onNav }: { screen: Screen; onNav: (s: Screen) =
 
           {/* Utilities */}
           <div style={{ display: "flex", alignItems: "center", marginLeft: "auto" }}>
-            <MarketplaceControl>
-              {/* phone/tablet icon */}
-              <svg style={{ display: "inline-grid", width: 20, height: 20, placeItems: "center", flexShrink: 0 }}
-                viewBox="0 0 24 24" fill="currentColor">
-                <path d="M17 1.01L7 1c-1.1 0-2 .9-2 2v18c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V3c0-1.1-.9-1.99-2-1.99zM17 19H7V5h10v14z"/>
-              </svg>
-              Get the app
-            </MarketplaceControl>
-            <MarketplaceControl>Get a Quote</MarketplaceControl>
-            <MarketplaceControl>
-              Help
-              <Chevron />
-            </MarketplaceControl>
-
             <div style={{ position: "relative" }}>
               <button
                 onClick={() => marketplaceSession ? setAccountOpen((open) => !open) : onNav("login")}
@@ -433,16 +453,7 @@ export function TopNav({ screen, onNav }: { screen: Screen; onNav: (s: Screen) =
           </nav>
 
           {/* Contact */}
-          <div style={{ display: "flex", alignItems: "center", marginLeft: "auto" }}>
-            <MarketplaceNavItem onClick={() => {}}>Stores</MarketplaceNavItem>
-            <MarketplaceNavItem onClick={() => {}}>
-              <svg style={{ display: "inline-grid", width: 20, height: 20, placeItems: "center", flexShrink: 0 }}
-                viewBox="0 0 24 24" fill="currentColor">
-                <path d="M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z"/>
-              </svg>
-              1300 859 334
-            </MarketplaceNavItem>
-          </div>
+          <div style={{ display: "flex", alignItems: "center", marginLeft: "auto" }} />
         </div>
       </div>
     </header>
@@ -461,8 +472,9 @@ export function LoginScreen({ onNav }: { onNav: (s: Screen) => void }) {
     setErrorMessage("");
     setIsSubmitting(true);
     try {
-      await signInWithEmail(supabase.auth, email, password);
-      onNav("dashboard");
+      const session = await signInWithEmail(supabase.auth, email, password);
+      const isAdmin = await hasAdminApprovalAccess(fetch, LOGIN_API_URL, session.access_token);
+      onNav(isAdmin ? "admin" : "dashboard");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Unable to sign in. Please try again.");
     } finally {
@@ -521,7 +533,6 @@ export function LoginScreen({ onNav }: { onNav: (s: Screen) => void }) {
               onChange={(event) => setPassword(event.target.value)}
               autoComplete="current-password"
               required
-              minLength={8}
               style={{
                 width: "100%", boxSizing: "border-box",
                 height: 52, padding: "0 14px",
@@ -556,51 +567,14 @@ export function LoginScreen({ onNav }: { onNav: (s: Screen) => void }) {
           >{isSubmitting ? "Signing in…" : "Sign in"}</button>
         </form>
 
-        {/* OR divider */}
-        <div style={{ display: "flex", alignItems: "center", gap: 12, margin: "20px 0" }}>
-          <div style={{ flex: 1, height: 1, background: C.border }} />
-          <span style={{ fontSize: 13, color: C.secondary }}>OR</span>
-          <div style={{ flex: 1, height: 1, background: C.border }} />
-        </div>
-
-        {/* Social buttons */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {/* Google */}
-          <button style={{
-            display: "flex", alignItems: "center", gap: 14,
-            height: 48, padding: "0 18px",
-            background: C.white, border: `1px solid ${C.border}`, borderRadius: 6,
-            fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 500, color: C.ink,
-            cursor: "pointer",
-          }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = C.subtle; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = C.white; }}
-          >
-            <svg width="20" height="20" viewBox="0 0 18 18" fill="none">
-              <path d="M17.1 9.2c0-.6-.05-1.18-.14-1.74H9v3.3h4.56a3.9 3.9 0 01-1.69 2.56v2.13h2.74C16.3 13.95 17.1 11.77 17.1 9.2z" fill="#4285F4"/>
-              <path d="M9 18c2.29 0 4.21-.76 5.61-2.05l-2.74-2.13c-.76.51-1.73.81-2.87.81-2.2 0-4.07-1.49-4.73-3.49H1.45v2.2A8.99 8.99 0 009 18z" fill="#34A853"/>
-              <path d="M4.27 11.14A5.4 5.4 0 013.98 9c0-.74.13-1.46.29-2.14V4.66H1.45A9 9 0 000 9c0 1.45.35 2.82.96 4.04l2.93-1.9z" fill="#FBBC05"/>
-              <path d="M9 3.58c1.25 0 2.37.43 3.25 1.27l2.43-2.43A8.84 8.84 0 009 0 8.99 8.99 0 001.45 4.66l2.82 2.2C4.93 5.06 6.8 3.58 9 3.58z" fill="#EA4335"/>
-            </svg>
-            Continue with Google
-          </button>
-
-          {/* Facebook */}
-          <button style={{
-            display: "flex", alignItems: "center", gap: 14,
-            height: 48, padding: "0 18px",
-            background: C.white, border: `1px solid ${C.border}`, borderRadius: 6,
-            fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 500, color: C.ink,
-            cursor: "pointer",
-          }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = C.subtle; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = C.white; }}
-          >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="#1877F2">
-              <path d="M24 12.073C24 5.405 18.627 0 12 0S0 5.405 0 12.073C0 18.1 4.388 23.094 10.125 24v-8.437H7.078v-3.49h3.047V9.413c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.234 2.686.234v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.49h-2.796V24C19.612 23.094 24 18.1 24 12.073z"/>
-            </svg>
-            Continue with Facebook
-          </button>
+        {/* Secondary actions */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", margin: "16px 0 0" }}>
+          <Link href="/forgot-password" style={{ fontSize: 13, color: C.blue, textDecoration: "none", fontFamily: "var(--fc-font-body)" }}>
+            Forgot password?
+          </Link>
+          <Link href="/register" style={{ fontSize: 13, color: C.blue, textDecoration: "none", fontFamily: "var(--fc-font-body)" }}>
+            Create account
+          </Link>
         </div>
 
         {/* Partner logos */}
@@ -609,11 +583,6 @@ export function LoginScreen({ onNav }: { onNav: (s: Screen) => void }) {
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", lineHeight: 1 }}>
             <span style={{ fontSize: 8, color: "#00AACC", fontWeight: 700, letterSpacing: "0.05em" }}>cruise</span>
             <span style={{ fontSize: 10, color: "#00AACC", fontWeight: 700 }}>about</span>
-          </div>
-          {/* Travel Marketplace text logo */}
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", lineHeight: 1 }}>
-            <span style={{ fontSize: 9, fontWeight: 900, color: C.red, letterSpacing: "0.04em" }}>FLIGHT</span>
-            <span style={{ fontSize: 9, fontWeight: 900, color: C.red, letterSpacing: "0.04em" }}>CENTRE</span>
           </div>
           {/* Travel Associates */}
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", lineHeight: 1 }}>
@@ -656,16 +625,28 @@ function marketplacePrice(price: number | null) {
   }).format(price);
 }
 
+function formatFollowerCount(count: number) {
+  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
+  if (count >= 1_000) return `${Math.round(count / 1_000)}K`;
+  return String(count);
+}
+
 export function MarketplaceScreen() {
   const router = useRouter();
   const [search, setSearch] = useState("");
   const [packages, setPackages] = useState<MarketplacePackageSummary[]>([]);
   const [allPackages, setAllPackages] = useState<MarketplacePackageSummary[]>([]);
   const [liveResults, setLiveResults] = useState<MarketplacePackageSummary[]>([]);
+  // Which query liveResults belongs to — results fetched for an earlier
+  // keystroke must never be served under the current text (see submitSearch).
+  const [liveQuery, setLiveQuery] = useState("");
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  // Avatar lookup until the list API exposes influencer.avatar_url — keyed by
+  // instagram handle so one batched query covers every card.
+  const [avatars, setAvatars] = useState<Record<string, string>>({});
 
   const loadPackages = async () => {
     setLoading(true);
@@ -699,6 +680,36 @@ export function MarketplaceScreen() {
   }, []);
 
   useEffect(() => {
+    const handles = [
+      ...new Set(
+        packages
+          .filter((card) => !card.influencer?.avatar_url)
+          .map((card) => card.influencer?.instagram_handle)
+          .filter((handle): handle is string => Boolean(handle))
+      ),
+    ];
+    if (!handles.length) return;
+    let active = true;
+    void supabase
+      .from("influencer_profiles")
+      .select("instagram_handle, profiles(avatar_url)")
+      .in("instagram_handle", handles)
+      .then(({ data }) => {
+        if (!active || !data) return;
+        setAvatars((current) => {
+          const next = { ...current };
+          for (const row of data) {
+            const profile = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles;
+            const url = (profile as { avatar_url?: string | null } | null)?.avatar_url;
+            if (url) next[row.instagram_handle] = url;
+          }
+          return next;
+        });
+      });
+    return () => { active = false; };
+  }, [packages]);
+
+  useEffect(() => {
     const query = search.trim();
     if (query.length < 2) return;
     let active = true;
@@ -707,6 +718,7 @@ export function MarketplaceScreen() {
         const data = await searchMarketplacePackages(fetch, MARKETPLACE_API_URL, query);
         if (!active) return;
         setLiveResults(data);
+        setLiveQuery(query);
         setSuggestions(uniqueDestinationSuggestions(data));
         setShowSuggestions(true);
       } catch {
@@ -730,8 +742,8 @@ export function MarketplaceScreen() {
     setLoading(true);
     setError("");
     try {
-      const data = query === search && liveResults.length ? liveResults
-        : await searchMarketplacePackages(fetch, MARKETPLACE_API_URL, trimmed);
+      const data = reusableSearchResults(trimmed, liveQuery, liveResults)
+        ?? await searchMarketplacePackages(fetch, MARKETPLACE_API_URL, trimmed);
       setPackages(data);
     } catch (searchError) {
       setError(searchError instanceof Error ? searchError.message : "Unable to search marketplace packages.");
@@ -845,27 +857,11 @@ export function MarketplaceScreen() {
               )}
             </div>
 
-            {/* Row 2: filters + search button */}
+            {/* Row 2: search button */}
             <div style={{
-              display: "flex", alignItems: "center", justifyContent: "space-between",
+              display: "flex", alignItems: "center", justifyContent: "flex-end",
               paddingBottom: 24,
             }}>
-              <div style={{ display: "flex", gap: 4 }}>
-                {["All departure dates", "All trip types"].map((label) => (
-                  <button key={label} type="button" style={{
-                    display: "inline-flex", alignItems: "center", gap: 6,
-                    background: "none", border: "none", cursor: "pointer",
-                    fontFamily: "var(--fc-font-body)", fontSize: 15, fontWeight: 500,
-                    color: C.ink, padding: "8px 12px",
-                    textDecoration: "underline", textUnderlineOffset: 3,
-                  }}>
-                    {label}
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                      <polyline points="6 9 12 15 18 9"/>
-                    </svg>
-                  </button>
-                ))}
-              </div>
               <button
                 type="submit"
                 onMouseEnter={(e) => (e.currentTarget.style.background = C.blueDark)}
@@ -915,28 +911,51 @@ export function MarketplaceScreen() {
           {packages.map((card) => {
             const destination = [card.destination_city, card.destination_country].filter(Boolean).join(", ");
             const creatorName = card.influencer?.display_name || "Marketplace creator";
+            const creatorAvatar = card.influencer?.avatar_url
+              ?? (card.influencer?.instagram_handle ? avatars[card.influencer.instagram_handle] : undefined);
+            const openTrip = () => router.push(`/marketplace/packages/${card.package_id}`);
             return (
-            <article key={card.package_id} style={{
-              borderRadius: 14, overflow: "hidden",
-              border: `1px solid ${C.border}`,
-              background: C.white,
-              boxShadow: C.shadowCard,
-              display: "flex", flexDirection: "column",
-            }}>
+            <article
+              key={card.package_id}
+              className="trip-card"
+              role="link"
+              tabIndex={0}
+              onClick={openTrip}
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openTrip(); } }}
+              style={{
+                borderRadius: 14, overflow: "hidden",
+                border: `1px solid ${C.border}`,
+                background: C.white,
+                boxShadow: C.shadowCard,
+                display: "flex", flexDirection: "column",
+                cursor: "pointer",
+              }}
+            >
               {/* Image */}
               <div style={{ position: "relative", aspectRatio: "3/2", overflow: "hidden" }}>
-                <img src={card.cover_image_url || IMG.hero} alt={card.title} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                <img className="trip-card-img" src={card.cover_image_url || IMG.hero} alt={card.title} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                {card.tags.length > 0 && (
+                  <div style={{ position: "absolute", left: 12, bottom: 12, display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {card.tags.slice(0, 3).map((tag) => (
+                      <span key={tag} style={{
+                        background: "rgba(255,255,255,0.94)", color: C.ink,
+                        fontFamily: "var(--fc-font-body)", fontSize: 12, fontWeight: 600,
+                        lineHeight: "16px", padding: "4px 10px", borderRadius: C.radiusPill,
+                      }}>{tag}</span>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {/* Body */}
-              <div style={{ padding: "18px 18px 20px", flex: 1, display: "flex", flexDirection: "column", gap: 10 }}>
+              <div style={{ padding: "16px 16px 20px", flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
                 <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, color: C.secondary, margin: 0 }}>
                   {card.duration_days ? `${card.duration_days} days` : "Duration on request"} · {destination || "Destination coming soon"}
                 </p>
                 <p style={{
-                  fontFamily: "var(--fc-font-body)", fontSize: 15, fontWeight: 600,
-                  color: C.ink, margin: 0, lineHeight: "22px",
-                  display: "-webkit-box", WebkitLineClamp: 3,
+                  fontFamily: "var(--fc-font-body)", fontSize: 16, fontWeight: 600,
+                  color: C.ink, margin: 0, lineHeight: "22px", minHeight: 44,
+                  display: "-webkit-box", WebkitLineClamp: 2,
                   WebkitBoxOrient: "vertical", overflow: "hidden",
                 }}>
                   {card.title}
@@ -944,25 +963,46 @@ export function MarketplaceScreen() {
 
                 {/* Creator info */}
                 <div style={{
-                  display: "flex", alignItems: "center", gap: 10,
-                  padding: "12px 0", borderTop: `1px solid ${C.border}`, marginTop: 6,
+                  display: "flex", alignItems: "center", gap: 8,
+                  paddingTop: 10, marginTop: 4, borderTop: `1px solid ${C.border}`,
                 }}>
-                  <span aria-hidden="true" style={{ width: 34, height: 34, borderRadius: "50%", background: C.subtle, display: "grid", placeItems: "center", fontWeight: 700 }}>{creatorName.charAt(0).toUpperCase()}</span>
-                  <div>
-                    <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 600, color: C.ink, margin: 0, lineHeight: "20px" }}>{creatorName}</p>
-                    {card.influencer?.instagram_handle && <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, color: C.secondary, margin: 0, lineHeight: "18px" }}>{card.influencer.instagram_handle}</p>}
-                  </div>
-                  <span style={{
-                    marginLeft: "auto", background: "#EEF5FF", color: C.blue,
-                    fontFamily: "var(--fc-font-body)", fontSize: 12, fontWeight: 700,
-                    padding: "4px 10px", borderRadius: 999, letterSpacing: "0.05em", flexShrink: 0,
-                  }}>CREATOR</span>
+                  {creatorAvatar ? (
+                    <img src={creatorAvatar} alt="" aria-hidden="true" style={{ width: 28, height: 28, borderRadius: "50%", objectFit: "cover", flexShrink: 0, background: C.subtle }} />
+                  ) : (
+                    <span aria-hidden="true" style={{
+                      width: 28, height: 28, borderRadius: "50%", background: C.subtle,
+                      display: "grid", placeItems: "center", fontSize: 13, fontWeight: 700,
+                      color: C.secondary, flexShrink: 0,
+                    }}>{creatorName.charAt(0).toUpperCase()}</span>
+                  )}
+                  <p style={{
+                    fontFamily: "var(--fc-font-body)", fontSize: 14, color: C.secondary,
+                    margin: 0, lineHeight: "20px",
+                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                  }}>
+                    <span style={{ fontWeight: 600, color: C.ink }}>{creatorName}</span>
+                    {card.influencer?.instagram_handle ? ` · ${card.influencer.instagram_handle}` : ""}
+                    {card.influencer?.follower_count ? ` · ${formatFollowerCount(card.influencer.follower_count)} followers` : ""}
+                  </p>
                 </div>
 
-                <div style={{ paddingTop: 6 }}>
-                  <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 12, color: C.secondary, margin: "0 0 3px" }}>From per person</p>
-                  <p style={{ fontFamily: "var(--fc-font-display)", fontSize: 24, fontWeight: 700, color: C.ink, margin: "0 0 14px", letterSpacing: "-0.01em" }}>{marketplacePrice(card.base_price_aud)}</p>
-                  <BtnPrimary full onClick={() => router.push(`/marketplace/packages/${card.package_id}`)}>View trip</BtnPrimary>
+                <div style={{ marginTop: "auto", paddingTop: 14, display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 8 }}>
+                  <p style={{ fontFamily: "var(--fc-font-display)", fontSize: 22, fontWeight: 700, color: C.ink, margin: 0, letterSpacing: "-0.01em", lineHeight: "28px" }}>
+                    <span style={{ fontFamily: "var(--fc-font-body)", fontSize: 13, fontWeight: 400, color: C.secondary, letterSpacing: 0 }}>From </span>
+                    {marketplacePrice(card.base_price_aud)}
+                    {card.base_price_aud !== null && (
+                      <span style={{ fontFamily: "var(--fc-font-body)", fontSize: 13, fontWeight: 400, color: C.secondary, letterSpacing: 0 }}> / person</span>
+                    )}
+                  </p>
+                  <span style={{
+                    fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 600, color: C.blue,
+                    display: "inline-flex", alignItems: "center", gap: 4, flexShrink: 0,
+                  }}>
+                    View trip
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M5 12h14M12 5l7 7-7 7"/>
+                    </svg>
+                  </span>
                 </div>
               </div>
             </article>
@@ -1004,6 +1044,7 @@ export function MarketplaceScreen() {
                 display: "inline-flex", alignItems: "center", gap: 8,
                 marginBottom: 12,
               }}
+                onClick={() => router.push("/register")}
                 onMouseEnter={(e) => { e.currentTarget.style.background = C.blueDark; }}
                 onMouseLeave={(e) => { e.currentTarget.style.background = C.blue; }}
               >
@@ -1041,7 +1082,7 @@ export function MarketplaceScreen() {
               textTransform: "uppercase", color: C.white, margin: "0 0 12px",
             }}>Travel Marketplace</p>
             <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, lineHeight: "20px", color: "rgba(255,255,255,0.5)", margin: 0 }}>
-              Australia&apos;s favourite travel retailer since 1981.
+              Real itineraries from creators who&apos;ve actually been there.
             </p>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: "0 64px" }}>
@@ -1072,7 +1113,7 @@ export function MarketplaceScreen() {
             fontFamily: "var(--fc-font-body)", fontSize: 12, lineHeight: "16px",
             color: "rgba(255,255,255,0.35)", margin: 0,
           }}>
-            © 2026 Travel Marketplace Travel Group Limited. All rights reserved. Prices are per person, land only, subject to availability.
+            © 2026 Travel Marketplace. All rights reserved. Prices are per person, land only, subject to availability.
           </p>
         </div>
       </footer>
@@ -1081,6 +1122,20 @@ export function MarketplaceScreen() {
 }
 
 // ─── Dashboard Screen ──────────────────────────────────────────────────────────
+export const CREATOR_DASHBOARD_TABS = [
+  "All",
+  "Approved",
+  "Under review",
+  "Rejected",
+  "Drafts",
+] as const;
+
+export function creatorPackageMatchesTab(activeTab: string, packageStatus: string) {
+  return activeTab === "All"
+    || packageStatus === activeTab
+    || (activeTab === "Drafts" && packageStatus === "Draft");
+}
+
 export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void }) {
   const router = useRouter();
   const [packages, setPackages] = useState<CreatorPackage[]>([]);
@@ -1089,7 +1144,48 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
   const [activeTab, setActiveTab] = useState("All");
   const [hovRow, setHovRow] = useState<string | null>(null);
   const [searchQ, setSearchQ] = useState("");
-  const tabs = ["All", "Approved", "Under review", "Drafts"];
+  const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string } | null>(null);
+  const [deleteError, setDeleteError] = useState("");
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [pendingPublish, setPendingPublish] = useState<{ id: string; name: string } | null>(null);
+  const [publishError, setPublishError] = useState("");
+  const [isPublishing, setIsPublishing] = useState(false);
+  const [dashboardNotice, setDashboardNotice] = useState("");
+  const publishTriggerRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    if (!pendingDelete) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || isDeleting) return;
+      setPendingDelete(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isDeleting, pendingDelete]);
+
+  const confirmDeletePackage = async () => {
+    if (!pendingDelete) return;
+    setIsDeleting(true);
+    setDeleteError("");
+    try {
+      const { data } = await supabase.auth.getSession();
+      const accessToken = data.session?.access_token;
+      if (!accessToken) {
+        router.replace("/login");
+        return;
+      }
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      await deletePackage(fetch, apiUrl, accessToken, pendingDelete.id);
+      setPendingDelete(null);
+      await loadPackages();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to delete this package.";
+      setDeleteError(message);
+      if (message.includes("sign in again")) router.replace("/login");
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   const loadPackages = async () => {
     setIsLoading(true);
@@ -1109,6 +1205,56 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
       if (message.includes("sign in again")) router.replace("/login");
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const showDashboardNotice = (message: string) => {
+    setDashboardNotice(message);
+    window.setTimeout(() => setDashboardNotice(""), 2000);
+  };
+
+  const handleSharePackage = async (pkg: { id: string; name: string; statusKey: string }) => {
+    const sharePath = creatorPackageShareRoute(pkg.id, pkg.statusKey);
+    if (!sharePath) return;
+    const url = new URL(sharePath, window.location.origin).toString();
+
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: pkg.name, url });
+        return;
+      }
+      await navigator.clipboard.writeText(url);
+      showDashboardNotice("Link copied");
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      showDashboardNotice("Unable to share link");
+    }
+  };
+
+  const confirmPublishPackage = async () => {
+    if (!pendingPublish) return;
+    setIsPublishing(true);
+    setPublishError("");
+    try {
+      const { data } = await supabase.auth.getSession();
+      const accessToken = data.session?.access_token;
+      if (!accessToken) {
+        router.replace("/login");
+        return;
+      }
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const published = await publishPackage(fetch, apiUrl, accessToken, pendingPublish.id);
+      setPackages((current) => current.map((pkg) => (
+        pkg.package_id === published.package_id ? { ...pkg, ...published } : pkg
+      )));
+      setPendingPublish(null);
+      showDashboardNotice("Package is live");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to publish this package.";
+      setPublishError(message);
+      if (message.includes("sign in again")) router.replace("/login");
+    } finally {
+      setIsPublishing(false);
     }
   };
 
@@ -1139,31 +1285,31 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
   const dashboardPackages = packages.map(formatCreatorPackage);
   const normalizedSearch = searchQ.trim().toLowerCase();
   const filtered = dashboardPackages.filter((pkg) => {
-    const matchesTab = activeTab === "All"
-      || pkg.status === activeTab
-      || (activeTab === "Drafts" && pkg.status === "Draft");
+    const matchesTab = creatorPackageMatchesTab(activeTab, pkg.status);
     const matchesSearch = !normalizedSearch
       || pkg.name.toLowerCase().includes(normalizedSearch)
       || pkg.destination.toLowerCase().includes(normalizedSearch);
     return matchesTab && matchesSearch;
   });
 
-  const stats = formatDashboardStats({
-    packageCount: packages.length,
-    bookingCount: null,
-    commissionRate: null,
-    commissionAud: null,
-  });
+  const stats = [
+    { label: "Packages", value: String(packages.length), sub: "All your packages" },
+    { label: "Live", value: String(packages.filter((p) => p.status === "live").length), sub: "Published & bookable" },
+    { label: "Approved", value: String(packages.filter((p) => p.status === "approved").length), sub: "Creator preview available" },
+    { label: "Drafts", value: String(packages.filter((p) => p.status === "draft").length), sub: "Still in progress" },
+  ];
 
   const cols = {
-    grid: "minmax(0,1.8fr) minmax(140px,1fr) 100px 120px 140px 150px",
+    grid: "minmax(0,1.8fr) minmax(140px,1fr) 110px 90px 110px 130px 200px",
+    gap: 24,
     headers: [
       { h: "Package",        align: "left"  },
       { h: "Destination",    align: "left"  },
+      { h: "Created",        align: "left"  },
       { h: "Duration",       align: "right" },
-      { h: "Price",          align: "center" },
+      { h: "Price",          align: "right" },
       { h: "Status",         align: "center" },
-      { h: "Actions",        align: "right" },
+      { h: "Actions",        align: dashboardActionAlignment.header },
     ],
   };
 
@@ -1178,7 +1324,7 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
               Creator dashboard
             </h1>
             <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, color: C.secondary, margin: 0 }}>
-              Manage your packages, bookings and earnings.
+              Manage your packages and track their review status.
             </p>
           </div>
           <BtnPrimary onClick={() => _onNav("builder")}>
@@ -1194,10 +1340,7 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
           {stats.map(({ label, value, sub }) => (
             <div key={label} style={{
               background: C.white,
-              borderTop: `1px solid ${C.border}`,
-              borderRight: `1px solid ${C.border}`,
-              borderBottom: `1px solid ${C.border}`,
-              borderLeft: `1px solid ${C.border}`,
+              border: `1px solid ${C.border}`,
               borderRadius: C.radiusMd,
               padding: "24px 24px 20px",
               boxShadow: C.shadowCard,
@@ -1219,7 +1362,7 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
         </div>
 
         {/* Packages table */}
-        <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 6, overflow: "hidden" }}>
+        <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 6, overflowX: "auto", overflowY: "hidden" }}>
 
           {/* Table toolbar */}
           {/* Toolbar: search + filter tabs */}
@@ -1234,9 +1377,10 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
                 value={searchQ}
                 onChange={(e) => setSearchQ(e.target.value)}
                 placeholder="Search packages..."
+                aria-label="Search packages"
                 style={{
                   width: "100%", boxSizing: "border-box",
-                  height: 42, paddingLeft: 38, paddingRight: 14,
+                  height: 42, paddingLeft: 38, paddingRight: 36,
                   fontFamily: "var(--fc-font-body)", fontSize: 14, color: C.ink,
                   background: C.white, border: `1px solid ${C.border}`,
                   borderRadius: 6, outline: "none",
@@ -1244,6 +1388,12 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
                 onFocus={(e) => { e.currentTarget.style.borderColor = "#9E9E9E"; }}
                 onBlur={(e) => { e.currentTarget.style.borderColor = C.border; }}
               />
+              {searchQ && (
+                <button type="button" aria-label="Clear package search" onClick={() => setSearchQ("")}
+                  style={{ position: "absolute", right: 4, top: "50%", transform: "translateY(-50%)", width: 34, height: 34, display: "grid", placeItems: "center", border: 0, background: "transparent", color: C.secondary, cursor: "pointer" }}>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M6 6l12 12M18 6 6 18" /></svg>
+                </button>
+              )}
             </div>
 
             {/* Spacer */}
@@ -1251,7 +1401,7 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
 
             {/* Filter tabs */}
             <div style={{ display: "flex", gap: 4 }}>
-              {tabs.map((t) => {
+              {CREATOR_DASHBOARD_TABS.map((t) => {
                 const on = activeTab === t;
                 return (
                   <button key={t} onClick={() => setActiveTab(t)} style={{
@@ -1270,8 +1420,11 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
             </div>
           </div>
 
+          {/* Scrollable table body — min-width keeps Status/Actions reachable on narrow viewports */}
+          <div style={{ minWidth: 1020 }}>
+
           {/* Column headers */}
-          <div style={{ display: "grid", gridTemplateColumns: cols.grid, padding: "14px 28px", background: "#FAFAFA", borderBottom: `1px solid ${C.border}` }}>
+          <div style={{ display: "grid", gridTemplateColumns: cols.grid, columnGap: cols.gap, padding: "14px 28px", background: "#FAFAFA", borderBottom: `1px solid ${C.border}` }}>
             {cols.headers.map(({ h, align }) => (
               <p key={h} style={{
                 fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 400,
@@ -1298,59 +1451,60 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
               <p style={{ margin: 0, color: C.secondary, fontSize: 14 }}>
                 {packages.length === 0 ? "Create your first package to get started." : "Try a different search or status."}
               </p>
+              {packages.length > 0 && (
+                <div style={{ marginTop: 16 }}>
+                  <BtnSecondary onClick={() => { setSearchQ(""); setActiveTab("All"); }}>
+                    Clear filters
+                  </BtnSecondary>
+                </div>
+              )}
             </div>
           ) : null}
 
           {/* Rows */}
           {filtered.map((pkg, i) => {
-            const hov = hovRow === pkg.name;
-            const statusStyle = pkg.statusKey === "live" || pkg.statusKey === "approved"
-              ? { color: C.success, background: C.successBg }
-              : pkg.statusKey === "pending_review"
-                ? { color: C.warning, background: C.warningBg }
-                : { color: C.secondary, background: C.subtle };
+            const hov = hovRow === pkg.id;
+            const packageHref = creatorPackageRoute(pkg.id, pkg.statusKey);
+            const statusStyle = creatorPackageStatusStyle(pkg.statusKey);
             return (
               <div key={pkg.id}
                 style={{
-                  display: "grid", gridTemplateColumns: cols.grid,
+                  display: "grid", gridTemplateColumns: cols.grid, columnGap: cols.gap,
                   padding: "22px 28px", alignItems: "center",
                   borderBottom: i < filtered.length - 1 ? `1px solid #F0F0F0` : "none",
                   background: hov ? "#FAFAFA" : "transparent",
-                  transition: "background 120ms", cursor: "pointer",
+                  transition: "background 120ms",
                 }}
-                onMouseEnter={() => setHovRow(pkg.name)}
+                onMouseEnter={() => setHovRow(pkg.id)}
                 onMouseLeave={() => setHovRow(null)}
               >
                 {/* Package name */}
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
-                    <p style={{
-                      fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 500,
-                      color: hov ? C.blue : C.ink,
-                      textDecoration: hov ? "underline" : "none",
-                      textUnderlineOffset: 2,
-                      margin: 0, lineHeight: "20px", transition: "color 120ms",
-                      overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                    }}>{pkg.name}</p>
+                  <Link className="dashboard-package-link" href={packageHref} title={pkg.name}>
+                    <span>{pkg.name}</span>
                     <svg
                       width="14" height="14" viewBox="0 0 24 24" fill="none"
                       stroke={C.blue} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
-                      style={{ flexShrink: 0, opacity: hov ? 1 : 0, transition: "opacity 140ms" }}
+                      aria-hidden="true"
                     >
                       <path d="M5 12h14M12 5l7 7-7 7"/>
                     </svg>
-                  </div>
+                  </Link>
                 </div>
 
                 <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, color: C.secondary, margin: 0 }}>
                   {pkg.destination}
                 </p>
 
+                <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, color: C.secondary, margin: 0, whiteSpace: "nowrap" }}>
+                  {pkg.created}
+                </p>
+
                 <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, color: C.ink, margin: 0, textAlign: "right" }}>
                   {pkg.duration}
                 </p>
 
-                <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, color: C.ink, margin: 0, textAlign: "center", fontVariantNumeric: "tabular-nums" }}>
+                <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, color: C.ink, margin: 0, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
                   {pkg.price}
                 </p>
 
@@ -1365,37 +1519,109 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
                 </div>
 
                 {/* Row action */}
-                <div style={{ textAlign: "right" }}>
-                  <button style={{
-                    fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 500,
-                    color: C.ink, background: "none",
-                    border: `1px solid ${C.border}`,
-                    borderRadius: 6, padding: "5px 14px", cursor: "pointer",
-                    whiteSpace: "nowrap",
-                    opacity: hov ? 1 : 0.75, transition: "opacity 140ms, border-color 140ms",
-                  }}
-                    onMouseEnter={(e) => { e.currentTarget.style.borderColor = "#9E9E9E"; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.borderColor = C.border; }}
-                  >{pkg.rowAction}</button>
+                <div style={{ textAlign: dashboardActionAlignment.buttons, display: "flex", justifyContent: dashboardActionAlignment.buttons, gap: 8 }}>
+                  <Link className="dashboard-row-action" href={packageHref} aria-label={`${pkg.rowAction} ${pkg.name}`} title={pkg.rowAction}>
+                    {pkg.rowAction === "Edit"
+                      ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>
+                      : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z" /><circle cx="12" cy="12" r="3" /></svg>}
+                  </Link>
+                  {pkg.statusKey === "approved" && (
+                    <button
+                      className="dashboard-row-publish"
+                      type="button"
+                      onClick={(event) => {
+                        publishTriggerRef.current = event.currentTarget;
+                        setPublishError("");
+                        setPendingPublish({ id: pkg.id, name: pkg.name });
+                      }}
+                    >
+                      Publish
+                    </button>
+                  )}
+                  {pkg.statusKey === "live" && (
+                    <button
+                      className="dashboard-row-action"
+                      type="button"
+                      aria-label={`Share ${pkg.name}`}
+                      title="Share"
+                      onClick={() => void handleSharePackage(pkg)}
+                    >
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <circle cx="18" cy="5" r="3" />
+                        <circle cx="6" cy="12" r="3" />
+                        <circle cx="18" cy="19" r="3" />
+                        <path d="m8.6 10.5 6.8-4M8.6 13.5l6.8 4" />
+                      </svg>
+                    </button>
+                  )}
+                  {pkg.statusKey === "draft" && (
+                    <button className="dashboard-row-action dashboard-row-action-delete"
+                      aria-label={`Delete ${pkg.name}`} title="Delete"
+                      onClick={() => { setDeleteError(""); setPendingDelete({ id: pkg.id, name: pkg.name }); }}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><path d="M19 6l-.867 12.142A2 2 0 0 1 16.138 20H7.862a2 2 0 0 1-1.995-1.858L5 6" /><path d="M10 11v6M14 11v6" /></svg>
+                    </button>
+                  )}
                 </div>
               </div>
             );
           })}
+          </div>
         </div>
 
       </div>
+
+      {pendingDelete && (
+        <div className="delete-day-backdrop" role="presentation" onMouseDown={() => !isDeleting && setPendingDelete(null)}>
+          <section
+            className="delete-day-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-package-title"
+            aria-describedby="delete-package-description"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <h2 id="delete-package-title">Delete &ldquo;{pendingDelete.name}&rdquo;?</h2>
+            <p id="delete-package-description">This draft package will be permanently deleted. This cannot be undone.</p>
+            {deleteError && <p role="alert" style={{ color: "#B42318", margin: "0 0 12px", fontSize: 14 }}>{deleteError}</p>}
+            <div className="delete-day-actions">
+              <button className="quiet-button" autoFocus disabled={isDeleting} onClick={() => setPendingDelete(null)}>Cancel</button>
+              <button className="confirm-delete-button" disabled={isDeleting} onClick={() => void confirmDeletePackage()}>
+                {isDeleting ? "Deleting…" : "Delete package"}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+      {pendingPublish && (
+        <Dialog.Root open onOpenChange={(open) => { if (!open && !isPublishing) setPendingPublish(null); }}>
+          <Dialog.Overlay className="delete-day-backdrop" />
+          <Dialog.Content
+            className="delete-day-dialog"
+            onCloseAutoFocus={(event) => {
+              event.preventDefault();
+              publishTriggerRef.current?.focus();
+            }}
+          >
+            <Dialog.Title>Publish &ldquo;{pendingPublish.name}&rdquo;?</Dialog.Title>
+            <Dialog.Description>This package will become publicly visible and shareable in the marketplace.</Dialog.Description>
+            {publishError && <p role="alert" style={{ color: "#B42318", margin: "12px 0 0", fontSize: 14 }}>{publishError}</p>}
+            <div className="delete-day-actions">
+              <Dialog.Close asChild><button className="quiet-button" disabled={isPublishing}>Cancel</button></Dialog.Close>
+              <button className="confirm-publish-button" disabled={isPublishing} onClick={() => void confirmPublishPackage()}>
+                {isPublishing ? "Publishing…" : "Publish package"}
+              </button>
+            </div>
+          </Dialog.Content>
+        </Dialog.Root>
+      )}
+      {dashboardNotice && <div className="editor-toast" role="status">{dashboardNotice}</div>}
     </div>
   );
 }
 
-// ─── Creator Nav (dashboard only) ─────────────────────────────────────────────
-const CREATOR_NAV_ITEMS = ["Dashboard", "My Packages", "Bookings", "Earnings", "Analytics"];
-
-export function CreatorNav({ activeItem, onItem, onNav }: {
-  activeItem: string;
-  onItem: (s: string) => void;
-  onNav: (s: Screen) => void;
-}) {
+// ─── Creator header ───────────────────────────────────────────────────────────
+export function CreatorNav({ onNav }: { onNav: (s: Screen) => void }) {
   const [profileOpen, setProfileOpen] = useState(false);
   const [creatorProfile, setCreatorProfile] = useState({
     displayName: "Creator",
@@ -1448,15 +1674,6 @@ export function CreatorNav({ activeItem, onItem, onNav }: {
           </div>
 
           <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-            <MarketplaceControl>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="12" cy="12" r="10"/>
-                <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
-                <line x1="12" y1="17" x2="12.01" y2="17"/>
-              </svg>
-              Help
-            </MarketplaceControl>
-
             {/* Profile pill */}
             <div style={{ position: "relative" }}>
               <button
@@ -1502,7 +1719,6 @@ export function CreatorNav({ activeItem, onItem, onNav }: {
                 }}>
                   {[
                     { label: "View Travel Marketplace", action: () => { onNav("marketplace"); setProfileOpen(false); } },
-                    { label: "Account settings",   action: () => setProfileOpen(false) },
                     { label: "Log out",            action: handleLogOut },
                   ].map(({ label, action }) => (
                     <button key={label} onClick={action} style={{
@@ -1526,58 +1742,111 @@ export function CreatorNav({ activeItem, onItem, onNav }: {
         </div>
       </div>
 
-      {/* ── White workspace nav: tabs ── */}
-      <div style={{
-        width: "100%", height: 52, background: C.white,
-        borderBottom: `1px solid ${C.border}`,
-        display: "flex", alignItems: "stretch",
-      }}>
-        <div style={{
-          width: CONTAINER, margin: "0 auto",
-          display: "flex", alignItems: "stretch", gap: 32,
-        }}>
-          {CREATOR_NAV_ITEMS.map((item) => {
-            const active = activeItem === item;
-            return (
-              <button key={item} onClick={() => onItem(item)} style={{
-                fontFamily: "var(--fc-font-body)", fontSize: 15,
-                fontWeight: active ? 600 : 500,
-                color: active ? C.ink : C.secondary,
-                background: "none", border: "none",
-                borderBottom: active ? `3px solid ${C.red}` : "3px solid transparent",
-                padding: "0 2px",
-                cursor: "pointer", transition: "color 120ms, border-color 120ms",
-                whiteSpace: "nowrap",
-              }}
-                onMouseEnter={(e) => { if (!active) e.currentTarget.style.color = C.ink; }}
-                onMouseLeave={(e) => { if (!active) e.currentTarget.style.color = C.secondary; }}
-              >{item}</button>
-            );
-          })}
-        </div>
-      </div>
-
     </div>
   );
 }
 
+function CreatorCreationSubnav({ confirmBeforeLeaving = false }: { confirmBeforeLeaving?: boolean }) {
+  return (
+    <nav
+      aria-label="Package creation navigation"
+      style={{
+        position: "sticky", top: 0, zIndex: 90,
+        height: 64, flexShrink: 0,
+        background: C.white, borderBottom: `1px solid ${C.border}`,
+      }}
+    >
+      <div style={{ width: "min(calc(100% - 80px), 1200px)", height: "100%", margin: "0 auto", display: "flex", alignItems: "center" }}>
+        <Link
+          href={creatorDashboardBackLink.href}
+          onClick={(event) => {
+            if (confirmBeforeLeaving && !window.confirm("Leave without finishing this package? Your progress will be lost.")) {
+              event.preventDefault();
+            }
+          }}
+          style={{
+            width: "fit-content", minHeight: 48, display: "inline-flex", alignItems: "center", gap: 8,
+            fontFamily: "var(--fc-font-body)", fontSize: 15, fontWeight: 500,
+            color: C.ink, textDecoration: "none",
+          }}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="m15 18-6-6 6-6" />
+          </svg>
+          {creatorDashboardBackLink.label}
+        </Link>
+      </div>
+    </nav>
+  );
+}
+
 // ─── Builder Screen ────────────────────────────────────────────────────────────
+const BUILDER_API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+const NEW_PACKAGE_DRAFT = {
+  title: "",
+  description: "",
+  destination_country: "",
+  destination_city: "",
+  duration_days: "3",
+  base_price_aud: "",
+  max_group_size: "",
+};
+
+type NewPackageDraft = typeof NEW_PACKAGE_DRAFT;
+
+export function applyCatalogDestination(
+  draft: NewPackageDraft,
+  destination: { city: string; country: string } | null,
+): NewPackageDraft {
+  return {
+    ...draft,
+    destination_country: destination?.country ?? "",
+    destination_city: destination?.city ?? "",
+  };
+}
+
+export function isNewPackageDraftValid(draft: NewPackageDraft) {
+  return Boolean(
+    draft.title.trim()
+    && draft.description.trim()
+    && draft.destination_country.trim()
+    && draft.destination_city.trim()
+    && Number(draft.duration_days) >= 1
+    && draft.base_price_aud.trim() !== ""
+    && Number(draft.base_price_aud) >= 0,
+  );
+}
+
+export function isManualPackageStepValid(draft: NewPackageDraft, step: number) {
+  if (step === 0) return Boolean(draft.title.trim() && draft.description.trim());
+  if (step === 1) return Boolean(draft.destination_country.trim() && draft.destination_city.trim());
+  if (step === 2) {
+    return Boolean(
+      Number(draft.duration_days) >= 1
+      && draft.base_price_aud.trim() !== ""
+      && Number(draft.base_price_aud) >= 0,
+    );
+  }
+  return isNewPackageDraftValid(draft);
+}
+
 export function BuilderScreen({ onNav }: { onNav: (s: Screen) => void }) {
   const [hovScratch, setHovScratch] = useState(false);
 
   const steps = [
-    { n: 1, label: "Pick destination", icon: "M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z" },
-    { n: 2, label: "AI drafts your itinerary", icon: "M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 14l-5-5 1.41-1.41L12 14.17l7.59-7.59L21 8l-9 9z" },
-    { n: 3, label: "Review, customise & publish", icon: "M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" },
-    { n: 4, label: "Share & earn on bookings", icon: "M11.8 10.9c-2.27-.59-3-1.2-3-2.15 0-1.09 1.01-1.85 2.7-1.85 1.78 0 2.44.85 2.5 2.1h2.21c-.07-1.72-1.12-3.3-3.21-3.81V3h-3v2.16c-1.94.42-3.5 1.68-3.5 3.61 0 2.31 1.91 3.46 4.7 4.13 2.5.6 3 1.48 3 2.41 0 .69-.49 1.79-2.7 1.79-2.06 0-2.87-.92-2.98-2.1h-2.2c.12 2.19 1.76 3.42 3.68 3.83V21h3v-2.15c1.95-.37 3.5-1.5 3.5-3.55 0-2.84-2.43-3.81-4.7-4.4z" },
+    { n: 1, label: "Choose destination & travel style" },
+    { n: 2, label: "Set duration & season" },
+    { n: 3, label: "AI drafts your itinerary" },
+    { n: 4, label: "Review, customise & submit for review" },
   ];
 
   return (
-    <div style={{ height: "calc(100vh - 116px)", background: C.subtle, overflowY: "auto" }}>
+    <div className="ai-wizard-screen" style={{ minHeight: "calc(100vh - 64px)", background: C.subtle }}>
+      <CreatorCreationSubnav />
 
       {/* Content */}
-      <div style={{ maxWidth: 680, margin: "0 auto", padding: "64px 24px 48px" }}>
-
+      <div style={{ width: "min(calc(100% - 48px), 800px)", margin: "0 auto", padding: "28px 24px 48px" }}>
 
           {/* Heading */}
           <div style={{ marginBottom: 30 }}>
@@ -1684,7 +1953,7 @@ export function BuilderScreen({ onNav }: { onNav: (s: Screen) => void }) {
 
           {/* Build from scratch */}
           <button
-            onClick={() => {}}
+            onClick={() => onNav("manual-builder")}
             onMouseEnter={() => setHovScratch(true)}
             onMouseLeave={() => setHovScratch(false)}
             style={{
@@ -1719,45 +1988,459 @@ export function BuilderScreen({ onNav }: { onNav: (s: Screen) => void }) {
           </button>
 
       </div>
+
     </div>
   );
 }
 
 // ─── AI Wizard Screen ──────────────────────────────────────────────────────────
-const DESTINATIONS = [
-  { name: "Tokyo, Japan",      tags: ["Food & Culture", "City"],   img: "https://images.unsplash.com/photo-1513407030348-c983a97b98d8?w=400&h=180&fit=crop" },
-  { name: "Paris, France",     tags: ["Romance", "Culture"],       img: "https://images.unsplash.com/photo-1511739001486-6bfe10ce785f?w=400&h=180&fit=crop" },
-  { name: "Bali, Indonesia",   tags: ["Beach", "Wellness"],        img: "https://images.unsplash.com/photo-1555400038-63f5ba517a47?w=400&h=180&fit=crop" },
-  { name: "Iceland",           tags: ["Nature", "Adventure"],      img: "https://images.unsplash.com/photo-1488415032361-b7e238421f1b?w=400&h=180&fit=crop" },
-  { name: "New York, USA",     tags: ["City", "Shopping"],         img: "https://images.unsplash.com/photo-1496588152823-86ff7695e68f?w=400&h=180&fit=crop" },
-  { name: "Santorini, Greece", tags: ["Beach", "Romance"],         img: "https://images.unsplash.com/photo-1672622851784-0dbd3df4c088?w=400&h=180&fit=crop" },
-];
+type WizardStepKind = "destination" | "style" | "duration" | "season";
+const AI_STEP_KINDS: WizardStepKind[] = ["destination", "style", "duration", "season"];
+// Manual builds skip the duration step (the creator sets days in the editor)
+// and skip AI generation, so there's nothing to fake-load either.
+const MANUAL_STEP_KINDS: WizardStepKind[] = ["destination", "style", "season"];
+const STEP_LABEL_BY_KIND: Record<WizardStepKind, string> = {
+  destination: "Destination", style: "Travel style", duration: "Duration", season: "Season",
+};
 
-const WIZARD_STEPS = ["Destination", "Travel style", "Duration", "Season"];
+const SEASON_CARDS = [
+  { id: "spring", label: "Spring", desc: "Blooming scenery and fresh, vibrant energy", tags: ["Mild weather", "Fresh blooms", "Garden walks"], img: "https://images.unsplash.com/photo-1622285422722-b1b3eb36c728?w=600&h=320&fit=crop" },
+  { id: "summer", label: "Summer", desc: "Warm days and endless outdoor adventures", tags: ["Long days", "Outdoor fun", "Lively atmosphere"], img: "https://images.unsplash.com/photo-1461937995729-a2e442122d18?w=600&h=320&fit=crop" },
+  { id: "autumn", label: "Autumn", desc: "Colorful foliage and cozy moments", tags: ["Foliage tours", "Crisp air", "Harvest season"], img: "https://images.unsplash.com/photo-1542574929305-245cb48f9c87?w=600&h=320&fit=crop" },
+  { id: "winter", label: "Winter", desc: "Cool weather and relaxed experiences", tags: ["Winter scenery", "Cosy stays", "Fewer crowds"], img: "https://images.unsplash.com/photo-1551927411-95e412943b58?w=600&h=320&fit=crop" },
+] as const;
 
-const VIBES = [
-  { id: "chill",      label: "Chill",            desc: "Slow-paced, relaxing travel with minimal planning", img: "https://images.unsplash.com/photo-1602002418816-5c0aeef426aa?w=600&h=320&fit=crop" },
-  { id: "adventure",  label: "Adventure",        desc: "Active experiences and outdoor activities",          img: "https://images.unsplash.com/photo-1533240332313-0db49b459ad6?w=600&h=320&fit=crop" },
-  { id: "luxury",     label: "Luxury",           desc: "Premium stays and high-end, curated experiences",    img: "https://images.unsplash.com/photo-1551918120-9739cb430c6d?w=600&h=320&fit=crop" },
-  { id: "local",      label: "Local Experience", desc: "Authentic, immersive moments with local culture",     img: "https://images.unsplash.com/photo-1747396108528-682b02327818?w=600&h=320&fit=crop" },
-  { id: "foodie",     label: "Foodie",           desc: "Explore destinations through food and drink",         img: "https://images.unsplash.com/photo-1777576506689-d28f3b4cb33a?w=600&h=320&fit=crop" },
-  { id: "scenic",     label: "Scenic",           desc: "Beautiful views, nature, and photo-worthy spots",      img: "https://images.unsplash.com/photo-1626948688703-0136bc0a90da?w=600&h=320&fit=crop" },
-];
+type DestinationOption = { city: string; country: string; avgRating: number };
 
-export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequestId = 0, hasBuilt = false }: { onNav: (s: Screen) => void; initialStep?: number; requestedStep?: number; stepRequestId?: number; hasBuilt?: boolean }) {
+export function destinationSelection(destination: Pick<DestinationOption, "city" | "country">) {
+  const name = `${destination.city}, ${destination.country}`;
+  return { name, search: name };
+}
+
+export function destinationMatchesSearch(
+  destination: Pick<DestinationOption, "city" | "country">,
+  query: string,
+) {
+  return `${destination.city}, ${destination.country}`.toLowerCase().includes(query.trim().toLowerCase());
+}
+
+export function destinationOptionsForSearch(
+  destinations: DestinationOption[],
+  recommended: DestinationOption[],
+  query: string,
+) {
+  return query
+    ? destinations.filter((destination) => destinationMatchesSearch(destination, query))
+    : recommended;
+}
+
+// A destination needs at least this many catalog activities before it's
+// eligible for "Recommended" — otherwise a high average rating could be an
+// artifact of two or three activities, not a real signal the creator can build on.
+const MIN_ACTIVITIES_FOR_RECOMMENDATION = 10;
+
+function useDestinationCatalog() {
+  const [destinations, setDestinations] = useState<DestinationOption[]>([]);
+  const [recommended, setRecommended] = useState<DestinationOption[]>([]);
+  const [destinationsLoading, setDestinationsLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const places = new Map<string, { city: string; country: string }>();
+      const activityCounts = new Map<string, number>();
+      const ratingTotals = new Map<string, { sum: number; count: number }>();
+      const pageSize = 1000;
+      for (let offset = 0; offset < 10_000; offset += pageSize) {
+        const { data, error } = await supabase
+          .from("activities")
+          .select("city,country,rating")
+          .order("city", { ascending: true })
+          .range(offset, offset + pageSize - 1);
+        if (error || !data || cancelled) break;
+        for (const row of data) {
+          const key = `${row.city}|${row.country}`;
+          if (!places.has(key)) places.set(key, { city: row.city, country: row.country });
+          activityCounts.set(key, (activityCounts.get(key) ?? 0) + 1);
+          if (row.rating != null) {
+            const totals = ratingTotals.get(key) ?? { sum: 0, count: 0 };
+            totals.sum += row.rating;
+            totals.count += 1;
+            ratingTotals.set(key, totals);
+          }
+        }
+        if (data.length < pageSize) break;
+      }
+      if (cancelled) return;
+      const found: DestinationOption[] = [...places.entries()].map(([key, place]) => {
+        const totals = ratingTotals.get(key);
+        return { ...place, avgRating: totals && totals.count > 0 ? totals.sum / totals.count : 0 };
+      });
+      found.sort((a, b) => a.city.localeCompare(b.city));
+      setDestinations(found);
+      setRecommended(
+        found
+          .filter((destination) => (activityCounts.get(`${destination.city}|${destination.country}`) ?? 0) >= MIN_ACTIVITIES_FOR_RECOMMENDATION)
+          .sort((a, b) => b.avgRating - a.avgRating)
+          .slice(0, 6),
+      );
+      setDestinationsLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  return { destinations, recommended, destinationsLoading };
+}
+
+function DestinationPicker({
+  idPrefix,
+  search,
+  selected,
+  destinations,
+  recommended,
+  loading,
+  onSearchChange,
+  onSelect,
+}: {
+  idPrefix: string;
+  search: string;
+  selected: string | null;
+  destinations: DestinationOption[];
+  recommended: DestinationOption[];
+  loading: boolean;
+  onSearchChange: (value: string) => void;
+  onSelect: (destination: DestinationOption) => void;
+}) {
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [recommendationInfoOpen, setRecommendationInfoOpen] = useState(false);
+  const [hovered, setHovered] = useState<string | null>(null);
+  const filtered = destinations.filter((destination) => destinationMatchesSearch(destination, search));
+  const visible = destinationOptionsForSearch(destinations, recommended, search);
+  const listboxId = `${idPrefix}-destination-listbox`;
+  const tooltipId = `${idPrefix}-destination-recommendation-tooltip`;
+
+  return (
+    <div>
+      <label style={{ display: "block", margin: "0 0 24px" }}>
+        <span style={{ display: "block", fontFamily: "var(--fc-font-body)", fontSize: 12, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: C.secondary, marginBottom: 10 }}>
+          Search destinations
+        </span>
+        <div style={{ position: "relative" }}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={C.secondary} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ position: "absolute", left: 16, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }}>
+            <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
+          </svg>
+          <input
+            value={search}
+            onChange={(event) => { onSearchChange(event.target.value); setDropdownOpen(true); }}
+            placeholder="Search by city or country…"
+            role="combobox"
+            aria-expanded={dropdownOpen}
+            aria-autocomplete="list"
+            aria-controls={listboxId}
+            style={{
+              width: "100%", boxSizing: "border-box", height: 52,
+              paddingLeft: 48, paddingRight: search ? 48 : 16,
+              fontFamily: "var(--fc-font-body)", fontSize: 15, color: C.ink,
+              border: `1.5px solid ${C.border}`, borderRadius: 12, outline: "none",
+              background: C.white, boxShadow: C.shadowCard,
+              transition: "border-color 140ms, box-shadow 140ms",
+            }}
+            onFocus={(event) => { event.currentTarget.style.borderColor = C.blue; event.currentTarget.style.boxShadow = `0 0 0 3px ${C.focusRing}`; setDropdownOpen(true); }}
+            onBlur={(event) => { event.currentTarget.style.borderColor = C.border; event.currentTarget.style.boxShadow = C.shadowCard; setDropdownOpen(false); }}
+            onKeyDown={(event) => { if (event.key === "Escape") event.currentTarget.blur(); }}
+          />
+          {search && (
+            <button type="button" aria-label="Clear destination search" onClick={() => onSearchChange("")} style={{ position: "absolute", right: 6, top: 4, width: 44, height: 44, display: "grid", placeItems: "center", border: 0, background: "transparent", color: C.secondary, cursor: "pointer" }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
+            </button>
+          )}
+          {dropdownOpen && (
+            <div id={listboxId} role="listbox" aria-label="City or country results" style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, zIndex: 20, maxHeight: 320, overflowY: "auto", background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, boxShadow: C.shadowRaised }}>
+              {loading && <p style={{ margin: 0, padding: "14px 16px", fontFamily: "var(--fc-font-body)", fontSize: 13, color: C.secondary }}>Loading destinations…</p>}
+              {!loading && filtered.length === 0 && <p style={{ margin: 0, padding: "14px 16px", fontFamily: "var(--fc-font-body)", fontSize: 13, color: C.secondary }}>No destinations found{search ? ` for “${search}”` : ""}.</p>}
+              {filtered.map((destination) => {
+                const name = `${destination.city}, ${destination.country}`;
+                return (
+                  <button key={name} type="button" role="option" aria-selected={selected === name} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setHovered(name)} onMouseLeave={() => setHovered(null)} onClick={() => { onSelect(destination); setDropdownOpen(false); }} style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", border: 0, borderBottom: `1px solid ${C.border}`, background: destinationOptionBackground(selected === name, hovered === name), cursor: "pointer", textAlign: "left", transition: "background-color 120ms ease" }}>
+                    <span><span style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 600, color: selected === name ? C.blue : C.ink }}>{destination.city}</span><span style={{ fontFamily: "var(--fc-font-body)", fontSize: 13, color: C.secondary }}>, {destination.country}</span></span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+        <p style={{ margin: "8px 2px 0", fontFamily: "var(--fc-font-body)", fontSize: 12.5, lineHeight: "17px", color: C.secondary }}>
+          Some destinations are currently unavailable due to safety considerations.
+        </p>
+      </label>
+
+      <div style={{ minHeight: 32, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, marginBottom: 10 }}>
+        <div style={{ fontFamily: "var(--fc-font-body)", fontSize: 12, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: C.secondary, margin: 0, display: "flex", alignItems: "center", gap: 6 }}>
+          {search ? `${filtered.length} matching destinations` : "Recommended destinations"}
+          {!search && (
+            <span onMouseEnter={() => setRecommendationInfoOpen((open) => nextRecommendationInfoOpen(open, "focus"))} onMouseLeave={() => setRecommendationInfoOpen((open) => nextRecommendationInfoOpen(open, "leave"))} style={{ position: "relative", display: "inline-flex" }}>
+              <button type="button" aria-label="How destinations are recommended" aria-expanded={recommendationInfoOpen} aria-describedby={recommendationInfoOpen ? tooltipId : undefined} onFocus={() => setRecommendationInfoOpen((open) => nextRecommendationInfoOpen(open, "focus"))} onBlur={() => setRecommendationInfoOpen((open) => nextRecommendationInfoOpen(open, "leave"))} onClick={() => setRecommendationInfoOpen((open) => nextRecommendationInfoOpen(open, "click"))} style={{ width: 18, height: 18, display: "grid", placeItems: "center", padding: 0, border: 0, borderRadius: "50%", background: C.subtle, color: C.secondary, cursor: "pointer", fontFamily: "var(--fc-font-body)", fontSize: 12, fontWeight: 700, lineHeight: 1, textTransform: "none", letterSpacing: "normal" }}>?</button>
+              {recommendationInfoOpen && <div id={tooltipId} role="tooltip" style={{ position: "absolute", top: "calc(100% + 8px)", left: "50%", transform: "translateX(-50%)", width: 240, padding: "10px 12px", zIndex: 30, background: C.ink, color: "#fff", borderRadius: 8, boxShadow: C.shadowRaised, fontFamily: "var(--fc-font-body)", fontSize: 12, fontWeight: 400, lineHeight: 1.5, textTransform: "none", letterSpacing: "normal" }}>Ranked by each destination&rsquo;s average activity rating in our catalog.</div>}
+            </span>
+          )}
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 12, marginBottom: 20 }}>
+        {visible.map((destination) => {
+          const name = `${destination.city}, ${destination.country}`;
+          const isSelected = selected === name;
+          const isHovered = hovered === name;
+          return (
+            <button key={name} type="button" onClick={() => onSelect(destination)} onMouseEnter={() => setHovered(name)} onMouseLeave={() => setHovered(null)} style={{ minHeight: 64, textAlign: "left", padding: "16px 18px", overflow: "hidden", background: C.white, border: `2px solid ${isSelected ? C.blue : isHovered ? "#BDBDBD" : C.border}`, borderRadius: 12, cursor: "pointer", boxShadow: isSelected ? "0 0 0 3px rgba(0,114,234,0.15)" : isHovered ? C.shadowCard : "none", transition: "border-color 140ms, box-shadow 140ms", position: "relative" }}>
+              {isSelected && <div style={{ position: "absolute", top: 12, right: 12, width: 22, height: 22, borderRadius: "50%", background: C.blue, display: "flex", alignItems: "center", justifyContent: "center" }}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg></div>}
+              <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 15, fontWeight: 700, color: isSelected ? C.blue : C.ink, margin: 0, paddingRight: isSelected ? 24 : 0 }}>{destination.city}</p>
+              <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 13, color: isSelected ? C.blue : C.secondary, margin: "2px 0 0" }}>{destination.country}</p>
+            </button>
+          );
+        })}
+        {loading && <div style={{ gridColumn: "1 / -1", padding: 28, border: `1px dashed ${C.border}`, borderRadius: 12, background: C.white, textAlign: "center" }}><p style={{ margin: 0, fontFamily: "var(--fc-font-body)", fontSize: 13, color: C.secondary }}>Loading destinations…</p></div>}
+        {!loading && search && visible.length === 0 && <div style={{ gridColumn: "1 / -1", padding: 28, border: `1px dashed ${C.border}`, borderRadius: 12, background: C.white, textAlign: "center" }}><p style={{ margin: "0 0 5px", fontFamily: "var(--fc-font-body)", fontSize: 15, fontWeight: 600, color: C.ink }}>No destinations found for “{search}”</p><p style={{ margin: 0, fontFamily: "var(--fc-font-body)", fontSize: 13, color: C.secondary }}>Try a different city or country.</p></div>}
+      </div>
+    </div>
+  );
+}
+
+function PackageWizardProgress({
+  labels,
+  step,
+  summaries,
+  onStepSelect,
+}: {
+  labels: readonly string[];
+  step: number;
+  summaries: string[];
+  onStepSelect: (step: number) => void;
+}) {
+  return (
+    <div className="ai-wizard-progress" aria-label="Package setup progress">
+      {labels.map((label, index) => (
+        <div className="ai-wizard-progress-step" key={label}>
+          <div className="ai-wizard-progress-node">
+            <div style={{
+              width: 28, height: 28, borderRadius: "50%", flexShrink: 0,
+              background: index <= step ? C.ink : C.white,
+              border: index <= step ? "none" : `2px solid ${C.border}`,
+              display: "flex", alignItems: "center", justifyContent: "center",
+            }}>
+              {index < step
+                ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>
+                : <span style={{ fontSize: 12, fontWeight: 700, color: index === step ? C.white : C.secondary }}>{index + 1}</span>}
+            </div>
+            {index !== step && (index < step || summaries[index]) ? (
+              <button className="ai-wizard-progress-copy" type="button" onClick={() => onStepSelect(index)} style={{ minHeight: 48, padding: "4px 2px", display: "grid", alignContent: "center", justifyItems: "start", gap: 4, color: C.secondary, background: "transparent", border: 0, cursor: "pointer" }}>
+                <span style={{ fontSize: 13, fontWeight: 500, textDecoration: "underline", textUnderlineOffset: 4 }}>{label}</span>
+                {summaries[index] && <span style={{ maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", fontSize: 11, color: C.disabled }}>{summaries[index]}</span>}
+              </button>
+            ) : (
+              <span className="ai-wizard-progress-copy" style={{ minHeight: 48, display: "grid", alignContent: "center", gap: 4, color: index === step ? C.ink : C.secondary, whiteSpace: "nowrap" }}>
+                <span style={{ fontSize: 13, fontWeight: index === step ? 600 : 400 }}>{label}</span>
+                {summaries[index] && <span style={{ maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", fontSize: 11, color: C.disabled }}>{summaries[index]}</span>}
+              </span>
+            )}
+          </div>
+          {index < labels.length - 1 && <div className="ai-wizard-progress-connector" />}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+
+
+const DURATION_DAYS = { short: 4, mid: 7, long: 12 } as const;
+
+export function wizardDraftToPackageInput(draft: {
+  destination: string;
+  vibes: string[];
+  duration: "short" | "mid" | "long" | "custom";
+  customDurationDays: number;
+  season: string;
+}): CreatePackageInput {
+  const destination = draft.destination.trim();
+  // ponytail: naive split; the wizard's picker only offers "City, Country" names
+  const comma = destination.lastIndexOf(",");
+  const city = (comma === -1 ? destination : destination.slice(0, comma).trim()) || destination;
+  const country = (comma === -1 ? destination : destination.slice(comma + 1).trim()) || destination;
+  const vibes = draft.vibes.join(", ");
+  return {
+    title: `${destination} trip`.slice(0, 200),
+    description: `AI-planned ${vibes ? `${vibes} ` : ""}itinerary for ${draft.season}.`,
+    destination_city: city,
+    destination_country: country,
+    duration_days: draft.duration === "custom" ? Math.max(2, draft.customDurationDays) : DURATION_DAYS[draft.duration],
+    base_price_aud: 0,
+    max_group_size: null,
+  };
+}
+
+const GENERATION_STEPS = [
+  {
+    id: "flights", label: "Flights", description: "Finding the best options...",
+    statuses: ["Checking routes that keep your trip moving smoothly...", "Looking for fewer layovers and better arrival times..."],
+  },
+  {
+    id: "hotels", label: "Hotels", description: "Selecting great places...",
+    statuses: ["Finding a hotel your suitcase can call home...", "Checking locations that make mornings easier..."],
+  },
+  {
+    id: "activities", label: "Activities", description: "Adding local experiences...",
+    statuses: ["Looking beyond the obvious tourist stops...", "Mixing local favourites with memorable detours...", "Leaving a little room for happy surprises..."],
+  },
+  {
+    id: "finalising", label: "Finalising", description: "Putting everything together...",
+    statuses: ["Bringing every part of your trip together...", "Making sure each day flows naturally...", "Tucking the final details into place...", "Giving the itinerary one last thoughtful look..."],
+  },
+] as const;
+
+const GENERATION_STEP_STARTS = [0, 5_000, 11_000, 18_000] as const;
+
+export function generationVisualState(elapsedMs: number, complete: boolean) {
+  if (complete) return { activeStep: GENERATION_STEPS.length, progress: 100 };
+  const elapsed = Math.max(0, elapsedMs);
+  if (elapsed < 5_000) return { activeStep: 0, progress: (elapsed / 5_000) * 30 };
+  if (elapsed < 11_000) return { activeStep: 1, progress: 30 + ((elapsed - 5_000) / 6_000) * 25 };
+  if (elapsed < 18_000) return { activeStep: 2, progress: 55 + ((elapsed - 11_000) / 7_000) * 25 };
+  return { activeStep: 3, progress: Math.min(92, 80 + ((elapsed - 18_000) / 42_000) * 12) };
+}
+
+export function generationStatusMessage(elapsedMs: number, complete: boolean) {
+  if (complete) return "Your trip is ready.";
+  const elapsed = Math.max(0, elapsedMs);
+  const { activeStep } = generationVisualState(elapsed, false);
+  if (activeStep === 3 && elapsed >= 30_000) return "Still working on the finishing touches...";
+  const messages = GENERATION_STEPS[activeStep].statuses;
+  const timeInStep = elapsed - GENERATION_STEP_STARTS[activeStep];
+  return messages[Math.floor(timeInStep / 3_000) % messages.length];
+}
+
+export function generationProgressLabel(progress: number) {
+  return `${Math.round(Math.min(100, Math.max(0, progress)))}%`;
+}
+
+export function seasonChoiceComplete(season: string | null, noPreference: boolean) {
+  return season !== null || noPreference;
+}
+
+export function seasonSecondaryAction(season: string | null): "build-without-season" | "clear-season" {
+  return season === null ? "build-without-season" : "clear-season";
+}
+
+function GenerationIcon({ id }: { id: (typeof GENERATION_STEPS)[number]["id"] }) {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {id === "flights" ? (
+        <><path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 4 2 2 4 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2Z"/></>
+      ) : id === "hotels" ? (
+        <><rect x="4" y="2" width="16" height="20" rx="2"/><path d="M9 22v-4h6v4M8 6h.01M12 6h.01M16 6h.01M8 10h.01M12 10h.01M16 10h.01M8 14h.01M12 14h.01M16 14h.01"/></>
+      ) : id === "activities" ? (
+        <><path d="m3 6 6-3 6 3 6-3v15l-6 3-6-3-6 3Z"/><path d="M9 3v15M15 6v15"/></>
+      ) : (
+        <><path d="m12 3 1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5Z"/><path d="m18.5 15 .8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8Z"/></>
+      )}
+    </svg>
+  );
+}
+
+function GenerationStep({
+  step,
+  state,
+}: {
+  step: (typeof GENERATION_STEPS)[number];
+  state: "pending" | "active" | "complete";
+}) {
+  return (
+    <div className={state === "active" ? "generation-step generation-step-active" : "generation-step"} style={{
+      minHeight: 76, display: "grid", gridTemplateColumns: "40px minmax(0, 1fr) 24px", alignItems: "center", gap: 14,
+      padding: "12px 16px", border: `1px solid ${state === "active" ? "#9BCBFA" : C.border}`, borderRadius: C.radiusMd,
+      background: state === "active" ? "#F4F9FF" : C.white,
+      opacity: state === "pending" ? 0.62 : 1,
+      transition: "opacity 220ms ease-out, border-color 220ms ease-out, background 220ms ease-out",
+    }}>
+      <div style={{ width: 40, height: 40, display: "grid", placeItems: "center", borderRadius: 10, background: state === "active" ? "#E7F2FE" : C.subtle, color: state === "active" ? C.blue : state === "complete" ? C.secondary : C.disabled, transition: "color 220ms ease-out, background 220ms ease-out" }}>
+        <GenerationIcon id={step.id} />
+      </div>
+      <div>
+        <p style={{ margin: "0 0 3px", fontFamily: "var(--fc-font-body)", fontSize: 15, lineHeight: "20px", fontWeight: 700, color: state === "pending" ? C.secondary : C.ink }}>{step.label}</p>
+        <p style={{ margin: 0, fontFamily: "var(--fc-font-body)", fontSize: 13, lineHeight: "18px", color: C.secondary }}>{step.description}</p>
+      </div>
+      {state === "complete" ? (
+        <span className="generation-check" aria-label="Complete" style={{ width: 24, height: 24, display: "grid", placeItems: "center", borderRadius: "50%", background: "#E7F8F0" }}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={C.success} strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        </span>
+      ) : state === "active" ? (
+        <span className="generation-spinner" aria-label="In progress" style={{ width: 20, height: 20, borderRadius: "50%", border: `2px solid #CFE5FC`, borderTopColor: C.blue }} />
+      ) : (
+        <span aria-label="Pending" style={{ width: 20, height: 20, borderRadius: "50%", border: `2px solid ${C.border}` }} />
+      )}
+    </div>
+  );
+}
+
+function PackageGenerationLoader({ elapsedMs, complete }: { elapsedMs: number; complete: boolean }) {
+  const { activeStep, progress } = generationVisualState(elapsedMs, complete);
+  const status = generationStatusMessage(elapsedMs, complete);
+
+  return (
+    <div style={{ flex: 1, minHeight: 0, overflowY: "auto", display: "grid", placeItems: "center", padding: "40px 24px" }}>
+      <div style={{ width: "min(520px, 100%)" }}>
+        <div style={{ textAlign: "center", marginBottom: 28 }}>
+          <h1 style={{ fontFamily: "var(--fc-font-body)", fontSize: 32, lineHeight: "40px", fontWeight: 700, color: C.ink, margin: "0 0 8px", letterSpacing: "-0.02em" }}>Building your perfect trip...</h1>
+          <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 15, lineHeight: "22px", color: C.secondary, margin: 0 }}>Our AI is crafting a personalised travel package just for you</p>
+        </div>
+
+        <div style={{ display: "grid", gap: 10 }}>
+          {GENERATION_STEPS.map((step, index) => (
+            <GenerationStep key={step.id} step={step} state={index < activeStep ? "complete" : index === activeStep ? "active" : "pending"} />
+          ))}
+        </div>
+
+        <p aria-live="polite" style={{ margin: "24px 0 12px", minHeight: 20, textAlign: "center", fontFamily: "var(--fc-font-body)", fontSize: 14, lineHeight: "20px", fontWeight: 500, color: C.secondary }}>{status}</p>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div role="progressbar" aria-label="Trip package generation progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress)} style={{ flex: 1, height: 7, overflow: "hidden", borderRadius: C.radiusPill, background: C.border }}>
+            <div className="generation-progress-fill" style={{ width: "100%", height: "100%", borderRadius: C.radiusPill, background: complete ? C.success : C.blue, transform: `scaleX(${progress / 100})`, transformOrigin: "left center" }} />
+          </div>
+          <span style={{ minWidth: 36, textAlign: "right", fontFamily: "var(--fc-font-body)", fontSize: 13, lineHeight: "18px", fontWeight: 600, fontVariantNumeric: "tabular-nums", color: C.secondary }}>{generationProgressLabel(progress)}</span>
+        </div>
+        <AiDisclaimer style={{ marginTop: 16, textAlign: "center" }} />
+      </div>
+    </div>
+  );
+}
+
+export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequestId = 0, variant = "ai" }: { onNav: (s: Screen) => void; initialStep?: number; requestedStep?: number; stepRequestId?: number; variant?: "ai" | "manual" }) {
+  const router = useRouter();
+  const kinds = variant === "manual" ? MANUAL_STEP_KINDS : AI_STEP_KINDS;
   const [step, setStep] = useState(initialStep);
   const [selected, setSelected] = useState<string | null>(null);
   const [dest, setDest] = useState("");
   const [destinationSearch, setDestinationSearch] = useState("");
+  const { destinations, recommended, destinationsLoading } = useDestinationCatalog();
   const [hovCard, setHovCard] = useState<string | null>(null);
   const [vibes, setVibes] = useState<string[]>([]);
   const [duration, setDuration] = useState<"short" | "mid" | "long" | "custom" | null>(null);
   const [customDurationDays, setCustomDurationDays] = useState(7);
   const [season, setSeason] = useState<string | null>(null);
-  const [progress, setProgress] = useState(0);
-  const [lastBuiltSetup, setLastBuiltSetup] = useState<string | null>(null);
+  const [noSeasonPreference, setNoSeasonPreference] = useState(false);
+  const [generationElapsedMs, setGenerationElapsedMs] = useState(0);
+  const [generationComplete, setGenerationComplete] = useState(false);
+  const [createdPackageId, setCreatedPackageId] = useState<string | null>(null);
+  const [builtSetup, setBuiltSetup] = useState<string | null>(null);
+  const inFlightSetupRef = useRef<string | null>(null);
+  const [createError, setCreateError] = useState("");
+  const [manualCreating, setManualCreating] = useState(false);
+  // `manualCreating` state re-renders too late to stop a second click inside
+  // the same frame, which would create a duplicate orphan draft package.
+  const manualCreatingRef = useRef(false);
 
-  const isLoading = step === 4;
+  // Manual builds skip AI generation entirely, so they never enter the
+  // full-screen generation step — creation happens inline on the last step.
+  const isLoading = variant === "ai" && step === AI_STEP_KINDS.length;
 
   useEffect(() => {
     if (requestedStep === undefined) return;
@@ -1766,150 +2449,224 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
 
   useEffect(() => {
     if (!isLoading) return;
-    setProgress(0);
-    const interval = setInterval(() => {
-      setProgress((p) => {
-        if (p >= 100) { clearInterval(interval); return 100; }
-        return p + (p < 60 ? 1.2 : p < 85 ? 0.6 : 0.3);
-      });
-    }, 60);
-    return () => clearInterval(interval);
+    const startedAt = Date.now() - generationElapsedMs;
+    const interval = window.setInterval(() => setGenerationElapsedMs(Date.now() - startedAt), 100);
+    return () => window.clearInterval(interval);
+    // A new run resets elapsed time before entering the loading step.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoading]);
 
   useEffect(() => {
-    if (!isLoading || progress < 100) return;
-    const timeout = window.setTimeout(() => onNav("editor"), 500);
-    return () => window.clearTimeout(timeout);
-  }, [isLoading, progress, onNav]);
+    if (!isLoading) return;
+    // One build per setup fingerprint — guards Strict Mode's double effect and
+    // re-entering step 4 while a build for the same setup is still in flight.
+    if (builtSetup !== null && inFlightSetupRef.current === builtSetup) return;
+    const runSetup = builtSetup;
+    inFlightSetupRef.current = runSetup;
+    let cancelled = false;
+    // ponytail: 20s timeout so a hung request lands in the catch instead of a forever-100% bar
+    const timeoutFetch: typeof fetch = (input, init) =>
+      fetch(input, { ...init, signal: AbortSignal.timeout(20_000) });
+    void (async () => {
+      try {
+        const { data } = await supabase.auth.getSession();
+        const accessToken = data.session?.access_token;
+        if (!accessToken) {
+          if (!cancelled) router.push("/login");
+          return;
+        }
+        // The /api/ai/recommend proxy has its own 120s timeout — the 20s
+        // timeoutFetch above is only for the create POST.
+        const selection: WizardSelection = {
+          destination: selected ?? dest.trim(),
+          vibes,                                   // raw ids — the engine mapping needs them
+          duration,
+          customDurationDays,
+          season,
+        };
+        const res = await generateItinerary(selection);
+        const base = {
+          ...wizardDraftToPackageInput({
+            destination: selected ?? dest.trim(),
+            vibes: vibes.map((vibe) => VIBES.find((item) => item.id === vibe)?.label ?? vibe),
+            duration: duration ?? "short",
+            customDurationDays,
+            season: season ?? "",
+          }),
+          // Persist the raw vibe ids — tags is the only backend field that
+          // carries them (see lib/vibes.ts for the canonical list).
+          tags: vibes,
+        };
+        const { package_id } = await createPackage(
+          timeoutFetch,
+          BUILDER_API_URL,
+          accessToken,
+          itineraryToPackageInput(base, res),
+        );
+        // Set even after cleanup: the package now exists server-side, and the
+        // reuse guard in continueWizard needs the id to avoid creating a twin.
+        // Skipped only when a newer build for a different setup superseded this one.
+        if (inFlightSetupRef.current === runSetup) {
+          setCreatedPackageId(package_id);
+          setGenerationComplete(true);
+        }
+        // Vibes/season have no backend field to persist to (not even proposed
+        // in the save/submit handover) — stashed here so the Finalise & Review
+        // page can still show them once, right after creation.
+        try {
+          window.sessionStorage.setItem(
+            wizardVibesStorageKey(package_id),
+            JSON.stringify({
+              vibes: vibes.map((vibeId) => VIBES.find((item) => item.id === vibeId)?.label ?? vibeId),
+              season,
+            }),
+          );
+        } catch {
+          // best-effort only
+        }
+      } catch (error) {
+        if (inFlightSetupRef.current === runSetup) inFlightSetupRef.current = null;
+        if (cancelled) return;
+        setCreateError(
+          error instanceof DOMException && error.name === "TimeoutError"
+            ? "The request timed out. Please try again."
+            : error instanceof Error ? error.message : "Unable to create this package.",
+        );
+        setStep(AI_STEP_KINDS.length - 1);
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoading]);
 
-  const canContinue = step === 0 ? (selected !== null || dest.trim().length > 0) : step === 1 ? vibes.length > 0 : step === 2 ? duration !== null : step === 3 ? season !== null : true;
-  const filteredDestinations = DESTINATIONS.filter((destination) => {
-    const query = destinationSearch.trim().toLowerCase();
-    return !query || destination.name.toLowerCase().includes(query) || destination.tags.some((tag) => tag.toLowerCase().includes(query));
-  });
-  const stepSummaries = [
-    selected ?? dest.trim(),
-    vibes.map((vibe) => VIBES.find((item) => item.id === vibe)?.label).filter(Boolean).join(", "),
-    duration === "custom" ? `Custom, ${customDurationDays} ${customDurationDays === 1 ? "day" : "days"}` : duration ? `${duration.charAt(0).toUpperCase() + duration.slice(1)} trip` : "",
-    season ? season.charAt(0).toUpperCase() + season.slice(1) : "",
-  ];
-  const currentSetup = JSON.stringify({
+  useEffect(() => {
+    if (!isLoading || !generationComplete || !createdPackageId) return;
+    const timeout = window.setTimeout(() => router.push(`/packages/editor/${encodeURIComponent(createdPackageId)}`), 350);
+    return () => window.clearTimeout(timeout);
+  }, [isLoading, generationComplete, createdPackageId, router]);
+
+  const kind = kinds[step];
+  const isLastStep = step === kinds.length - 1;
+  // Step 0 requires an actual pick from the catalog — typing alone (without
+  // selecting a result) must not be enough to continue.
+  const canContinue = (kind === "destination" ? selected !== null
+    : kind === "style" ? vibes.length > 0
+    : kind === "duration" ? duration !== null
+    : seasonChoiceComplete(season, noSeasonPreference)) && !manualCreating;
+  const selectDestination = (d: DestinationOption) => {
+    const { name, search } = destinationSelection(d);
+    setSelected(name);
+    setDest(name);
+    setDestinationSearch(search);
+  };
+  const summaryByKind: Record<WizardStepKind, string> = {
     destination: selected ?? dest.trim(),
-    travelStyles: [...vibes].sort(),
-    duration,
-    customDurationDays: duration === "custom" ? customDurationDays : null,
-    season,
-  });
-  const setupHasChanged = lastBuiltSetup !== null && currentSetup !== lastBuiltSetup;
-  const continueWizard = () => {
-    if (step === 3) {
-      if (hasBuilt && !setupHasChanged) {
-        onNav("editor");
+    style: vibes.map((vibe) => VIBES.find((item) => item.id === vibe)?.label).filter(Boolean).join(", "),
+    duration: duration === "custom" ? `Custom, ${customDurationDays} days` : duration ? `${duration.charAt(0).toUpperCase() + duration.slice(1)} trip` : "",
+    season: season ? season.charAt(0).toUpperCase() + season.slice(1) : noSeasonPreference ? "Year-round" : "",
+  };
+  const stepSummaries = kinds.map((k) => summaryByKind[k]);
+  const setupForSeason = (selectedSeason: string | null) => JSON.stringify({
+      destination: selected ?? dest.trim(),
+      vibes: [...vibes].sort(),
+      duration,
+      customDurationDays: duration === "custom" ? customDurationDays : null,
+      season: selectedSeason,
+    });
+  const currentSetup = setupForSeason(season);
+  const startBuild = (setup: string) => {
+      // Rebuilding an unchanged setup would orphan a duplicate draft — reuse the one we made.
+      if (createdPackageId && builtSetup === setup) {
+        router.push(`/packages/editor/${encodeURIComponent(createdPackageId)}`);
         return;
       }
-      setLastBuiltSetup(currentSetup);
-      setProgress(0);
-      setStep(4);
+      setBuiltSetup(setup);
+      setCreatedPackageId(null);
+      setCreateError("");
+      setGenerationElapsedMs(0);
+      setGenerationComplete(false);
+      setStep(AI_STEP_KINDS.length);
+  };
+  // Manual builds skip AI drafting — create the package directly and go
+  // straight to the editor, no fake generation screen.
+  const createManualPackage = async (seasonOverride: string | null = season) => {
+    if (manualCreatingRef.current) return;
+    manualCreatingRef.current = true;
+    setCreateError("");
+    setManualCreating(true);
+    try {
+      const { data } = await supabase.auth.getSession();
+      const accessToken = data.session?.access_token;
+      if (!accessToken) { router.push("/login"); return; }
+      const styleLabels = vibes.map((vibe) => VIBES.find((item) => item.id === vibe)?.label ?? vibe);
+      const base = wizardDraftToPackageInput({
+        destination: selected ?? dest.trim(),
+        vibes: styleLabels,
+        duration: duration ?? "short",
+        customDurationDays,
+        season: seasonOverride ?? "",
+      });
+      const description = `${styleLabels.length ? `A ${styleLabels.join(", ")} trip` : "A custom trip"}${seasonOverride ? `, built for ${seasonOverride}` : ", built from scratch"}.`;
+      const { package_id } = await createPackage(fetch, BUILDER_API_URL, accessToken, { ...base, description, tags: vibes });
+      router.push(`/packages/editor/${encodeURIComponent(package_id)}`);
+    } catch (error) {
+      setCreateError(error instanceof Error ? error.message : "Unable to create this package.");
+    } finally {
+      manualCreatingRef.current = false;
+      setManualCreating(false);
+    }
+  };
+  const continueWizard = () => {
+    if (!isLastStep) {
+      setStep((currentStep) => currentStep + 1);
       return;
     }
-    setStep((currentStep) => currentStep + 1);
+    if (variant === "manual") {
+      void createManualPackage();
+      return;
+    }
+    startBuild(currentSetup);
   };
 
+  const hasWizardProgress = Boolean(selected || dest.trim() || vibes.length > 0 || duration || season);
+
   return (
-    <div style={{ height: "calc(100vh - 116px)", background: "#FAFAFA", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+    <div className="ai-wizard-screen" style={{ minHeight: "calc(100vh - 64px)", background: "#FAFAFA", display: "flex", flexDirection: "column" }}>
+      <CreatorCreationSubnav confirmBeforeLeaving={hasWizardProgress && !isLoading} />
       {isLoading ? (
-        /* ── Loading screen ── */
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 0 }}>
-          <h1 style={{ fontFamily: "var(--fc-font-body)", fontSize: 32, fontWeight: 700, color: C.ink, margin: "0 0 10px", letterSpacing: "-0.02em" }}>
-            Building your perfect trip ...
-          </h1>
-          <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 15, color: C.secondary, margin: "0 0 36px" }}>
-            Our AI is crafting a personalised travel package trip just for you
-          </p>
-          <div style={{ width: 320, height: 260, borderRadius: 16, overflow: "hidden", marginBottom: 40, background: C.subtle }}>
-            <img src="https://images.unsplash.com/photo-1654693289021-3ff2c9df4092?w=640&h=520&fit=crop" alt="Building trip" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-          </div>
-          <div style={{ width: 560, display: "flex", alignItems: "center", gap: 14 }}>
-            <div style={{ flex: 1, height: 8, borderRadius: 99, background: C.border, overflow: "hidden" }}>
-              <div style={{ height: "100%", width: "100%", borderRadius: 99, background: C.ink, transform: `scaleX(${Math.min(progress, 100) / 100})`, transformOrigin: "left center", transition: "transform 60ms linear" }} />
-            </div>
-            <span style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 600, color: C.ink, minWidth: 40, textAlign: "right" }}>
-              {Math.min(Math.round(progress), 100)}%
-            </span>
-          </div>
-        </div>
+        <PackageGenerationLoader elapsedMs={generationElapsedMs} complete={generationComplete} />
       ) : (
-      <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", maxWidth: 960, margin: "0 auto", width: "100%", padding: "40px 32px 0" }}>
+      <div className="ai-wizard-layout">
 
         {/* Progress steps */}
-        <div style={{ display: "flex", alignItems: "center", gap: 0, marginBottom: 36 }}>
-          {WIZARD_STEPS.map((label, i) => (
-            <div key={i} style={{ display: "flex", alignItems: "center", flex: i < WIZARD_STEPS.length - 1 ? 1 : 0 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <div style={{
-                  width: 28, height: 28, borderRadius: "50%", flexShrink: 0,
-                  background: i < step ? C.ink : i === step ? C.ink : C.white,
-                  border: i === step ? `2px solid ${C.ink}` : i < step ? "none" : `2px solid ${C.border}`,
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  transition: "all 300ms",
-                }}>
-                  {i < step
-                    ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>
-                    : <span style={{ fontFamily: "var(--fc-font-body)", fontSize: 12, fontWeight: 700, color: i === step ? C.white : C.secondary }}>{i + 1}</span>
-                  }
-                </div>
-                {i < step ? (
-                  <button
-                    type="button"
-                    onClick={() => setStep(i)}
-                    aria-label={`Return to ${label}`}
-                    style={{
-                      minHeight: 48, padding: "4px 2px",
-                      display: "grid", alignContent: "center", justifyItems: "start", gap: 4,
-                      fontFamily: "var(--fc-font-body)", color: C.secondary, whiteSpace: "nowrap",
-                      background: "transparent", border: 0, cursor: "pointer",
-                    }}
-                  ><span style={{ fontSize: 13, fontWeight: 500, textDecoration: "underline", textUnderlineOffset: 4 }}>{label}</span>{stepSummaries[i] && <span style={{ maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", fontSize: 11, color: C.disabled }}>{stepSummaries[i]}</span>}</button>
-                ) : (
-                  <span style={{ minHeight: 48, display: "grid", alignContent: "center", gap: 4, fontFamily: "var(--fc-font-body)", color: i === step ? C.ink : C.secondary, whiteSpace: "nowrap" }}>
-                    <span style={{ fontSize: 13, fontWeight: i === step ? 600 : 400 }}>{label}</span>
-                    {stepSummaries[i] && <span style={{ maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", fontSize: 11, fontWeight: 400, color: C.disabled }}>{stepSummaries[i]}</span>}
-                  </span>
-                )}
-              </div>
-              {i < WIZARD_STEPS.length - 1 && (
-                <div style={{ flex: 1, height: 1.5, background: C.border, margin: "0 12px", transition: "background 300ms" }} />
-              )}
-            </div>
-          ))}
-        </div>
+        <PackageWizardProgress labels={kinds.map((k) => STEP_LABEL_BY_KIND[k])} step={step} summaries={stepSummaries} onStepSelect={setStep} />
+
+        <main className="ai-wizard-main">
 
         {/* Heading */}
-        <div style={{ marginBottom: 24 }}>
+        <div className="ai-wizard-heading" style={{ marginBottom: 24 }}>
           <h1 style={{
             fontFamily: "var(--fc-font-body)", fontSize: 28, fontWeight: 700,
             color: C.ink, margin: "0 0 6px", letterSpacing: "-0.02em",
-          }}>{step === 0 ? "Start with a destination" : step === 1 ? "What kind of experience are you creating?" : step === 2 ? "Set the duration" : "Set your season"}</h1>
+          }}>{kind === "destination" ? "Start with a destination" : kind === "style" ? "What kind of experience are you creating?" : kind === "duration" ? "Set the duration" : "Set your season"}</h1>
           <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 15, color: C.secondary, margin: 0 }}>
-            {step === 0 ? "Set the foundation for your package" : step === 1 ? "Choose up to 3 styles. We'll use them to shape your package." : step === 2 ? "Plan how the journey unfolds" : "Define when this package is best experienced"}
+            {kind === "destination" ? "Set the foundation for your package" : kind === "style" ? (variant === "manual" ? "Choose up to 3 styles that describe your package." : "Choose up to 3 styles. We'll use them to shape your package.") : kind === "duration" ? "Plan how the journey unfolds" : "Choose when this trip is at its best. Travellers will select their own dates."}
           </p>
         </div>
 
         {/* Step content */}
-        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden", paddingBottom: 20 }}>{step === 3 ? (
+        <div className="ai-wizard-content" style={{ minHeight: 0, overflowX: "hidden", paddingBottom: 20 }}>{kind === "season" ? (
           /* ── Step 4: Season ── */
-          <div style={{ height: "100%", minHeight: 0, display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gridTemplateRows: "repeat(2, minmax(0, 1fr))", gap: 12 }}>
-            {([
-              { id: "spring", label: "Spring", desc: "Blooming scenery and fresh, vibrant energy", img: "https://images.unsplash.com/photo-1622285422722-b1b3eb36c728?w=600&h=320&fit=crop", recommend: true },
-              { id: "summer", label: "Summer", desc: "Warm days and endless outdoor adventures",   img: "https://images.unsplash.com/photo-1461937995729-a2e442122d18?w=600&h=320&fit=crop" },
-              { id: "autumn", label: "Autumn",  desc: "Colorful foliage and cozy moments",          img: "https://images.unsplash.com/photo-1542574929305-245cb48f9c87?w=600&h=320&fit=crop" },
-              { id: "winter", label: "Winter",  desc: "Cool weather and relaxed experiences",       img: "https://images.unsplash.com/photo-1551927411-95e412943b58?w=600&h=320&fit=crop" },
-            ] as { id: string; label: string; desc: string; img: string; recommend?: boolean }[]).map((s) => {
+          <div className="ai-wizard-season-grid" style={{ minHeight: 0, display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 12 }}>
+            {SEASON_CARDS.map((s) => {
               const isSel = season === s.id;
               const isHov = hovCard === s.id;
               return (
-                <button key={s.id}
-                  onClick={() => setSeason(s.id)}
+                <button className="ai-wizard-season-card" key={s.id}
+                  onClick={() => {
+                    setSeason(s.id);
+                    setNoSeasonPreference(false);
+                  }}
                   onMouseEnter={() => setHovCard(s.id)}
                   onMouseLeave={() => setHovCard(null)}
                   style={{
@@ -1919,34 +2676,29 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
                     borderRadius: 12, cursor: "pointer",
                     boxShadow: isSel ? `0 0 0 3px rgba(0,114,234,0.12)` : isHov ? "0 2px 10px rgba(33,33,33,0.08)" : "0 1px 3px rgba(33,33,33,0.05)",
                     transition: "all 160ms ease",
-                    display: "flex", flexDirection: "column",
                   }}
                 >
-                  <div style={{ position: "relative", flex: "1 1 100px", minHeight: 76, overflow: "hidden" }}>
+                  <div className="ai-wizard-season-image" style={{ position: "relative", overflow: "hidden" }}>
                     <img src={s.img} alt={s.label} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block", transition: "transform 320ms ease" }}
                       onMouseEnter={(e) => { (e.currentTarget as HTMLImageElement).style.transform = "scale(1.05)"; }}
                       onMouseLeave={(e) => { (e.currentTarget as HTMLImageElement).style.transform = "scale(1)"; }}
                     />
-                    {isSel && (
-                      <div style={{ position: "absolute", top: 10, right: 10, width: 22, height: 22, borderRadius: "50%", background: C.blue, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 2px 6px rgba(0,0,0,0.2)" }}>
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>
-                      </div>
-                    )}
-                    {s.recommend && (
-                      <div style={{ position: "absolute", top: 10, left: 10 }}>
-                        <span style={{ fontFamily: "var(--fc-font-body)", fontSize: 10, fontWeight: 700, color: C.white, background: C.red, borderRadius: 4, padding: "2px 7px", letterSpacing: "0.05em", textTransform: "uppercase" }}>Recommend</span>
-                      </div>
-                    )}
+                    {isSel && <span aria-label="Selected" style={{ position: "absolute", top: 10, right: 10, width: 24, height: 24, display: "grid", placeItems: "center", borderRadius: "50%", background: C.blue, color: C.white, boxShadow: "0 2px 6px rgba(0,0,0,0.2)" }}><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg></span>}
                   </div>
-                  <div style={{ flexShrink: 0, padding: "10px 14px 12px", background: isSel ? "#EFF6FF" : C.white, transition: "background 160ms" }}>
-                    <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 700, color: isSel ? C.blue : C.ink, margin: "0 0 3px", letterSpacing: "-0.01em", transition: "color 160ms" }}>{s.label}</p>
-                    <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 12, color: C.secondary, margin: 0, lineHeight: "16px" }}>{s.desc}</p>
+                  <div className="ai-wizard-season-content" style={{ minHeight: 96, background: isSel ? "#EFF6FF" : C.white, transition: "background 160ms" }}>
+                    <div className="ai-wizard-season-summary">
+                      <p className="ai-wizard-season-title" style={{ minHeight: 22, fontFamily: "var(--fc-font-body)", fontWeight: 700, color: isSel ? C.blue : C.ink, margin: 0, letterSpacing: "-0.01em", transition: "color 160ms" }}>{s.label}</p>
+                      <p className="ai-wizard-season-description" style={{ fontFamily: "var(--fc-font-body)", color: C.secondary, margin: 0 }}>{s.desc}</p>
+                    </div>
+                    <div className="ai-wizard-season-tags">
+                      {s.tags.map((tag) => <span className="ai-wizard-season-meta" key={tag} style={{ padding: "2px 7px", borderRadius: 5, background: isSel ? "#DCEEFF" : C.subtle, color: isSel ? "#005AA8" : C.secondary }}>{tag}</span>)}
+                    </div>
                   </div>
                 </button>
               );
             })}
           </div>
-        ) : step === 2 ? (
+        ) : kind === "duration" ? (
           /* ── Step 3: Duration ── */
           <div>
             <div role="radiogroup" aria-label="Trip length" style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12, marginBottom: 18 }}>
@@ -1954,7 +2706,7 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
                 { id: "short" as const, range: "3 to 5 days", title: "Short trip", description: "City breaks and quick getaways", path: "M5 7h14M7 4v6m10-6v6M5 11h14v9H5z" },
                 { id: "mid" as const, range: "6 to 8 days", title: "Mid trip", description: "A balanced week in one region", path: "M4 18V6l5-2 6 3 5-2v12l-5 2-6-3zM9 4v12m6-9v12" },
                 { id: "long" as const, range: "9 to 14 days", title: "Long trip", description: "Multi-stop and slower journeys", path: "M4 17l5-5 4 4 7-8M15 8h5v5" },
-                { id: "custom" as const, range: "1 to 14 days", title: "Custom", description: "Choose an exact duration", path: "M4 7h10M18 7h2M4 17h2M10 17h10M16 5v4M8 15v4" },
+                { id: "custom" as const, range: "2 to 14 days", title: "Custom", description: "Choose an exact duration", path: "M4 7h10M18 7h2M4 17h2M10 17h10M16 5v4M8 15v4" },
               ].map((option) => {
                 const active = duration === option.id;
                 return <button key={option.id} role="radio" aria-checked={active} onClick={() => setDuration(option.id)} style={{ minHeight: 154, padding: "18px", position: "relative", display: "grid", gridTemplateColumns: "34px 1fr", alignContent: "center", columnGap: 12, textAlign: "left", border: `2px solid ${active ? C.blue : C.border}`, borderRadius: 14, background: active ? "#EFF6FF" : C.white, boxShadow: active ? `0 0 0 3px rgba(0,114,234,0.10)` : C.shadowCard, cursor: "pointer", transition: "border-color 140ms, background 140ms, box-shadow 140ms" }}>
@@ -1967,10 +2719,10 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
             </div>
 
             {duration === "custom" && <div style={{ marginTop: 10, padding: "20px 22px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 24, border: `1px solid ${C.border}`, borderRadius: 12, background: C.white }}>
-              <div><strong style={{ display: "block", marginBottom: 4, fontSize: 14, color: C.ink }}>Exact duration</strong><span style={{ fontSize: 12, color: C.secondary }}>Choose from 1 to 14 days</span></div>
+              <div><strong style={{ display: "block", marginBottom: 4, fontSize: 14, color: C.ink }}>Exact duration</strong><span style={{ fontSize: 12, color: C.secondary }}>Choose from 2 to 14 days</span></div>
               <div role="group" aria-label="Custom trip duration" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <button type="button" aria-label="Decrease duration" disabled={customDurationDays === 1} onClick={() => setCustomDurationDays((days) => Math.max(1, days - 1))} style={{ width: 52, height: 52, display: "grid", placeItems: "center", border: `1px solid ${C.border}`, borderRadius: 8, background: C.white, color: customDurationDays === 1 ? C.disabled : C.ink, cursor: customDurationDays === 1 ? "not-allowed" : "pointer" }}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M5 12h14"/></svg></button>
-                <div aria-live="polite" style={{ minWidth: 112, height: 52, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, borderRadius: 8, background: C.subtle }}><strong style={{ fontFamily: "var(--fc-font-body)", fontSize: 24, lineHeight: 1, color: C.ink }}>{customDurationDays}</strong><span style={{ fontSize: 13, lineHeight: 1, fontWeight: 600, color: C.secondary }}>{customDurationDays === 1 ? "day" : "days"}</span></div>
+                <button type="button" aria-label="Decrease duration" disabled={customDurationDays === 2} onClick={() => setCustomDurationDays((days) => Math.max(2, days - 1))} style={{ width: 52, height: 52, display: "grid", placeItems: "center", border: `1px solid ${C.border}`, borderRadius: 8, background: C.white, color: customDurationDays === 2 ? C.disabled : C.ink, cursor: customDurationDays === 2 ? "not-allowed" : "pointer" }}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M5 12h14"/></svg></button>
+                <div aria-live="polite" style={{ minWidth: 112, height: 52, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, borderRadius: 8, background: C.subtle }}><strong style={{ fontFamily: "var(--fc-font-body)", fontSize: 24, lineHeight: 1, color: C.ink }}>{customDurationDays}</strong><span style={{ fontSize: 13, lineHeight: 1, fontWeight: 600, color: C.secondary }}>days</span></div>
                 <button type="button" aria-label="Increase duration" disabled={customDurationDays === 14} onClick={() => setCustomDurationDays((days) => Math.min(14, days + 1))} style={{ width: 52, height: 52, display: "grid", placeItems: "center", border: `1px solid ${C.border}`, borderRadius: 8, background: C.white, color: customDurationDays === 14 ? C.disabled : C.ink, cursor: customDurationDays === 14 ? "not-allowed" : "pointer" }}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
               </div>
             </div>}
@@ -1980,9 +2732,9 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
               <span style={{ fontFamily: "var(--fc-font-body)", fontSize: 13 }}>{duration === "custom" ? "AI will build the trip for your exact duration." : "AI will choose the exact duration within the selected range."}</span>
             </div>
           </div>
-        ) : step === 1 ? (
+        ) : kind === "style" ? (
           /* ── Step 2: Travel style ── */
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gridTemplateRows: "repeat(2, 1fr)", gap: 16, height: "100%" }}>
+          <div className="ai-wizard-style-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gridTemplateRows: "repeat(2, minmax(0, 1fr))", gap: 16 }}>
             {VIBES.map((v) => {
               const isSel = vibes.includes(v.id);
               const isHov = hovCard === v.id;
@@ -2028,88 +2780,27 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
           </div>
         ) : (
           /* ── Step 1: Destination ── */
-          <div>
-          <label style={{ display: "block", margin: "0 0 24px" }}>
-            <span style={{ display: "block", fontFamily: "var(--fc-font-body)", fontSize: 12, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: C.secondary, marginBottom: 10 }}>
-              Search destinations
-            </span>
-            <div style={{ position: "relative" }}>
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={C.secondary} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-                style={{ position: "absolute", left: 16, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }}>
-                <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
-              </svg>
-              <input
-                value={destinationSearch}
-                onChange={(e) => { setDestinationSearch(e.target.value); setDest(e.target.value); setSelected(null); }}
-                placeholder="Search by city, country or travel style…"
-                style={{
-                  width: "100%", boxSizing: "border-box", height: 52,
-                  paddingLeft: 48, paddingRight: destinationSearch ? 48 : 16,
-                  fontFamily: "var(--fc-font-body)", fontSize: 15, color: C.ink,
-                  border: `1.5px solid ${C.border}`, borderRadius: 12, outline: "none",
-                  background: C.white, boxShadow: C.shadowCard,
-                  transition: "border-color 140ms, box-shadow 140ms",
-                }}
-                onFocus={(e) => { e.currentTarget.style.borderColor = C.blue; e.currentTarget.style.boxShadow = `0 0 0 3px ${C.focusRing}`; }}
-                onBlur={(e) => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.boxShadow = C.shadowCard; }}
-              />
-              {destinationSearch && <button type="button" aria-label="Clear destination search" onClick={() => { setDestinationSearch(""); setDest(""); setSelected(null); }} style={{ position: "absolute", right: 6, top: 4, width: 44, height: 44, display: "grid", placeItems: "center", border: 0, background: "transparent", color: C.secondary, cursor: "pointer" }}>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
-              </button>}
-            </div>
-          </label>
-          <div style={{ minHeight: 32, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, marginBottom: 10 }}>
-            <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 12, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: C.secondary, margin: 0 }}>
-              {destinationSearch ? `${filteredDestinations.length} matching destinations` : "Popular Destinations"}
-            </p>
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 12, marginBottom: 20 }}>
-            {filteredDestinations.map((d) => {
-              const isSel = selected === d.name;
-              const isHov = hovCard === d.name;
-              return (
-                <button key={d.name}
-                  onClick={() => { setSelected(d.name); setDest(d.name); }}
-                  onMouseEnter={() => setHovCard(d.name)}
-                  onMouseLeave={() => setHovCard(null)}
-                  style={{
-                    minHeight: 92, textAlign: "left", padding: "16px 18px", overflow: "hidden",
-                    background: C.white,
-                    border: `2px solid ${isSel ? C.blue : isHov ? "#BDBDBD" : C.border}`,
-                    borderRadius: 12, cursor: "pointer",
-                    boxShadow: isSel ? "0 0 0 3px rgba(0,114,234,0.15)" : isHov ? C.shadowCard : "none",
-                    transition: "border-color 140ms, box-shadow 140ms",
-                    position: "relative",
-                  }}
-                >
-                  {isSel && <div style={{ position: "absolute", top: 12, right: 12, width: 22, height: 22, borderRadius: "50%", background: C.blue, display: "flex", alignItems: "center", justifyContent: "center" }}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg></div>}
-                  <div>
-                    <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 15, fontWeight: 700, color: isSel ? C.blue : C.ink, margin: "0 0 10px", paddingRight: isSel ? 24 : 0 }}>{d.name}</p>
-                    <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-                      {d.tags.map((tag) => (
-                        <span key={tag} style={{
-                          fontFamily: "var(--fc-font-body)", fontSize: 11, fontWeight: 500,
-                          color: isSel ? C.blue : C.secondary,
-                          background: isSel ? "rgba(0,114,234,0.08)" : C.subtle,
-                          borderRadius: 4, padding: "2px 7px",
-                          transition: "color 140ms, background 140ms",
-                        }}>{tag}</span>
-                      ))}
-                    </div>
-                  </div>
-                </button>
-              );
-            })}
-            {filteredDestinations.length === 0 && (
-              <div style={{ gridColumn: "1 / -1", padding: "28px", border: `1px dashed ${C.border}`, borderRadius: 12, background: C.white, textAlign: "center" }}>
-                <p style={{ margin: "0 0 5px", fontFamily: "var(--fc-font-body)", fontSize: 15, fontWeight: 600, color: C.ink }}>Create a trip to “{destinationSearch}”</p>
-                <p style={{ margin: 0, fontFamily: "var(--fc-font-body)", fontSize: 13, color: C.secondary }}>No preset found, but you can continue and let AI build it.</p>
-              </div>
-            )}
-          </div>
-        </div>
+          <DestinationPicker
+            idPrefix="wizard"
+            search={destinationSearch}
+            selected={selected}
+            destinations={destinations}
+            recommended={recommended}
+            loading={destinationsLoading}
+            onSearchChange={(value) => {
+              setDestinationSearch(value);
+              setSelected(null);
+              setDest("");
+            }}
+            onSelect={selectDestination}
+          />
         )}</div>
-        <div style={{ flexShrink: 0, display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 0 20px", borderTop: `1px solid ${C.border}`, background: "#FAFAFA" }}>
+        {createError && isLastStep && (
+          <p role="alert" style={{ margin: "12px 0 0", fontFamily: "var(--fc-font-body)", fontSize: 13, color: "#B42318" }}>
+            {createError}
+          </p>
+        )}
+        <div className="ai-wizard-footer" style={{ flexShrink: 0, display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, padding: "16px 0 20px", borderTop: `1px solid ${C.border}`, background: "#FAFAFA" }}>
           <button onClick={() => step === 0 ? onNav("builder") : setStep((s) => s - 1)} style={{
             height: 44, padding: "0 24px",
             fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 500,
@@ -2121,32 +2812,53 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
             onMouseLeave={(e) => { e.currentTarget.style.borderColor = C.border; }}
           >Back</button>
 
-          <button
-            disabled={!canContinue}
-            onClick={continueWizard}
-            style={{
-              height: 44, padding: "0 32px",
-              fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 600,
-              color: C.white,
-              background: canContinue ? C.blue : C.disabled,
-              border: "none", borderRadius: 8,
-              cursor: canContinue ? "pointer" : "not-allowed",
-              boxShadow: "none",
-              transition: "opacity 140ms, box-shadow 140ms",
-              display: "flex", alignItems: "center", gap: 8,
-            }}
-            onMouseEnter={(e) => { if (canContinue) e.currentTarget.style.opacity = "0.88"; }}
-            onMouseLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
-          >
-            {step === 3 ? (hasBuilt ? (setupHasChanged ? "Rebuild your trip" : "Back to trip") : "Build your trip") : "Continue"}
-            {step < 3 && (
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M5 12h14M12 5l7 7-7 7"/>
-              </svg>
+          <div className="ai-wizard-footer-actions">
+            {kind === "season" && (
+              <button
+                type="button"
+                className="ai-wizard-no-season"
+                disabled={manualCreating}
+                aria-label={seasonSecondaryAction(season) === "clear-season" ? "Clear the selected season." : variant === "manual" ? "Create without a seasonal preference." : "Build without a seasonal preference."}
+                onClick={() => {
+                  if (seasonSecondaryAction(season) === "clear-season") {
+                    setSeason(null);
+                    return;
+                  }
+                  setSeason(null);
+                  setNoSeasonPreference(true);
+                  if (variant === "manual") void createManualPackage(null);
+                  else startBuild(setupForSeason(null));
+                }}
+              >{seasonSecondaryAction(season) === "clear-season" ? "Clear season" : variant === "manual" ? "Create without season" : "Build without season"}</button>
             )}
-          </button>
+            <button
+              disabled={!canContinue}
+              onClick={continueWizard}
+              style={{
+                height: 44, padding: "0 32px",
+                fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 600,
+                color: C.white,
+                background: canContinue ? C.blue : C.disabled,
+                border: "none", borderRadius: 8,
+                cursor: canContinue ? "pointer" : "not-allowed",
+                boxShadow: "none",
+                transition: "opacity 140ms, box-shadow 140ms",
+                display: "flex", alignItems: "center", gap: 8,
+              }}
+              onMouseEnter={(e) => { if (canContinue) e.currentTarget.style.opacity = "0.88"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
+            >
+              {isLastStep ? (manualCreating ? "Creating…" : variant === "manual" ? "Create package" : "Build your trip") : "Continue"}
+              {!isLastStep && (
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M5 12h14M12 5l7 7-7 7"/>
+                </svg>
+              )}
+            </button>
+          </div>
         </div>
 
+        </main>
       </div>
       )}
     </div>

@@ -1,10 +1,8 @@
 export type StoredDemoState = {
-  hasBuiltTrip: boolean;
   wizardStep: number;
 };
 
 export const DEFAULT_DEMO_STATE: StoredDemoState = {
-  hasBuiltTrip: false,
   wizardStep: 0,
 };
 
@@ -21,10 +19,7 @@ export function parseDemoState(value: string | null): StoredDemoState {
         ? Math.min(3, Math.max(0, candidate.wizardStep))
         : 0;
 
-    return {
-      hasBuiltTrip: candidate.hasBuiltTrip === true,
-      wizardStep,
-    };
+    return { wizardStep };
   } catch {
     return DEFAULT_DEMO_STATE;
   }

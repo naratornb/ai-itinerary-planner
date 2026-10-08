@@ -249,3 +249,28 @@ def test_search_with_filters(fake):
     assert payload["min_price"] == 100
     assert payload["max_price"] == 900
     assert payload["filter_tags"] == ["surf", "beach"]
+
+
+def test_list_returns_vibes_and_season(fake):
+    row = copy.deepcopy(LIST_ROW)
+    row["vibes"] = ["scenic"]
+    row["season"] = "spring"
+    fake.route("GET", "travel_packages", FakeResp([row], headers={"Content-Range": "0-0/1"}))
+    resp = client.get("/marketplace/packages")
+    assert resp.status_code == 200
+    assert resp.json()["data"][0]["vibes"] == ["scenic"]
+    assert resp.json()["data"][0]["season"] == "spring"
+    select = fake.find("GET", "travel_packages")[0]["params"]["select"]
+    assert "vibes" in select and "season" in select
+
+
+def test_search_returns_vibes_and_season(fake):
+    fake.route("POST", "rpc/search_packages", FakeResp([copy.deepcopy(RPC_ROW)]))
+    row = copy.deepcopy(LIST_ROW)
+    row["vibes"] = ["foodie"]
+    row["season"] = "summer"
+    fake.route("GET", "travel_packages", FakeResp([row]))
+    resp = client.get("/marketplace/search", params={"q": "tokyo"})
+    assert resp.status_code == 200
+    assert resp.json()["data"][0]["vibes"] == ["foodie"]
+    assert resp.json()["data"][0]["season"] == "summer"

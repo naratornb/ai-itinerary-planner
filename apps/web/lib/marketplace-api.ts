@@ -1,3 +1,5 @@
+import type { CreatorActivityDetail, CreatorFlightDetail, CreatorHotelDetail } from "./creator-api";
+
 export type MarketplacePackageSummary = {
   package_id: string;
   title: string;
@@ -8,6 +10,7 @@ export type MarketplacePackageSummary = {
   cover_image_url: string | null;
   tags: string[];
   influencer: {
+    avatar_url?: string | null;
     display_name: string | null;
     instagram_handle: string | null;
     follower_count: number | null;
@@ -15,28 +18,43 @@ export type MarketplacePackageSummary = {
   published_at: string | null;
 };
 
+export type MarketplaceReview = {
+  review_id: string;
+  rating: number;
+  comment: string | null;
+  created_at: string;
+  profiles?: { full_name: string | null; avatar_url: string | null } | null;
+};
+
 export type MarketplacePackageDetail = MarketplacePackageSummary & {
   description?: string | null;
+  status?: string | null;
+  max_group_size?: number | null;
+  // Not yet in the API response — renders when the backend ships these columns.
+  season?: string | null;
+  suitable_for?: string | null;
   creator?: {
     full_name?: string | null;
     avatar_url?: string | null;
     influencer_profiles?: {
       bio?: string | null;
       instagram_handle?: string | null;
+      tiktok_handle?: string | null;
       follower_count?: number | null;
       verified?: boolean | null;
     } | Array<{
       bio?: string | null;
       instagram_handle?: string | null;
+      tiktok_handle?: string | null;
       follower_count?: number | null;
       verified?: boolean | null;
     }>;
   } | null;
-  media?: Array<{ media_id?: string; url?: string; media_url?: string; is_cover?: boolean }>;
-  days?: Array<{ package_day_id?: string; day_number?: number; title?: string; description?: string }>;
-  flights?: unknown[];
-  hotels?: unknown[];
-  activities?: unknown[];
+  media?: Array<{ media_id?: string; url?: string; media_url?: string; is_cover?: boolean; sort_order?: number }>;
+  days?: Array<{ id?: string; day_number?: number; title?: string; summary?: string }>;
+  flights?: CreatorFlightDetail[];
+  hotels?: CreatorHotelDetail[];
+  activities?: CreatorActivityDetail[];
 };
 
 type MarketplaceListResponse = { data: MarketplacePackageSummary[] };
@@ -67,6 +85,15 @@ export async function fetchMarketplacePackage(fetcher: typeof fetch, apiUrl: str
   const response = await fetcher(`${apiBase(apiUrl)}/marketplace/packages/${encodeURIComponent(packageId)}`);
   if (response.status === 404) throw new Error("Package not found.");
   return readJson<MarketplacePackageDetail>(response, "Unable to load this package.");
+}
+
+/**
+ * Live-search results are only safe to reuse for the exact query that
+ * produced them — a submit fired before the debounce would otherwise show
+ * an earlier query's results under the new text.
+ */
+export function reusableSearchResults<T>(query: string, forQuery: string, results: T[]): T[] | null {
+  return query === forQuery && results.length > 0 ? results : null;
 }
 
 export function uniqueDestinationSuggestions(packages: MarketplacePackageSummary[]) {

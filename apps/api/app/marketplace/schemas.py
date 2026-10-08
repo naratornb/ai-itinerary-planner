@@ -18,6 +18,8 @@ class MarketplacePackageSummary(BaseModel):
     base_price_aud: int | None = None
     cover_image_url: str | None = None
     tags: list[str] = []
+    vibes: list[str] = []
+    season: str | None = None
     influencer: Influencer | None = None
     published_at: str | None = None
 
