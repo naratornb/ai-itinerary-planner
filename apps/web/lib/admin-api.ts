@@ -164,17 +164,12 @@ function isDecisionResponse(value: unknown): value is AdminDecisionResponse {
     && (approval.decision === "approved" || approval.decision === "rejected");
 }
 
-export async function fetchPendingApprovals(
+async function fetchApprovals(
   fetcher: typeof fetch,
   apiUrl: string,
   token: string,
-  query: { page: number; perPage: number; sort: ApprovalSort },
+  params: URLSearchParams,
 ): Promise<ApprovalListResponse> {
-  const params = new URLSearchParams({
-    page: String(query.page),
-    per_page: String(query.perPage),
-    sort: query.sort,
-  });
   const response = await fetcher(`${apiBase(apiUrl)}/approvals?${params}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -188,6 +183,51 @@ export async function fetchPendingApprovals(
     );
   }
   return body;
+}
+
+export async function fetchPendingApprovals(
+  fetcher: typeof fetch,
+  apiUrl: string,
+  token: string,
+  query: { page: number; perPage: number; sort: ApprovalSort },
+): Promise<ApprovalListResponse> {
+  return fetchApprovals(fetcher, apiUrl, token, new URLSearchParams({
+    page: String(query.page),
+    per_page: String(query.perPage),
+    sort: query.sort,
+  }));
+}
+
+export async function fetchReviewedApprovals(
+  fetcher: typeof fetch,
+  apiUrl: string,
+  token: string,
+  query: { page: number; perPage: number },
+): Promise<ApprovalListResponse> {
+  return fetchApprovals(fetcher, apiUrl, token, new URLSearchParams({
+    page: String(query.page),
+    per_page: String(query.perPage),
+    view: "decided",
+  }));
+}
+
+export async function deleteAdminPackage(
+  fetcher: typeof fetch,
+  apiUrl: string,
+  token: string,
+  packageId: string,
+): Promise<void> {
+  const response = await fetcher(
+    `${apiBase(apiUrl)}/approvals/${encodeURIComponent(packageId)}`,
+    { method: "DELETE", headers: { Authorization: `Bearer ${token}` } },
+  );
+  if (!response.ok) {
+    throw new AdminApiError(
+      await responseMessage(response, "Unable to delete this package."),
+      errorKind(response.status),
+      response.status,
+    );
+  }
 }
 
 export async function hasAdminApprovalAccess(

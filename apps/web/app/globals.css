@@ -440,6 +440,31 @@ body {
 }
 .admin-review-pagination > div { display: flex; gap: 8px; }
 
+/* Reviewed packages history */
+.admin-review-status {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 700;
+}
+.admin-review-delete-button { color: var(--fc-danger); }
+.admin-review-delete-button:hover:not(:disabled) {
+  border-color: var(--fc-danger);
+  color: var(--fc-danger);
+  background: var(--fc-danger-subtle);
+}
+.admin-review-history-error,
+.admin-review-history-empty {
+  margin: 0;
+  padding: 24px;
+  color: var(--fc-secondary);
+  font-size: 14px;
+}
+.admin-review-history-error { color: var(--fc-danger); }
+
 .admin-review-state {
   margin-top: 32px;
   padding: 48px 24px;

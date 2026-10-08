@@ -469,8 +469,14 @@ def delete_package(package_id, user_headers):
             return "not_found", None
         return "not_deletable", row.get("status")
 
-    # ponytail: spec says delete all associated records; catalog rows have no FK
-    # back to the package and would otherwise orphan.
+    _cleanup_orphaned_catalog_rows(row)
+    return "ok", None
+
+
+def _cleanup_orphaned_catalog_rows(row):
+    """ponytail: spec says delete all associated records; catalog rows have no
+    FK back to the package and would otherwise orphan. Shared by the creator
+    draft-delete path and the admin decided-package delete."""
     for table, key in (
         ("flights", "flight_id"),
         ("hotels", "hotel_id"),
@@ -489,7 +495,6 @@ def delete_package(package_id, user_headers):
                 # Shared seeded catalog rows are FK-RESTRICTed by other packages;
                 # the package itself is already gone, so this is best-effort.
                 pass
-    return "ok", None
 
 
 def submit_package(package_id, headers, uid, note):

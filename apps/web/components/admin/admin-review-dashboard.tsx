@@ -6,13 +6,17 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import {
   AdminApiError,
+  deleteAdminPackage,
   fetchAdminUsers,
   fetchPendingApprovals,
+  fetchReviewedApprovals,
   type AdminApprovalPackage,
   type AdminUser,
   type ApprovalListResponse,
   type ApprovalSort,
 } from "../../lib/admin-api";
+import { STATUS_LABELS } from "../../lib/creator-api";
+import { creatorPackageStatusStyle } from "../migrated-screens";
 import {
   approvalResultRange,
   creatorLabel,
@@ -50,9 +54,19 @@ export type AdminReviewDashboardViewProps = {
   now?: Date | string;
   isUpdating: boolean;
   errorMessage?: string;
+  reviewedPackages: AdminApprovalPackage[];
+  reviewedMeta: ApprovalListResponse["meta"];
+  reviewedError?: string;
+  pendingDelete: AdminApprovalPackage | null;
+  deleteError?: string;
+  isDeleting: boolean;
   onSortChange: (sort: ApprovalSort) => void;
   onPerPageChange: (perPage: number) => void;
   onPageChange: (page: number) => void;
+  onReviewedPageChange: (page: number) => void;
+  onDeleteRequest: (pkg: AdminApprovalPackage) => void;
+  onDeleteConfirm: () => void;
+  onDeleteCancel: () => void;
   onRefresh: () => void;
   onSignOut: () => void;
 };
@@ -175,6 +189,151 @@ function QueueTable({ packages, users, now }: Pick<AdminReviewDashboardViewProps
   );
 }
 
+function StatusBadge({ status }: { status: string }) {
+  const style = creatorPackageStatusStyle(status);
+  return (
+    <span className="admin-review-status" style={{ color: style.color, background: style.background }}>
+      {STATUS_LABELS[status] ?? status}
+    </span>
+  );
+}
+
+type ReviewedSectionProps = Pick<
+  AdminReviewDashboardViewProps,
+  "reviewedPackages" | "reviewedMeta" | "reviewedError" | "users" | "isDeleting"
+> & {
+  onPageChange: (page: number) => void;
+  onDeleteRequest: (pkg: AdminApprovalPackage) => void;
+};
+
+// Packages already decided (approved/rejected/live) — admins can remove stale
+// ones here; pending submissions are not deletable from the queue.
+function ReviewedSection({
+  reviewedPackages, reviewedMeta, reviewedError, users, onPageChange, onDeleteRequest,
+}: ReviewedSectionProps) {
+  const columns = (
+    <>
+      <th scope="col">Package</th>
+      <th scope="col">Destination</th>
+      <th scope="col">Status</th>
+      <th scope="col">Creator</th>
+      <th scope="col">Submitted</th>
+      <th scope="col">Price</th>
+      <th scope="col"><span className="admin-review-sr-only">Delete</span></th>
+    </>
+  );
+  const deleteButton = (pkg: AdminApprovalPackage) => (
+    <button
+      type="button"
+      className="admin-review-secondary-button admin-review-delete-button"
+      aria-label={`Delete ${pkg.title}`}
+      onClick={() => onDeleteRequest(pkg)}
+    >
+      Delete
+    </button>
+  );
+
+  return (
+    <section className="admin-review-queue" aria-labelledby="admin-review-history-title">
+      <div className="admin-review-controls">
+        <div>
+          <h2 id="admin-review-history-title">Reviewed packages</h2>
+          <p aria-live="polite">{approvalResultRange(reviewedMeta, reviewedPackages.length)}</p>
+        </div>
+      </div>
+
+      {reviewedError ? (
+        <p className="admin-review-history-error" role="alert">{reviewedError}</p>
+      ) : reviewedPackages.length === 0 ? (
+        <p className="admin-review-history-empty">No packages have been reviewed yet.</p>
+      ) : (
+        <>
+          <div className="admin-review-table-wrap">
+            <table className="admin-review-table">
+              <caption className="admin-review-sr-only">Packages already reviewed</caption>
+              <thead><tr>{columns}</tr></thead>
+              <tbody>
+                {reviewedPackages.map((pkg) => (
+                  <tr key={pkg.package_id}>
+                    <td><strong>{pkg.title}</strong></td>
+                    <td>{formatAdminDestination(pkg)}</td>
+                    <td><StatusBadge status={pkg.status} /></td>
+                    <td>{creatorLabel(pkg.creator_id, users)}</td>
+                    <td className="admin-review-submitted"><span>{formatSubmittedAt(pkg.submitted_at)}</span></td>
+                    <td className="admin-review-price">{formatAdminPrice(pkg.base_price_aud)}</td>
+                    <td className="admin-review-action-cell">{deleteButton(pkg)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <section className="admin-review-cards" aria-label="Reviewed packages for mobile">
+            {reviewedPackages.map((pkg) => (
+              <article className="admin-review-card" key={pkg.package_id}>
+                <div className="admin-review-card__heading">
+                  <h3>{pkg.title}</h3>
+                  {deleteButton(pkg)}
+                </div>
+                <dl>
+                  <div><dt>Destination</dt><dd>{formatAdminDestination(pkg)}</dd></div>
+                  <div><dt>Status</dt><dd><StatusBadge status={pkg.status} /></dd></div>
+                  <div><dt>Creator</dt><dd>{creatorLabel(pkg.creator_id, users)}</dd></div>
+                  <div><dt>Submitted</dt><dd>{formatSubmittedAt(pkg.submitted_at)}</dd></div>
+                  <div><dt>Price</dt><dd className="admin-review-price">{formatAdminPrice(pkg.base_price_aud)}</dd></div>
+                </dl>
+              </article>
+            ))}
+          </section>
+
+          <nav className="admin-review-pagination" aria-label="Reviewed packages pagination">
+            <span>Page {reviewedMeta.page} of {Math.max(1, reviewedMeta.total_pages)}</span>
+            <div>
+              <button className="admin-review-secondary-button" type="button" disabled={reviewedMeta.page <= 1} onClick={() => onPageChange(reviewedMeta.page - 1)}>Previous</button>
+              <button className="admin-review-secondary-button" type="button" disabled={reviewedMeta.page >= reviewedMeta.total_pages} onClick={() => onPageChange(reviewedMeta.page + 1)}>Next</button>
+            </div>
+          </nav>
+        </>
+      )}
+    </section>
+  );
+}
+
+function DeletePackageDialog({
+  pkg, error, isDeleting, onConfirm, onCancel,
+}: {
+  pkg: AdminApprovalPackage;
+  error?: string;
+  isDeleting: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="delete-day-backdrop" role="presentation" onMouseDown={() => !isDeleting && onCancel()}>
+      <section
+        className="delete-day-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="admin-delete-title"
+        aria-describedby="admin-delete-description"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <h2 id="admin-delete-title">Delete &ldquo;{pkg.title}&rdquo;?</h2>
+        <p id="admin-delete-description">
+          This {STATUS_LABELS[pkg.status]?.toLowerCase() ?? pkg.status} package will be permanently deleted, along with its itinerary and photos. This cannot be undone.
+        </p>
+        {error && <p role="alert" style={{ color: "var(--fc-danger)", margin: "0 0 12px", fontSize: 14 }}>{error}</p>}
+        <div className="delete-day-actions">
+          <button className="quiet-button" autoFocus disabled={isDeleting} onClick={onCancel}>Cancel</button>
+          <button className="confirm-delete-button" disabled={isDeleting} onClick={onConfirm}>
+            {isDeleting ? "Deleting…" : "Delete package"}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function QueueCards({ packages, users, now }: Pick<AdminReviewDashboardViewProps, "packages" | "users" | "now">) {
   return (
     <section className="admin-review-cards" aria-label="Pending review packages for mobile">
@@ -246,9 +405,19 @@ export function AdminReviewDashboardView(props: AdminReviewDashboardViewProps): 
     now,
     isUpdating,
     errorMessage,
+    reviewedPackages,
+    reviewedMeta,
+    reviewedError,
+    pendingDelete,
+    deleteError,
+    isDeleting,
     onSortChange,
     onPerPageChange,
     onPageChange,
+    onReviewedPageChange,
+    onDeleteRequest,
+    onDeleteConfirm,
+    onDeleteCancel,
     onRefresh,
     onSignOut,
   } = props;
@@ -373,9 +542,29 @@ export function AdminReviewDashboardView(props: AdminReviewDashboardViewProps): 
                 </nav>
               </section>
             )}
+
+            <ReviewedSection
+              reviewedPackages={reviewedPackages}
+              reviewedMeta={reviewedMeta}
+              reviewedError={reviewedError}
+              users={users}
+              isDeleting={isDeleting}
+              onPageChange={onReviewedPageChange}
+              onDeleteRequest={onDeleteRequest}
+            />
           </>
         ) : null}
       </main>
+
+      {pendingDelete ? (
+        <DeletePackageDialog
+          pkg={pendingDelete}
+          error={deleteError}
+          isDeleting={isDeleting}
+          onConfirm={onDeleteConfirm}
+          onCancel={onDeleteCancel}
+        />
+      ) : null}
     </div>
   );
 }
@@ -395,6 +584,14 @@ export default function AdminReviewDashboard() {
   const [perPage, setPerPage] = useState(DEFAULT_PAGE_SIZE);
   const [page, setPage] = useState(1);
   const [refreshKey, setRefreshKey] = useState(0);
+  const reviewedRequest = useRef(0);
+  const [reviewedPackages, setReviewedPackages] = useState<AdminApprovalPackage[]>([]);
+  const [reviewedMeta, setReviewedMeta] = useState<ApprovalListResponse["meta"]>(EMPTY_META);
+  const [reviewedPage, setReviewedPage] = useState(1);
+  const [reviewedError, setReviewedError] = useState("");
+  const [pendingDelete, setPendingDelete] = useState<AdminApprovalPackage | null>(null);
+  const [deleteError, setDeleteError] = useState("");
+  const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
     const { data } = supabase.auth.onAuthStateChange((_event, session) => {
@@ -474,6 +671,62 @@ export default function AdminReviewDashboard() {
     };
   }, [page, perPage, refreshKey, router, sort]);
 
+  // The reviewed list loads on its own track — a failure there must not take
+  // the pending queue down with it.
+  useEffect(() => {
+    let cancelled = false;
+    const sequence = ++reviewedRequest.current;
+
+    async function loadReviewed() {
+      const { data } = await supabase.auth.getSession();
+      const token = data.session?.access_token;
+      if (!token) return;
+      try {
+        const response = await fetchReviewedApprovals(fetch, API_URL, token, {
+          page: reviewedPage,
+          perPage: DEFAULT_PAGE_SIZE,
+        });
+        if (cancelled || !requestSequenceIsCurrent(sequence, reviewedRequest.current)) return;
+        const corrected = nextDashboardPage(reviewedPage, response);
+        if (corrected !== reviewedPage) {
+          setReviewedPage(corrected);
+          return;
+        }
+        setReviewedPackages(response.data);
+        setReviewedMeta(response.meta);
+        setReviewedError("");
+      } catch (error) {
+        if (cancelled || !requestSequenceIsCurrent(sequence, reviewedRequest.current)) return;
+        setReviewedError(error instanceof Error ? error.message : "Unable to load reviewed packages.");
+      }
+    }
+
+    void loadReviewed();
+    return () => {
+      cancelled = true;
+    };
+  }, [reviewedPage, refreshKey]);
+
+  const handleDeleteConfirm = async () => {
+    if (!pendingDelete || isDeleting) return;
+    setIsDeleting(true);
+    setDeleteError("");
+    try {
+      const { data } = await supabase.auth.getSession();
+      const token = data.session?.access_token;
+      if (!token) throw new AdminApiError("Your session expired. Please sign in again.", "unauthenticated", 401);
+      await deleteAdminPackage(fetch, API_URL, token, pendingDelete.package_id);
+      setPendingDelete(null);
+      // Refetch the page being viewed — it may have emptied or shifted.
+      setReviewedPage((current) => current);
+      setRefreshKey((current) => current + 1);
+    } catch (error) {
+      setDeleteError(error instanceof Error ? error.message : "Unable to delete this package.");
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   const handleSignOut = async () => {
     await supabase.auth.signOut();
     router.replace(APP_ROUTES.login);
@@ -491,6 +744,16 @@ export default function AdminReviewDashboard() {
       now={loadedAt ?? undefined}
       isUpdating={isUpdating}
       errorMessage={errorMessage}
+      reviewedPackages={reviewedPackages}
+      reviewedMeta={reviewedMeta}
+      reviewedError={reviewedError || undefined}
+      pendingDelete={pendingDelete}
+      deleteError={deleteError || undefined}
+      isDeleting={isDeleting}
+      onReviewedPageChange={(nextPage) => setReviewedPage(nextPage)}
+      onDeleteRequest={(pkg) => { setDeleteError(""); setPendingDelete(pkg); }}
+      onDeleteConfirm={() => { void handleDeleteConfirm(); }}
+      onDeleteCancel={() => { if (!isDeleting) setPendingDelete(null); }}
       onSortChange={(nextSort) => {
         setIsUpdating(true);
         setErrorMessage("");
