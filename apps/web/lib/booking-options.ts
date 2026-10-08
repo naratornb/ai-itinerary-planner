@@ -15,6 +15,9 @@ export type CatalogHotel = {
   star_rating: number | null;
   room_type: string | null;
   city: string | null;
+  country?: string | null;
+  address?: string | null;
+  amenities?: string | null;
   price_per_night_aud: number | null;
 };
 
@@ -23,6 +26,61 @@ export type CatalogOptions = {
   returnLeg: CatalogFlight[];
   hotels: CatalogHotel[];
 };
+
+// The flight legs attached to a package — enough fields to split them into
+// the outbound leg and (when one exists) a genuine return leg.
+export type PackageFlight = {
+  day_number?: number | null;
+  departure_datetime?: string | null;
+  sequence_order?: number | null;
+  [key: string]: unknown;
+};
+
+// A "return" leg must depart on a LATER day than the outbound — a second leg
+// on the same day is a connection, not a return, and must not show a return
+// selector or charge a return delta.
+export function pickFlightLegs<T extends PackageFlight>(flights: T[] | null | undefined): { outbound: T | null; returnLeg: T | null } {
+  const legs = [...(flights ?? [])].sort(
+    // Legs without a day number sort last — they can't be the outbound anyway.
+    (a, b) => (a.day_number ?? Number.MAX_SAFE_INTEGER) - (b.day_number ?? Number.MAX_SAFE_INTEGER) || (a.sequence_order ?? 0) - (b.sequence_order ?? 0),
+  );
+  const outbound = legs.find((f) => f.day_number === 1) ?? legs[0] ?? null;
+  const last = legs[legs.length - 1] ?? null;
+  if (!outbound || !last || last === outbound) return { outbound, returnLeg: null };
+  const outDate = outbound.departure_datetime?.slice(0, 10);
+  const lastDate = last.departure_datetime?.slice(0, 10);
+  const isReturn = outDate && lastDate ? lastDate > outDate : (last.day_number ?? 0) > (outbound.day_number ?? 0);
+  return { outbound, returnLeg: isReturn ? last : null };
+}
+
+export function dedupeCatalogHotels(hotels: CatalogHotel[]): CatalogHotel[] {
+  const seen = new Set<string>();
+  return hotels.filter((hotel) => {
+    const key = `${hotel.hotel_name ?? ""}|${hotel.room_type ?? ""}|${hotel.price_per_night_aud ?? ""}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+export function visibleCatalogHotels(hotels: CatalogHotel[], expanded: boolean, selectedId?: string): CatalogHotel[] {
+  if (expanded || hotels.length <= 6) return hotels;
+  const visible = hotels.slice(0, 6);
+  const selected = selectedId ? hotels.find((hotel) => hotel.hotel_id === selectedId) : null;
+  return selected && !visible.includes(selected) ? [...visible.slice(0, 5), selected] : visible;
+}
+
+export function bookingOptionId(
+  catalogId: string | null | undefined,
+  componentId: string | null | undefined,
+  fallback: string,
+): string {
+  return catalogId || componentId || fallback;
+}
+
+export function estimateHotelStayTotal(nightlyPrice: number | null, nights: number): number | null {
+  return nightlyPrice == null ? null : nightlyPrice * nights;
+}
 
 /** Catalog flights departing on `date` (YYYY-MM-DD). */
 export function flightsOn(list: CatalogFlight[] | null | undefined, date: string | null): CatalogFlight[] {
@@ -35,6 +93,11 @@ export function flightsOn(list: CatalogFlight[] | null | undefined, date: string
 // pattern matches either.
 export function iataPattern(value: string): string {
   return `%(${(value.match(/\(([A-Z]{3})\)/i)?.[1] ?? value).toUpperCase()})`;
+}
+
+/** The booking card's default traveler count — 2 unless the package caps the group lower. */
+export function defaultTravelers(maxGroupSize: number | null | undefined): number {
+  return Math.max(1, Math.min(2, maxGroupSize ?? 8));
 }
 
 /** The date `offset` days after `departure` (YYYY-MM-DD), or null. */
@@ -58,4 +121,23 @@ export function estimateBookingTotal(opts: {
 }): number | null {
   if (opts.basePrice == null) return null;
   return opts.basePrice * opts.travelers + opts.flightDelta * opts.travelers + opts.hotelNightlyDelta * opts.nights;
+}
+
+export function canRequestBooking(summary: {
+  departure: string;
+  estimateTotal: number | null;
+  outboundRequired: boolean;
+  outboundId: string;
+  returnRequired: boolean;
+  returnId: string;
+  hotelRequired: boolean;
+  hotelId: string;
+}): boolean {
+  return Boolean(
+    summary.departure
+    && summary.estimateTotal !== null
+    && (!summary.outboundRequired || summary.outboundId)
+    && (!summary.returnRequired || summary.returnId)
+    && (!summary.hotelRequired || summary.hotelId),
+  );
 }

@@ -48,9 +48,9 @@ export default function RegisterPage() {
 
   return (
     <AuthShell
-      icon="database"
+      icon="flight_takeoff"
       title="Create an account"
-      subtitle={<>Enter your details to get started with <span className="font-semibold text-text-primary">Supabase Admin</span>.</>}
+      subtitle={<>Enter your details to get started with <span className="font-semibold text-text-primary">Influencer Travel Marketplace</span>.</>}
     >
       <AnimatePresence mode="wait">
         {formState === "success" ? (
