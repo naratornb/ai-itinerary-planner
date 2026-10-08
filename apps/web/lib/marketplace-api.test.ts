@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   fetchMarketplacePackage,
   fetchMarketplacePackages,
+  reusableSearchResults,
   searchMarketplacePackages,
   uniqueDestinationSuggestions,
 } from "./marketplace-api";
@@ -57,6 +58,15 @@ test("fetchMarketplacePackage requests a package by id", async () => {
 
   assert.equal(requestedUrl, "http://localhost:8000/marketplace/packages/pkg%2Fa");
   assert.equal(result.package_id, "pkg-1");
+});
+
+test("reusableSearchResults only serves the results of the query that produced them", () => {
+  // Regression: submitting a search before the debounce fired reused results
+  // fetched for an earlier query.
+  const results = [packageSummary];
+  assert.deepEqual(reusableSearchResults("tokyo", "tokyo", results), results);
+  assert.equal(reusableSearchResults("osaka", "tokyo", results), null);
+  assert.equal(reusableSearchResults("tokyo", "tokyo", []), null);
 });
 
 test("uniqueDestinationSuggestions returns deduplicated countries and cities", () => {
