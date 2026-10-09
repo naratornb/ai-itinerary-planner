@@ -2297,7 +2297,6 @@ export default function ItineraryEditor({
     { label: "Flights have enough transfer time after landing", passed: hardErrors.every((e) => e.error_code !== "SHORT_TRANSFER" && e.error_code !== "ACTIVITY_BEFORE_LANDING") },
     { label: "No scheduling conflicts between activities", passed: hardErrors.every((e) => e.error_code !== "TIME_OVERLAP") },
     { label: "Enough travel time between stops", passed: hardErrors.every((e) => e.error_code !== "SHORT_ACTIVITY_GAP" && e.error_code !== "SHORT_TRAVEL_TIME") },
-    { label: "Daily schedule leaves room for travel between stops", passed: hardErrors.every((e) => e.error_code !== "SCHEDULE_TOO_PACKED") },
     { label: "Package has at least one photo", passed: hardErrors.every((e) => e.error_code !== "MISSING_PHOTOS") },
     { label: "No banned competitor mentions", passed: hardErrors.every((e) => e.rule !== "BrandSafety") },
   ];

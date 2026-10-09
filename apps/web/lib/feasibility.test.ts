@@ -438,14 +438,18 @@ test("a single full-day tour over 10 hours is allowed", () => {
   assert.equal(packed.length, 0);
 });
 
-test("several activities adding up to more than 10 hours are still blocked", () => {
+test("several activities adding up to more than 10 hours are a suggestion, not a block", () => {
   const days = [
     day(1, [activity("A")]),
     day(2, [activity("Tour", { duration_hours: 8 }), activity("Show", { start_time: "19:00", duration_hours: 3 })]),
     day(3, [activity("B")]),
   ];
-  const packed = runCodeChecks(days).hard.filter((i) => i.error_code === "SCHEDULE_TOO_PACKED");
+  const { hard, soft } = runCodeChecks(days);
+  assert.ok(hard.every((i) => i.error_code !== "SCHEDULE_TOO_PACKED"), "a long day must not block submission");
+  const packed = soft.filter((i) => i.error_code === "SCHEDULE_TOO_PACKED");
   assert.equal(packed.length, 1);
+  assert.equal(packed[0].severity, "warning");
+  assert.match(packed[0].message, /Day 2 has 11\.0 hours of activities/);
 });
 
 test("the AI is told places in the same city are never too far apart, and how to word a travel-time issue", () => {

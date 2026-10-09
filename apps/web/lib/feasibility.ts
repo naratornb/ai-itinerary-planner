@@ -243,7 +243,9 @@ export function runCodeChecks(days: any[], arrival?: ArrivalLanding | null): { h
       }
     }
 
-    // ── R1 – Travel Time (approximate): total hours > 10 leaves no travel buffer
+    // ── R1 – Travel Time (approximate): total hours > 10 leaves little travel buffer.
+    //     A suggestion, not a block: a long day can be intentional, and transfer gaps
+    //     and travel time between stops are checked on their own (R22, R12).
     const totalHours = acts.reduce(
       (sum: number, a: any) => sum + (Number(a.duration_hours) || 1),
       0
@@ -251,15 +253,15 @@ export function runCodeChecks(days: any[], arrival?: ArrivalLanding | null): { h
     // A day that is one single full-day tour (Mt Fuji, safari, reef trip) is allowed
     // past 10 hours — the limit is about cramming several things in.
     if (totalHours > 10 && acts.length > 1) {
-      hard.push({
+      soft.push({
         error_code: "SCHEDULE_TOO_PACKED",
         rule: "R1 – Travel Time",
-        severity: "error",
+        severity: "warning",
         field: dayLabel,
         field_value: `${totalHours.toFixed(1)} hrs`,
         affected_item: dayLabel,
-        message: `${dayLabel} has ${totalHours.toFixed(1)} hours of activities with no time left for travel between stops.`,
-        action: "Remove or shorten activities so the day totals ≤ 10 hours of scheduled time.",
+        message: `${dayLabel} has ${totalHours.toFixed(1)} hours of activities, which leaves little time for travel between stops.`,
+        action: "Consider removing or shortening an activity so the day totals 10 hours or less.",
       });
     } else if (totalHours > TRAVEL_DAY_MAX_HOURS && (day.day_number === 1 || day.day_number === days.length)) {
       // ── R20 – Travel Day Load: replaces an AI rule that capped first/last days at
