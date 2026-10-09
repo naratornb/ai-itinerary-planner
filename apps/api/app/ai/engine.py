@@ -57,8 +57,17 @@ from .llm_provider import call_llm as _llm_call
 # CONFIGURATION
 # ============================================================================
 
-MAX_LLM_ATTEMPTS = 4
-MAX_JSON_ATTEMPTS = 4
+# Keep retries inside the browser/Next.js request window.  The web proxy
+# gives /api/ai/recommend roughly 120 seconds; leaving headroom for
+# inventory loading, validation, and serialization prevents a late 504.
+MAX_LLM_ATTEMPTS = 2
+MAX_JSON_ATTEMPTS = 2
+LLM_REQUEST_BUDGET_SECONDS = float(
+    os.environ.get("ITINERARY_REQUEST_BUDGET_SECONDS", "100")
+)
+LLM_MIN_RETRY_SECONDS = float(
+    os.environ.get("ITINERARY_MIN_RETRY_SECONDS", "20")
+)
 
 MAX_FLIGHTS = 5
 MAX_HOTELS = 4
@@ -348,6 +357,238 @@ def normalize_cabin(value) -> str:
     }
 
     return mapping.get(text, str(value).strip())
+
+
+
+# ============================================================================
+# AIRPORT TIMEZONES AND GROUND TRANSFER
+# ============================================================================
+#
+# Flight timestamps in Supabase are true UTC (verified against real elapsed
+# durations). The model reasons in whatever it is shown, so a UTC arrival of
+# 18:00 was read as an evening arrival when it is 03:00 next morning in
+# Tokyo - which is how day 1 ended up with a sunset cruise booked before the
+# traveller had landed.
+#
+# Local times are computed here so the model never does timezone arithmetic.
+
+AIRPORT_TIMEZONES = {
+    "SYD": "Australia/Sydney", "MEL": "Australia/Melbourne",
+    "BNE": "Australia/Brisbane", "PER": "Australia/Perth",
+    "CNS": "Australia/Brisbane", "AKL": "Pacific/Auckland",
+    "ZQN": "Pacific/Auckland", "NRT": "Asia/Tokyo", "HND": "Asia/Tokyo",
+    "KIX": "Asia/Tokyo", "ITM": "Asia/Tokyo", "UKY": "Asia/Tokyo",
+    "CTS": "Asia/Tokyo", "ICN": "Asia/Seoul", "GMP": "Asia/Seoul",
+    "PUS": "Asia/Seoul", "TPE": "Asia/Taipei", "HKG": "Asia/Hong_Kong",
+    "PVG": "Asia/Shanghai", "SIN": "Asia/Singapore", "BKK": "Asia/Bangkok",
+    "DMK": "Asia/Bangkok", "CNX": "Asia/Bangkok", "HKT": "Asia/Bangkok",
+    "KUL": "Asia/Kuala_Lumpur", "DPS": "Asia/Makassar", "CGK": "Asia/Jakarta",
+    "MNL": "Asia/Manila", "HAN": "Asia/Ho_Chi_Minh", "SGN": "Asia/Ho_Chi_Minh",
+    "DAD": "Asia/Ho_Chi_Minh", "DEL": "Asia/Kolkata", "BOM": "Asia/Kolkata",
+    "CMB": "Asia/Colombo", "DXB": "Asia/Dubai", "DOH": "Asia/Qatar",
+    "CAI": "Africa/Cairo", "RAK": "Africa/Casablanca",
+    "CPT": "Africa/Johannesburg", "NBO": "Africa/Nairobi",
+    "LHR": "Europe/London", "LGW": "Europe/London", "STN": "Europe/London",
+    "LTN": "Europe/London", "EDI": "Europe/London", "CDG": "Europe/Paris",
+    "ORY": "Europe/Paris", "NCE": "Europe/Paris", "AMS": "Europe/Amsterdam",
+    "BER": "Europe/Berlin", "VIE": "Europe/Vienna", "PRG": "Europe/Prague",
+    "KRK": "Europe/Warsaw", "ZRH": "Europe/Zurich", "FCO": "Europe/Rome",
+    "CIA": "Europe/Rome", "FLR": "Europe/Rome", "VCE": "Europe/Rome",
+    "BCN": "Europe/Madrid", "MAD": "Europe/Madrid", "VLC": "Europe/Madrid",
+    "LIS": "Europe/Lisbon", "OPO": "Europe/Lisbon", "ATH": "Europe/Athens",
+    "JTR": "Europe/Athens", "IST": "Europe/Istanbul", "SAW": "Europe/Istanbul",
+    "KEF": "Atlantic/Reykjavik", "JFK": "America/New_York",
+    "EWR": "America/New_York", "LGA": "America/New_York",
+    "YYZ": "America/Toronto", "LAX": "America/Los_Angeles",
+    "SFO": "America/Los_Angeles", "YVR": "America/Vancouver",
+    "HNL": "Pacific/Honolulu", "CUN": "America/Cancun",
+    "MEX": "America/Mexico_City", "EZE": "America/Argentina/Buenos_Aires",
+    "GIG": "America/Sao_Paulo", "CUZ": "America/Lima", "MDE": "America/Bogota",
+}
+
+# Fallbacks, used only when the model gives no usable estimate. The model is
+# asked to estimate the real airport-to-city time, because a flat constant
+# treats Osaka-Kyoto (about 75 minutes) the same as a genuine four-hour haul.
+DIRECT_TRANSFER_HOURS = 2.0
+GATEWAY_TRANSFER_HOURS = 4.0
+
+# Bounds on the model's estimate. Anything outside this is discarded in
+# favour of the fallback: a transfer of four minutes or eleven hours is a
+# mistake, not a measurement, and it feeds a hard scheduling decision.
+MIN_TRANSFER_MINUTES = 20
+MAX_TRANSFER_MINUTES = 420
+
+# A gateway is only useful if the traveller can actually get from it to the
+# destination. Beyond this, flying there and driving is not a trip, it is a
+# second holiday: Paris was once offered as the gateway for Vienna, roughly
+# 1000 km away. Measured one way, overland, excluding the flight.
+MAX_GATEWAY_OVERLAND_HOURS = 6.0
+
+# Hotel to airport before the flight home: check-in, security, the ride out.
+# This is the R21 figure the feasibility check applies, so the two agree.
+DEPARTURE_TRANSFER_HOURS = 3.0
+
+# R2. The least time that can pass between landing and the first activity,
+# whatever the model estimates for the transfer: an hour to clear a domestic
+# arrival, an hour and a half with immigration and baggage on an
+# international one. Applied as a floor, not added on top, because the
+# transfer estimate is already door-to-door.
+MIN_ARRIVAL_BUFFER_DOMESTIC_HOURS = 1.0
+MIN_ARRIVAL_BUFFER_INTERNATIONAL_HOURS = 1.5
+
+# Nothing worth starting after this hour.
+LATEST_USEFUL_START = 18.0
+
+# Bounds on when an activity may run on a normal day in the destination.
+# The model picks start times freely and has no notion of dusk, so it will
+# happily open a seven-hour mountain hike at 15:00 and finish it at 22:12.
+DAY_START_HOUR = 9.0
+DAY_END_HOUR = 22.0
+
+# An activity at least this long is a daytime undertaking and has to end
+# while it is still light, rather than merely before midnight. Short evening
+# items - a night market, a rooftop bar - are deliberately left alone.
+LONG_ACTIVITY_HOURS = 4.0
+DAYLIGHT_END_HOUR = 18.0
+
+# Gap between consecutive stops, so a re-timed activity does not land on top
+# of the one before it. Also the R22 floor the prompt states.
+ACTIVITY_GAP_HOURS = 0.5
+
+# A day whose first activity starts at or after this hour, with nothing
+# before it, is treated as an unexplained late start.
+LATE_START_HOUR = 12.0
+
+# Experiences that genuinely belong after dark. A late start is legitimate
+# for these, so they are left where the model put them and the reason is
+# written into the day description instead.
+EVENING_ACTIVITY_WORDS = (
+    "night",
+    "evening",
+    "sunset",
+    "dusk",
+    "after dark",
+    "nightlife",
+    "bar crawl",
+    "dinner",
+    "stargaz",
+)
+
+
+def _iata_of(value) -> str:
+    """Pull the three-letter code out of "Tokyo (NRT)" or a bare "NRT"."""
+
+    if value is None:
+        return ""
+
+    text = str(value).strip()
+    match = re.search(r"\(([A-Za-z]{3})\)\s*$", text)
+
+    if match:
+        return match.group(1).upper()
+
+    if re.fullmatch(r"[A-Za-z]{3}", text):
+        return text.upper()
+
+    codes = AIRPORT_CODES.get(normalize_city(text))
+
+    return codes[0] if codes else ""
+
+
+def _local_time(utc_value, airport) -> str:
+    """
+    A UTC timestamp rendered in the airport's local time, "YYYY-MM-DD HH:MM".
+
+    Returns "" for an unknown airport rather than guessing, so a gap shows as
+    nothing instead of a wrong time.
+    """
+
+    zone_name = AIRPORT_TIMEZONES.get(_iata_of(airport))
+
+    if not zone_name or utc_value in (None, ""):
+        return ""
+
+    try:
+        from zoneinfo import ZoneInfo
+
+        stamp = pd.to_datetime(utc_value, utc=True, errors="coerce")
+
+        if pd.isna(stamp):
+            return ""
+
+        return stamp.tz_convert(ZoneInfo(zone_name)).strftime("%Y-%m-%d %H:%M")
+
+    except Exception:                                   # noqa: BLE001
+        return ""
+
+
+def _transfer_hours(airport, destination_city: str) -> float:
+    """
+    How long from the plane door to the hotel.
+
+    Two hours when the flight lands in the destination city itself, four when
+    it lands somewhere else and the traveller continues overland.
+    """
+
+    landed_in = normalize_city(airport)
+
+    return (
+        DIRECT_TRANSFER_HOURS
+        if landed_in and landed_in == normalize_city(destination_city)
+        else GATEWAY_TRANSFER_HOURS
+    )
+
+
+def _add_local_times(records: list, destination_city: str = "") -> list:
+    """Annotate flight records with local times and the transfer allowance."""
+
+    for record in records:
+
+        record["departure_local"] = _local_time(
+            record.get("departure_datetime"),
+            record.get("origin"),
+        )
+
+        record["arrival_local"] = _local_time(
+            record.get("arrival_datetime"),
+            record.get("destination"),
+        )
+
+        if destination_city:
+
+            hours = _transfer_hours(
+                record.get("destination"),
+                destination_city,
+            )
+
+            record["transfer_hours_to_destination"] = hours
+
+            record["is_direct_to_destination"] = (
+                hours == DIRECT_TRANSFER_HOURS
+            )
+
+    return records
+
+
+def _clock_to_hours(value) -> float:
+    """'14:30' -> 14.5. Returns -1.0 when unparseable."""
+
+    match = re.match(r"^\s*(\d{1,2}):(\d{2})", str(value or ""))
+
+    return -1.0 if not match else int(match.group(1)) + int(match.group(2)) / 60.0
+
+
+def _hours_to_clock(value: float) -> str:
+    """14.5 -> '14:30', clamped to a valid 24-hour time."""
+
+    value = max(0.0, min(23.98, value))
+    hours = int(value)
+    minutes = int(round((value - hours) * 60))
+
+    if minutes >= 60:
+        hours, minutes = hours + 1, 0
+
+    return f"{hours:02d}:{minutes:02d}"
 
 
 # ============================================================================
@@ -640,6 +881,10 @@ def _load_inventory():
     _ensure_column(activities, "best_season", "")
     _ensure_column(activities, "address", "")
     _ensure_column(activities, "availability", "Year-round")
+    # DEV-174 falls back to this when the model leaves a note blank. Declared
+    # here so a table without the column degrades to a warning rather than a
+    # KeyError.
+    _ensure_column(activities, "description", "")
 
     if "city" in activities.columns:
         activities["city_normalized"] = activities["city"].apply(
@@ -824,6 +1069,8 @@ def _select_best_flights(
     destination: str,
     cabin_preference: list,
     group_size: int,
+    not_before=None,
+    not_after=None,
 ) -> pd.DataFrame:
 
     mask = _route_matches(
@@ -837,6 +1084,47 @@ def _select_best_flights(
     if candidates.empty:
         return candidates
 
+    # ------------------------------------------------------------
+    # Date window
+    #
+    # Without this the cheapest five flights on a route win regardless of
+    # date, so the return leg could depart three hours after the outbound,
+    # or months before it. Falls back to the unfiltered set rather than
+    # returning nothing, so a thin route still produces a draft.
+    # ------------------------------------------------------------
+
+    if (
+        (not_before is not None or not_after is not None)
+        and "departure_datetime" in candidates.columns
+    ):
+
+        def _utc(value):
+            stamp = pd.Timestamp(value)
+
+            return (
+                stamp.tz_localize("UTC")
+                if stamp.tzinfo is None
+                else stamp.tz_convert("UTC")
+            )
+
+        departures = pd.to_datetime(
+            candidates["departure_datetime"],
+            errors="coerce",
+            utc=True,
+        )
+
+        window = pd.Series(True, index=candidates.index)
+
+        if not_before is not None:
+            window &= departures >= _utc(not_before)
+
+        if not_after is not None:
+            window &= departures <= _utc(not_after)
+
+        candidates = candidates[window]
+        if candidates.empty:
+            return candidates
+        
     # Seats
     if "seats_available" in candidates.columns:
         candidates = candidates[
@@ -887,6 +1175,341 @@ def _select_best_flights(
 # STEP 2 — QUERY INVENTORY
 # ============================================================================
 
+
+# ============================================================================
+# GATEWAY SELECTION
+# ============================================================================
+#
+# Only 43 of the 68 destination cities appear in the flights table at all.
+# Asking for a direct flight to Kyoto returns nothing, so the itinerary came
+# back with no flights and the editor had nothing to show.
+#
+# Real travel does not work that way: you fly to the nearest airport with
+# service and continue overland. The choice of which airport is geography,
+# which the model knows and the database does not, so it is asked - but the
+# answer is checked against cities that actually have flights, so it cannot
+# invent one.
+
+def _cities_reachable_from(flights_df, origin: str) -> list:
+    """Destination cities with at least one flight from the origin."""
+
+    served = flights_df[
+        flights_df["origin_city_normalized"].eq(normalize_city(origin))
+    ]["destination_city_normalized"]
+
+    return sorted({c for c in served.dropna().unique() if c})
+
+
+def _cities_flying_to(flights_df, target: str) -> list:
+    """Origin cities with at least one flight to the target."""
+
+    served = flights_df[
+        flights_df["destination_city_normalized"].eq(normalize_city(target))
+    ]["origin_city_normalized"]
+
+    return sorted({c for c in served.dropna().unique() if c})
+
+
+def _gateway_overland_hours(
+    gateway: str,
+    destination: str,
+    country: str,
+    reverse: bool = False,
+    verbose: bool = False,
+) -> float:
+    """
+    How long the traveller spends on the ground between the gateway airport
+    and the destination, one way.
+
+    A narrow factual question - "how far apart are these two cities by the
+    usual route" - rather than a judgement, which is why it is asked
+    separately from the choice of city. Bounded the same way the airport
+    transfer estimate is: an answer outside the bounds is a mistake, not a
+    measurement, and this one decides whether the gateway is used at all.
+    """
+
+    if not gateway or normalize_city(gateway) == normalize_city(destination):
+        return 0.0
+
+    try:
+        answer = _llm_call(
+            "You are a travel routing assistant. Answer with a number of "
+            "hours and nothing else, for example: 2.5",
+            (
+                f"How long does the overland journey between {gateway} and "
+                f"{destination}"
+                f"{', ' + country if country else ''} usually take, one way, "
+                "by the means most travellers use - train, coach or car?\n\n"
+                "Count only the ground journey. Do not include the flight, "
+                "check-in or airport time.\n\n"
+                "Reply with the number of hours only."
+            ),
+            max_tokens=200,
+        ).text
+
+        match = re.search(r"\d{1,2}(?:\.\d{1,2})?", str(answer or ""))
+
+        if not match:
+            raise ValueError(f"no number in {answer!r}")
+
+        hours = float(match.group(0))
+
+        # Only a nonsensical figure falls back. A large but real one - eleven
+        # hours from Paris to Vienna - is the answer, and _pick_gateway is
+        # what decides it is too far. Treating it as unreadable here would
+        # swap it for the permissive default and let the gateway through.
+        if not 0 < hours <= 24:
+            raise ValueError(f"{hours}h is not a ground journey")
+
+        if verbose:
+            print(f"      gateway: {gateway} is about {hours:g}h from "
+                  f"{destination}")
+
+        return hours
+
+    except Exception as exc:                                # noqa: BLE001
+        if verbose:
+            print(
+                f"      gateway: could not estimate {gateway} to "
+                f"{destination} ({exc}); assuming "
+                f"{GATEWAY_TRANSFER_HOURS:g}h"
+            )
+
+        return GATEWAY_TRANSFER_HOURS
+
+
+def _choose_gateway_city(
+    flights_df,
+    origin: str,
+    destination: str,
+    country: str,
+    verbose: bool = False,
+    reverse: bool = False,
+    target_origin: str = "",
+) -> str:
+    """
+    The best airport city to reach `destination` when it has no direct
+    service, or "" if nothing sensible is available.
+
+    Tries, in order:
+      1. the same-country city with the most flights - a fact in the data
+      2. the model's pick, accepted only if it names a city that really has
+         flights, for the cases where the country offers nothing
+      3. nothing, which leaves the itinerary flightless as before
+
+    Only called when a flight search has already come back empty. A route
+    that exists is always used as-is.
+    """
+
+    # reverse=True asks the mirrored question: not "where can I fly from
+    # Sydney", but "which nearby city can fly me back to Sydney". Needed when
+    # the outbound was fine and only the return leg is missing.
+    candidates = (
+        _cities_flying_to(flights_df, target_origin or origin)
+        if reverse
+        else _cities_reachable_from(flights_df, origin)
+    )
+
+    if not candidates:
+        return ""
+
+    # ---- computed first so it is available to every path below
+    same_country = []
+
+    if country:
+        if reverse:
+            in_country = flights_df[
+                flights_df["origin_country"]
+                .astype(str)
+                .str.strip()
+                .str.lower()
+                .eq(str(country).strip().lower())
+                & flights_df["destination_city_normalized"].eq(
+                    normalize_city(target_origin or origin)
+                )
+            ]
+
+            same_country = (
+                in_country["origin_city_normalized"]
+                .value_counts()
+                .index.tolist()
+            )
+
+        else:
+            in_country = flights_df[
+                flights_df["destination_country"]
+                .astype(str)
+                .str.strip()
+                .str.lower()
+                .eq(str(country).strip().lower())
+                & flights_df["origin_city_normalized"].eq(
+                    normalize_city(origin)
+                )
+            ]
+
+            same_country = (
+                in_country["destination_city_normalized"]
+                .value_counts()
+                .index.tolist()
+            )
+
+    fallback = next(
+        (c for c in same_country if c and c != normalize_city(destination)),
+        "",
+    )
+
+    # ---- 1. same country wins outright when one is available.
+    #
+    # Being in the same country is a fact in the data; "which airport is
+    # nearest" is a judgement. Asking the model first let it answer Santorini
+    # for Florence when Rome was sitting right there. The model is now only
+    # consulted when the country offers nothing.
+    if fallback:
+
+        if verbose:
+            print(f"      gateway: {fallback} (same country as {destination})")
+
+        return fallback
+
+    # ---- 2. no same-country option, so ask the model
+    try:
+        answer = _llm_call(
+            "You are a travel routing assistant. Answer with one city name "
+            "from the supplied list and nothing else. No punctuation, no "
+            "explanation.",
+            (
+                f"A traveller is in {destination}"
+                f"{', ' + country if country else ''} and needs to fly to "
+                f"{target_origin}.\n"
+                f"There is no service from {destination} itself.\n\n"
+                "Which ONE of these cities is the CLOSEST practical airport "
+                "to travel to overland and fly out from?\n\n"
+                "The traveller has to make that ground journey on top of the "
+                f"flight, so a city within a few hours of {destination} is "
+                "worth far more than a larger airport far away. Do not "
+                "suggest one that would take most of a day to reach.\n\n"
+                if reverse else
+                f"A traveller wants to reach {destination}"
+                f"{', ' + country if country else ''}.\n"
+                f"There is no airport service to {destination} itself.\n\n"
+                "Which ONE of these cities is the CLOSEST practical airport "
+                "to fly into and continue overland from?\n\n"
+                "The traveller has to make that ground journey on top of the "
+                f"flight, so a city within a few hours of {destination} is "
+                "worth far more than a larger airport far away. Do not "
+                "suggest one that would take most of a day to reach.\n\n"
+                + ", ".join(candidates)
+                + "\n\nReply with exactly one name from that list."
+            ),
+            max_tokens=200,
+        ).text
+
+        picked = (answer or "").strip().strip(".").strip()
+
+        # A pick in the destination's own country beats one abroad, whatever
+        # the model says: it chose Santorini as the gateway for Florence when
+        # Rome was in the list. Same country is a far better proxy for
+        # "reachable overland" than anything it can infer from a bare list.
+        if fallback and picked.lower() not in {c.lower() for c in same_country}:
+
+            if verbose:
+                print(
+                    f"      gateway: model said {picked!r}, but {fallback} is "
+                    f"in {country}; using {fallback}"
+                )
+
+            return fallback
+
+        # Exact match first.
+        for candidate in candidates:
+            if candidate.lower() == picked.lower():
+
+                if verbose:
+                    print(f"      gateway: model chose {candidate}")
+
+                return candidate
+
+        # Then a whole-word match, for when it answers in a sentence despite
+        # being told not to. Longest first so "New York" wins over "York".
+        for candidate in sorted(candidates, key=len, reverse=True):
+            if re.search(
+                rf"\b{re.escape(candidate)}\b",
+                picked,
+                re.IGNORECASE,
+            ):
+
+                if verbose:
+                    print(
+                        f"      gateway: model chose {candidate} "
+                        f"(from {picked!r})"
+                    )
+
+                return candidate
+
+        if verbose:
+            print(
+                f"      gateway: model said {picked!r}, not in the served "
+                f"list; using {fallback or 'nothing'}"
+            )
+
+    except Exception as exc:                                # noqa: BLE001
+        if verbose:
+            print(f"      gateway: model call failed ({exc}); using fallback")
+
+    return fallback
+
+def _pick_gateway(
+    flights_df,
+    origin: str,
+    destination: str,
+    country: str,
+    reverse: bool = False,
+    target_origin: str = "",
+    verbose: bool = False,
+) -> tuple:
+    """
+    A gateway city and the overland hours to reach it, or ("", 0.0).
+
+    The distance check is the point: _choose_gateway_city picks by whether a
+    city has flights and is in the right country, neither of which stops it
+    offering an airport most of a day away. A gateway the traveller cannot
+    realistically reach is worse than admitting there is no flight, because
+    it looks like a working itinerary.
+    """
+
+    city = _choose_gateway_city(
+        flights_df,
+        origin,
+        destination,
+        country,
+        verbose=verbose,
+        reverse=reverse,
+        target_origin=target_origin,
+    )
+
+    if not city:
+        return "", 0.0
+
+    hours = _gateway_overland_hours(
+        city,
+        destination,
+        country,
+        reverse=reverse,
+        verbose=verbose,
+    )
+
+    if hours > MAX_GATEWAY_OVERLAND_HOURS:
+        print(
+            f"      gateway: {city} is about {hours:g}h overland from "
+            f"{destination}, beyond the {MAX_GATEWAY_OVERLAND_HOURS:g}h "
+            f"limit; not using it"
+        )
+        return "", 0.0
+
+    return city, hours
+
+
+
 def query_inventory(params: dict) -> dict:
 
     flights_df, hotels_df, activities_df = _load_inventory()
@@ -913,17 +1536,196 @@ def query_inventory(params: dict) -> dict:
         group_size,
     )
 
+    # No direct service. Fall back to the nearest airport with flights and let
+    # the traveller continue overland - the transfer allowance downstream
+    # already accounts for that leg.
+    gateway_city = ""
+    return_gateway_city = ""
+    outbound_overland_hours = 0.0
+    return_overland_hours = 0.0
+
+    _return_country = ""
+
+    if "country" in activities_df.columns:
+        _dest_rows = activities_df[
+            activities_df["city_normalized"].eq(destinations[-1])
+        ]
+        if not _dest_rows.empty:
+            _return_country = str(_dest_rows["country"].iloc[0])
+
+    if outbound.empty:
+
+        _country = ""
+
+        if "country" in activities_df.columns:
+            _rows = activities_df[
+                activities_df["city_normalized"].eq(destinations[0])
+            ]
+            if not _rows.empty:
+                _country = str(_rows["country"].iloc[0])
+
+        gateway_city, outbound_overland_hours = _pick_gateway(
+            flights_df,
+            origin,
+            destinations[0],
+            _country,
+        )
+
+        if gateway_city:
+
+            outbound = _select_best_flights(
+                flights_df,
+                origin,
+                gateway_city,
+                cabin_preference,
+                group_size,
+            )
+
+            if not outbound.empty:
+                print(
+                    f"      gateway: no service to {destinations[0]}; "
+                    f"flying into {gateway_city} instead"
+                )
+            else:
+                gateway_city = ""
+
+
     # ------------------------------------------------------------
     # RETURN
     # ------------------------------------------------------------
 
+    # Anchor the return to the outbound, targeting the length the traveller
+    # asked for. Without this the cheapest return on the route wins whatever
+    # its date, which is how a 6-day Singapore trip came back with a return
+    # departing three hours after the outbound.
+    #
+    # duration_days counts days on the ground, so the return is
+    # duration_days - 1 nights after arrival. One day either side absorbs
+    # overnight legs and thin routes.
+    _return_from = None
+    _return_to = None
+
+    if not outbound.empty and "arrival_datetime" in outbound.columns:
+
+        _anchor = pd.to_datetime(
+            outbound["arrival_datetime"],
+            errors="coerce",
+            utc=True,
+        ).min()
+
+        if pd.notna(_anchor):
+
+            _target = max(1, duration_days - 1)
+
+            _return_from = _anchor + pd.Timedelta(days=max(1, _target - 1))
+            _return_to = _anchor + pd.Timedelta(days=_target + 1)
+
+    _return_from_city = gateway_city or destinations[-1]
+
     inbound = _select_best_flights(
         flights_df,
-        destinations[-1],
+        _return_from_city,
         origin,
         cabin_preference,
         group_size,
+        not_before=_return_from,
+        not_after=_return_to,
     )
+
+    # The return can be missing even when the outbound was fine: a route can
+    # run one way only, or nothing sits inside the date window. Look for a
+    # gateway for the way home too, rather than leaving the traveller
+    # stranded with a one-way itinerary.
+    # Held even when the window search below comes up empty, so the widening
+    # pass can retry on the gateway. Previously it was only recorded on a
+    # hit, so a gateway with service on the wrong dates was found and then
+    # thrown away, and the widening re-searched the city that had no service
+    # at all - which is how a Rome->Sydney flight sat in the table while the
+    # itinerary came back one-way.
+    _home_gateway = ""
+
+    if inbound.empty:
+
+        _home_gateway, return_overland_hours = _pick_gateway(
+            flights_df,
+            _return_from_city,
+            _return_from_city,
+            _return_country,
+            reverse=True,
+            target_origin=origin,
+        )
+
+        if _home_gateway and _home_gateway != _return_from_city:
+
+            inbound = _select_best_flights(
+                flights_df,
+                _home_gateway,
+                origin,
+                cabin_preference,
+                group_size,
+                not_before=_return_from,
+                not_after=_return_to,
+            )
+
+            if not inbound.empty:
+                return_gateway_city = _home_gateway
+                print(
+                    f"      gateway: no return from {_return_from_city}; "
+                    f"flying home from {_home_gateway} instead"
+                )
+
+    # Widen the window in steps rather than removing it. Dropping it outright
+    # took a return nine months after the outbound, and the itinerary became
+    # 273 days long. A return on a slightly wrong date is useful; one on a
+    # wildly wrong date is worse than none.
+    if inbound.empty and _return_from is not None:
+
+        # The destination first, then the gateway. A wider date on the city
+        # the traveller is actually in beats a tighter one that also needs a
+        # ground journey.
+        _home_candidates = [c for c in (_return_from_city, _home_gateway) if c]
+        _home_candidates = list(dict.fromkeys(_home_candidates))
+
+        for _slack_days in (3, 7, 14):
+
+            for _from_city in _home_candidates:
+
+                inbound = _select_best_flights(
+                    flights_df,
+                    _from_city,
+                    origin,
+                    cabin_preference,
+                    group_size,
+                    not_before=_return_from - pd.Timedelta(days=_slack_days),
+                    not_after=_return_to + pd.Timedelta(days=_slack_days),
+                )
+
+                if not inbound.empty:
+                    if _from_city != _return_from_city:
+                        return_gateway_city = _from_city
+                        print(
+                            f"      gateway: no return from "
+                            f"{_return_from_city} at all; flying home from "
+                            f"{_from_city} within {_slack_days} days"
+                        )
+                    else:
+                        return_overland_hours = 0.0
+                        print(
+                            f"      gateway: no return on the exact dates; "
+                            f"took one within {_slack_days} days"
+                        )
+                    break
+
+            if not inbound.empty:
+                break
+
+        else:
+            return_overland_hours = 0.0
+            print(
+                "      gateway: no return within two weeks of the trip; "
+                "leaving the itinerary one-way"
+            )
+
 
     # ------------------------------------------------------------
     # INTER-CITY
@@ -1138,14 +1940,72 @@ def query_inventory(params: dict) -> dict:
             f"{len(activity_options.get(city, []))} activities"
         )
 
+    # ------------------------------------------------------------
+    # Flight availability
+    #
+    # A structured field so the frontend can branch on it directly instead of
+    # matching strings in validation.warnings. Set here because this is the
+    # only place that knows whether a gateway was used and which one.
+    # ------------------------------------------------------------
+
+    _availability = {
+        "outbound_available": not outbound.empty,
+        "return_available": not inbound.empty,
+        "requested_city": destinations[0],
+        "outbound_via": gateway_city or None,
+        "return_via": return_gateway_city or (gateway_city or None),
+        # Estimated one-way ground journey between the gateway and the
+        # destination, so the frontend can tell the creator what the package
+        # does not cover rather than leaving it implied.
+        "outbound_overland_hours": round(outbound_overland_hours, 1) or None,
+        "return_overland_hours": round(return_overland_hours, 1) or None,
+        "message": "",
+    }
+
+    if outbound.empty and inbound.empty:
+        _availability["message"] = (
+            f"No flights available to or from {destinations[0]}, and no "
+            "nearby airport with service. Add flights manually before "
+            "publishing."
+        )
+
+    elif outbound.empty:
+        _availability["message"] = (
+            f"No outbound flight to {destinations[0]} or any nearby airport."
+        )
+
+    elif inbound.empty:
+        _availability["message"] = (
+            f"No return flight from {destinations[-1]} or any nearby airport "
+            "within two weeks of the trip."
+        )
+
+    elif gateway_city or return_gateway_city:
+        _via = gateway_city or return_gateway_city
+        _hours = outbound_overland_hours or return_overland_hours
+        _availability["message"] = (
+            f"No direct service to {destinations[0]}. Flying via {_via}"
+            + (f", about {_hours:g}h overland" if _hours else "")
+            + "; the onward transfer is not included in the package."
+        )
+
+    # Local clock times plus the airport-to-hotel allowance, so the model
+    # plans against what the traveller experiences rather than UTC.
+    _dest_city = destinations[0]
+    _origin_city = origin
+
+
     return {
-        "outbound_flight_options": outbound.to_dict(
-            orient="records"
+        "outbound_flight_options": _add_local_times(
+            outbound.to_dict(orient="records"),
+            _dest_city,
         ),
-        "inbound_flight_options": inbound.to_dict(
-            orient="records"
+        "inbound_flight_options": _add_local_times(
+            inbound.to_dict(orient="records"),
+            _origin_city,
         ),
         "inter_city_legs": inter_city_legs,
+        "flight_availability": _availability,
         "hotel_options": hotel_options,
         "activity_options": activity_options,
     }
@@ -1164,7 +2024,7 @@ Your job is to construct the best itinerary using ONLY the provided inventory.
 
 CRITICAL RULES:
 
-1. Return ONLY one valid JSON object.
+1. Return ONLY one valid JSON object. Before sending it, verify every field and array element is comma-separated and the JSON is syntactically complete.
 2. Never use markdown fences.
 3. Never invent IDs.
 4. Never invent flights.
@@ -1184,9 +2044,140 @@ CRITICAL RULES:
 18. Prefer higher-end options when the theme is luxury.
 19. Match the requested group size.
 20. Do not create fake flight routes.
+21. Obey the SHAPE OF A DAY and FEASIBILITY RULES sections of the request.
+    A day that breaks a BLOCK rule cannot be published, so it is not a
+    usable answer.
 
 The database is the source of truth.
 """.strip()
+
+
+
+def _travel_window_block(params: dict, inventory: dict) -> str:
+    """
+    The travel window in plain local time, at the very top of the prompt.
+
+    Flight times are otherwise buried in JSON arrays further down, and the
+    model was reading the UTC fields. Stating the window first gives it the
+    constraint before it starts planning rather than after.
+
+    The airport-to-city transfer is NOT computed here. We have no transfer
+    inventory, and a flat constant treats Osaka-Kyoto the same as a genuine
+    four-hour haul, so the model is asked to estimate it from what it knows
+    about the route. The estimate comes back in the response and is bounds-
+    checked before anything is scheduled against it.
+    """
+
+    outbound = (inventory.get("outbound_flight_options") or [None])[0]
+    inbound = (inventory.get("inbound_flight_options") or [None])[0]
+    city = (params.get("destinations") or ["the destination"])[0]
+
+    lines = [
+        "============================================================",
+        "TRAVEL WINDOW - READ BEFORE PLANNING ANYTHING",
+        "============================================================",
+        "",
+        "All times are LOCAL clock times. Plan inside this window.",
+        "",
+    ]
+
+    if not outbound:
+        lines += [
+            "No outbound flight is available for this route. Plan activities",
+            "only. Do not invent a flight.",
+            "============================================================",
+        ]
+        return "\n".join(lines)
+
+    arrive = outbound.get("arrival_local") or ""
+    direct = bool(outbound.get("is_direct_to_destination"))
+
+    lines += [
+        f"  Depart {outbound.get('origin', '?')}   "
+        f"{outbound.get('departure_local') or 'unknown'}",
+        f"  Land   {outbound.get('destination', '?')}   "
+        f"{arrive or 'unknown'}",
+    ]
+
+    if arrive:
+        lines += ["", f"DAY 1 IS {arrive[:10]} - the date you LAND, not the "
+                      "date you take off."]
+
+    # ------------------------------------------------------------
+    # Step 1 - the model estimates the transfer
+    # ------------------------------------------------------------
+
+    lines += [
+        "",
+        "STEP 1 - ESTIMATE THE TRANSFER",
+        "",
+        f"Estimate the usual door-to-door time from "
+        f"{outbound.get('destination', 'the arrival airport')} to central "
+        f"{city}, by the way most travellers actually make that trip.",
+        "",
+        "Include immigration, baggage and the journey itself. Use what you",
+        f"know about this specific route - {outbound.get('destination', '?')}",
+        f"to {city} - not a generic figure.",
+    ]
+
+    if not direct:
+        lines += [
+            "",
+            f"  NOTE: this flight does not land in {city}. The traveller",
+            "  continues overland. We do not sell that leg, so mention it in",
+            "  the day 1 description but never as a booked item.",
+        ]
+
+    if inbound:
+        lines += [
+            "",
+            f"Also estimate the time from central {city} out to "
+            f"{inbound.get('origin', 'the departure airport')}, including",
+            "check-in and security before the flight home.",
+        ]
+
+    lines += [
+        "",
+        "Report both in arrival_transfer and departure_transfer in your",
+        "response. They are checked against the schedule you produce.",
+        "",
+        "STEP 2 - APPLY THEM",
+        "",
+        f"Add your arrival estimate to the landing time ({arrive[11:16] or '?'}"
+        " local) to get the hour the traveller is first free on day 1.",
+        "",
+        "  - If that is after about 18:00, day 1 has NO activities. Describe",
+        "    it as an arrival and rest day. An empty first day is correct",
+        "    after a long flight, not a gap to fill.",
+        "  - If there is time left, schedule nothing before that hour, and",
+        "    keep day 1 light. They have just got off a plane.",
+    ]
+
+    if inbound and (inbound.get("departure_local") or ""):
+
+        home = inbound["departure_local"]
+
+        lines += [
+            "",
+            f"THE LAST DAY IS {home[:10]}. The flight home leaves "
+            f"{inbound.get('origin', '?')} at {home[11:16]} local.",
+            "",
+            "  Subtract your departure estimate from that time to get the",
+            "  hour everything must finish by.",
+            "  - If that leaves nothing workable, the last day has NO",
+            "    activities. It is a departure day.",
+            "  - Otherwise every activity must END before that hour.",
+        ]
+
+    lines += [
+        "",
+        "Every start_time you write is local time at the destination.",
+        "Build the days around these flights. Do not plan first and fit the",
+        "flights in afterwards.",
+        "============================================================",
+    ]
+
+    return "\n".join(lines)
 
 
 def build_ai_prompt(
@@ -1195,6 +2186,8 @@ def build_ai_prompt(
 ) -> str:
 
     return f"""
+{_travel_window_block(params, inventory)}
+
 USER REQUEST:
 {params["raw_input"]}
 
@@ -1233,6 +2226,56 @@ ACTIVITY ADDRESS:
 Copy the address field from the inventory record exactly. Never write an
 address that is not in the inventory. If a record has no address, leave the
 field as an empty string.
+
+SHAPE OF A DAY:
+Fill each day from the morning. Unless a reason below applies, the first
+activity of a day starts at 09:00, and later activities follow it in order.
+Do not leave the morning empty and open the day at 14:00 or 15:00 by default.
+
+The only reasons to start a day later are:
+  - the traveller is still in the air or in transit that morning;
+  - the experience itself only runs at that time (a night market, a sunset
+    cruise, a dinner, a bar crawl);
+  - an earlier start would not leave room for the activities after it.
+
+If the first activity of a day starts after 12:00, the day's "description"
+MUST state the reason in one short sentence. A late start with no stated
+reason is an error.
+
+FEASIBILITY RULES:
+The itinerary is checked against these rules after you return it. An
+itinerary that breaks a BLOCK rule cannot be published, so build one that
+passes rather than one that has to be repaired.
+
+BLOCK - the itinerary is rejected:
+  R1  Day length. Total activity hours on any day must be 10 or less. A day
+      holding a single activity is exempt, however long that activity is.
+  R2  Arrival buffer. On the day the outbound flight lands, nothing may start
+      before the landing time. The first activity starts after the
+      airport-to-city transfer you estimate AND at least 60 minutes after
+      landing for a domestic flight, or 90 minutes for an international one,
+      whichever is later.
+  R7  Overlap. No two activities on a day may overlap. An activity occupies
+      start_time through start_time plus duration_hours.
+  R19 Valid start time. Every activity needs a real 24-hour "HH:MM"
+      start_time. Never leave it blank and never write a word in it.
+  R21 Departure buffer. On the day the return flight leaves, every activity
+      must END at least 2 hours before departure for a domestic flight, or
+      3 hours for an international one, on top of the transfer to the
+      airport. If nothing fits, leave that day's activities empty.
+  R22 Transfer gap. Leave at least 15 minutes between one activity ending and
+      the next starting. Leave more when they are far apart.
+
+WARN - the itinerary is publishable but the creator is asked to fix it:
+  R5  Schedule density. More than 3 activities in one day.
+  R9  Empty day, and missing description. Give every day at least one
+      activity, except an arrival or departure day where there is genuinely
+      no room. Every activity needs its four-line note.
+  R13 Exact duplicate. Do not use the same activity_id, or the same activity
+      name, more than once in the whole trip. Prefer a different experience
+      over repeating one you have already placed.
+  R20 Travel-day load. More than 6 hours of activities on the first or last
+      day.
 
 ============================================================
 OUTBOUND FLIGHTS
@@ -1295,6 +2338,22 @@ Return exactly:
     "trip_id": "<uuid>",
     "created_at": "<ISO datetime>",
     "version": "1.0"
+  }},
+
+  "arrival_transfer": {{
+    "from_airport": "<arrival airport>",
+    "to_city": "<destination city>",
+    "estimated_minutes": 0,
+    "method": "<train | taxi | shuttle | bus>",
+    "note": "<one line the traveller would find useful>"
+  }},
+
+  "departure_transfer": {{
+    "from_city": "<destination city>",
+    "to_airport": "<departure airport>",
+    "estimated_minutes": 0,
+    "method": "<train | taxi | shuttle | bus>",
+    "note": "<include check-in and security>"
   }},
 
   "trip": {{
@@ -1416,17 +2475,22 @@ Return ONLY JSON.
 def call_llm(
     system_prompt: str,
     user_prompt: str,
+    *,
+    deadline: float | None = None,
 ):
     """
     Call the project's shared LLM provider.
 
-    llm_provider.py handles Gemini provider details.
+    `deadline` is an absolute `time.monotonic()` deadline.  The shared
+    provider already understands this argument and limits the underlying
+    Gemini/Claude request to the remaining budget.
     """
 
     return _llm_call(
         system_prompt,
         user_prompt,
         max_tokens=LLM_MAX_TOKENS,
+        deadline=deadline,
     ).text
 
 
@@ -1434,7 +2498,99 @@ def call_llm(
 # JSON PARSING
 # ============================================================================
 
+def _extract_json_object(raw: str) -> str:
+    """Strip fences/surrounding prose and keep the outer JSON object."""
+
+    cleaned = (raw or "").strip()
+
+    if cleaned.startswith("```"):
+        cleaned = re.sub(
+            r"^```(?:json)?\s*",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(r"\s*```$", "", cleaned)
+
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+
+    if start >= 0 and end > start:
+        cleaned = cleaned[start:end + 1]
+
+    return cleaned
+
+
+def _looks_like_json_key(line: str) -> bool:
+    """True when a stripped line begins with a JSON object key."""
+
+    return bool(
+        re.match(
+            r'^"(?:[^"\\]|\\.)*"\s*:',
+            line.lstrip(),
+        )
+    )
+
+
+def _repair_common_json_issues(raw: str) -> str:
+    """
+    Repair a small set of common LLM JSON formatting mistakes.
+
+    This intentionally stays conservative.  It does not invent values or
+    restructure the response; it only:
+      * removes trailing commas before `}` / `]`;
+      * inserts a missing comma between pretty-printed fields; and
+      * inserts a missing comma between adjacent array objects/arrays.
+
+    All factual itinerary data is still checked against inventory later.
+    """
+
+    repaired = re.sub(r",\s*([}\]])", r"\1", raw)
+    lines = repaired.splitlines()
+
+    for index in range(len(lines) - 1):
+        current = lines[index].rstrip()
+        current_value = current.strip()
+
+        if not current_value:
+            continue
+
+        next_index = index + 1
+        while next_index < len(lines) and not lines[next_index].strip():
+            next_index += 1
+
+        if next_index >= len(lines):
+            break
+
+        next_value = lines[next_index].lstrip()
+
+        if current_value.endswith((",", "{", "[", ":")):
+            continue
+
+        next_starts_new_value = (
+            _looks_like_json_key(next_value)
+            or next_value.startswith("{")
+            or next_value.startswith("[")
+        )
+
+        current_can_end_value = (
+            current_value.endswith(('"', "}", "]"))
+            or bool(
+                re.search(
+                    r"(?:-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null)$",
+                    current_value,
+                )
+            )
+        )
+
+        if next_starts_new_value and current_can_end_value:
+            lines[index] = current + ","
+
+    return "\n".join(lines)
+
+
 def parse_llm_response(raw: str) -> dict:
+    """Parse model JSON, with one conservative repair pass before retrying."""
 
     if not raw:
         raise json.JSONDecodeError(
@@ -1443,31 +2599,22 @@ def parse_llm_response(raw: str) -> dict:
             0,
         )
 
-    raw = raw.strip()
+    cleaned = _extract_json_object(raw)
 
-    # Remove code fences.
-    if raw.startswith("```"):
-        raw = re.sub(
-            r"^```(?:json)?\s*",
-            "",
-            raw,
-            flags=re.IGNORECASE,
-        )
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError as first_error:
+        repaired = _repair_common_json_issues(cleaned)
 
-        raw = re.sub(
-            r"\s*```$",
-            "",
-            raw,
-        )
+        if repaired == cleaned:
+            raise first_error
 
-    # Find JSON object if Gemini included surrounding text.
-    start = raw.find("{")
-    end = raw.rfind("}")
-
-    if start >= 0 and end > start:
-        raw = raw[start:end + 1]
-
-    return json.loads(raw)
+        try:
+            # strict=False also tolerates accidental literal control
+            # characters inside strings while preserving JSON structure.
+            return json.loads(repaired, strict=False)
+        except json.JSONDecodeError:
+            raise first_error
 
 
 # ============================================================================
@@ -1757,6 +2904,8 @@ def _enrich_from_inventory(itinerary: dict, inventory: dict) -> dict:
         return itinerary
 
     unknown = []
+    backfilled = []
+    missing_copy = []
 
     for day in itinerary.get("days", []) or []:
         for act in day.get("activities", []) or []:
@@ -1775,6 +2924,46 @@ def _enrich_from_inventory(itinerary: dict, inventory: dict) -> dict:
             act["duration_hours"] = rec.get(
                 "duration_hours", act.get("duration_hours")
             )
+
+            # DEV-174. The prompt asks for a four-line note on every activity,
+            # but an instruction is not a guarantee, and an activity that
+            # arrives with no note reaches the editor with an empty Notes box.
+            # The feasibility check then raises "has no description, which
+            # reduces the package's appeal and quality score" and the creator
+            # cannot publish. The inventory record carries its own description,
+            # so fall back to that: real copy from the catalogue, not prose
+            # invented to fill a box.
+            if not str(act.get("notes") or "").strip():
+
+                description = str(rec.get("description") or "").strip()
+
+                if description:
+                    act["notes"] = description
+                    backfilled.append(act.get("activity_name"))
+                else:
+                    missing_copy.append(act.get("activity_name"))
+
+    if backfilled:
+        print(
+            f"      [inventory] filled {len(backfilled)} missing activity "
+            f"note(s) from the catalogue: {backfilled[:5]}"
+        )
+
+    if missing_copy:
+        # Neither the model nor the catalogue has copy for these, so the
+        # creator has to write it. Saying so beats letting the feasibility
+        # check surface it later as a blocked publish.
+        validation = itinerary.setdefault("validation", {})
+        note = (
+            f"{len(missing_copy)} activity description(s) are empty and have "
+            f"no catalogue text to fall back on: {', '.join(str(n) for n in missing_copy[:3])}"
+            + ("…" if len(missing_copy) > 3 else "")
+            + ". Add a description before publishing."
+        )
+        validation["warnings"] = list(
+            dict.fromkeys((validation.get("warnings") or []) + [note])
+        )
+        print(f"      [inventory] {note}")
 
     if unknown:
         print(
@@ -1884,6 +3073,14 @@ def validate_itinerary(
             "destination",
             "departure_datetime",
             "arrival_datetime",
+            # Local clock times and the transfer allowance, computed in
+            # query_inventory. Without them here the model's flight dict keeps
+            # only UTC and both the response and the frontend lose the
+            # traveller's own times.
+            "departure_local",
+            "arrival_local",
+            "transfer_hours_to_destination",
+            "is_direct_to_destination",
             "cabin_class",
             "price_aud",
             "seats_available",
@@ -2232,6 +3429,804 @@ def validate_itinerary(
 
     # Explicit top-level bookable flag.
     itinerary["bookable"] = bookable
+
+    return itinerary
+
+
+
+# ============================================================================
+# TRAVEL WINDOW ENFORCEMENT
+# ============================================================================
+#
+# The prompt states the window; the model does not reliably respect it. This
+# corrects the result afterwards, so the outcome does not depend on the model
+# co-operating.
+
+
+def _estimated_transfer_hours(
+    transfer,
+    fallback: float,
+    label: str,
+    notes: list,
+) -> float:
+    """
+    The model's transfer estimate in hours, or the fallback.
+
+    The estimate drives a hard scheduling decision, so it is bounds-checked:
+    four minutes or eleven hours is a mistake, not a measurement. Anything
+    outside MIN/MAX_TRANSFER_MINUTES is discarded and recorded, rather than
+    silently trusted.
+    """
+
+    if not isinstance(transfer, dict):
+        return fallback
+
+    try:
+        minutes = float(transfer.get("estimated_minutes"))
+    except (TypeError, ValueError):
+        return fallback
+
+    if MIN_TRANSFER_MINUTES <= minutes <= MAX_TRANSFER_MINUTES:
+        return minutes / 60.0
+
+    notes.append(
+        f"Ignored the AI estimate for {label} "
+        f"({minutes:.0f} min, outside {MIN_TRANSFER_MINUTES}-"
+        f"{MAX_TRANSFER_MINUTES}); used {fallback:.1f}h instead."
+    )
+
+    return fallback
+
+def _enforce_stay_length(itinerary: dict, params: dict) -> dict:
+    """
+    Make each hotel stay span the trip, not one night more.
+
+    DEV-167. validate_itinerary() replaces a hotel's factual fields from
+    inventory but leaves nights/check_in/check_out as the model wrote them,
+    and the model routinely books one night per day rather than per gap - four
+    nights for a four-day trip. The frontend then grows the trip to fit the
+    stay (itineraryToPackageInput takes the max of duration_days and the
+    check-out day), so a 4-day request renders five day tabs under a title
+    that still, correctly, says "4-Day".
+
+    A stay of N days is N-1 nights. Both dates are derived from day 1 rather
+    than trusted, so a stay cannot start before the trip or end after it.
+    """
+
+    days = itinerary.get("days") or []
+    accommodation = itinerary.get("accommodation") or []
+
+    if not days or not accommodation:
+        return itinerary
+
+    try:
+        duration = int(
+            (itinerary.get("trip") or {}).get("duration_days")
+            or params.get("duration_days")
+            or len(days)
+        )
+    except (TypeError, ValueError):
+        duration = len(days)
+
+    duration = max(1, duration)
+
+    # Day 1's own date is the anchor: _enforce_travel_window may have already
+    # moved it to the real local arrival date.
+    first_date = pd.to_datetime(days[0].get("date"), errors="coerce")
+
+    if pd.isna(first_date):
+        first_date = pd.to_datetime(
+            (itinerary.get("trip") or {}).get("travel_dates", {}).get("depart_date"),
+            errors="coerce",
+        )
+
+    if pd.isna(first_date):
+        return itinerary
+
+    notes = []
+
+    # One stay covers the whole trip; several split it between cities, and
+    # their own proportions are the model's to decide - only the total moves.
+    total_nights = max(1, duration - 1)
+    stated_nights = []
+
+    for hotel in accommodation:
+        try:
+            value = int(float(hotel.get("nights") or 0))
+        except (TypeError, ValueError):
+            value = 0
+        stated_nights.append(max(0, value))
+
+    stated_total = sum(stated_nights)
+
+    if stated_total <= 0:
+        # Nothing usable to scale; split the trip evenly.
+        share = [total_nights // len(accommodation)] * len(accommodation)
+        share[0] += total_nights - sum(share)
+    elif stated_total == total_nights:
+        share = stated_nights
+    else:
+        # Keep each stay's proportion, then settle the rounding on the first.
+        share = [
+            max(1, round(value * total_nights / stated_total))
+            for value in stated_nights
+        ]
+        drift = total_nights - sum(share)
+        share[0] = max(1, share[0] + drift)
+
+        # A second pass in case the max(1, ...) floor overshot the total.
+        while sum(share) > total_nights and len(share) > 1:
+            index = max(range(len(share)), key=lambda i: share[i])
+            if share[index] <= 1:
+                break
+            share[index] -= 1
+
+    cursor = first_date
+
+    for hotel, nights in zip(accommodation, share):
+
+        nights = max(1, int(nights))
+
+        check_in = cursor
+        check_out = cursor + timedelta(days=nights)
+
+        before = (hotel.get("nights"), hotel.get("check_in"), hotel.get("check_out"))
+
+        hotel["nights"] = nights
+        hotel["check_in"] = check_in.strftime("%Y-%m-%d")
+        hotel["check_out"] = check_out.strftime("%Y-%m-%d")
+
+        nightly = pd.to_numeric(hotel.get("price_per_night_aud"), errors="coerce")
+
+        if pd.notna(nightly):
+            hotel["total_price_aud"] = round(float(nightly) * nights, 2)
+
+        after = (hotel["nights"], hotel["check_in"], hotel["check_out"])
+
+        if before != after:
+            notes.append(
+                f"Corrected '{hotel.get('hotel_name')}' to {nights} night(s), "
+                f"{hotel['check_in']} to {hotel['check_out']}: a {duration}-day "
+                f"trip is {total_nights} night(s)."
+            )
+
+        cursor = check_out
+
+    if notes:
+        validation = itinerary.setdefault("validation", {})
+        validation["warnings"] = list(
+            dict.fromkeys((validation.get("warnings") or []) + notes)
+        )
+        for note in notes:
+            print(f"      [stay] {note}")
+
+    return itinerary
+
+
+_TITLE_DAY_COUNT = re.compile(r"\b(\d{1,3})[-\s]?day\b", re.IGNORECASE)
+
+
+def _enforce_title_day_count(itinerary: dict) -> dict:
+    """
+    Make a day count written into the title match the itinerary.
+
+    DEV-167, second half. Fixing the stay above removes the usual cause of
+    the mismatch, but the model writes the title as free prose and nothing
+    stops it putting a different number there. Rewriting the digits is safe;
+    inventing a title is not, so everything else in the string is left as-is.
+    """
+
+    trip = itinerary.get("trip") or {}
+    title = str(trip.get("title") or "")
+
+    if not title:
+        return itinerary
+
+    try:
+        duration = int(trip.get("duration_days") or len(itinerary.get("days") or []))
+    except (TypeError, ValueError):
+        return itinerary
+
+    if duration < 1:
+        return itinerary
+
+    def _swap(match: "re.Match") -> str:
+        if int(match.group(1)) == duration:
+            return match.group(0)
+        # Keep the author's own spelling of the separator and the word.
+        separator = "-" if "-" in match.group(0) else " "
+        word = match.group(0)[-3:]
+        return f"{duration}{separator}{word}"
+
+    corrected = _TITLE_DAY_COUNT.sub(_swap, title)
+
+    if corrected != title:
+        trip["title"] = corrected
+        validation = itinerary.setdefault("validation", {})
+        note = (
+            f"Corrected the day count in the title to {duration} to match the "
+            "itinerary."
+        )
+        validation["warnings"] = list(
+            dict.fromkeys((validation.get("warnings") or []) + [note])
+        )
+        print(f"      [title] {note}")
+
+    return itinerary
+
+
+def _is_evening_activity(activity: dict) -> bool:
+    """True when the experience itself only makes sense after dark."""
+
+    haystack = " ".join(
+        str(activity.get(field) or "")
+        for field in ("activity_name", "category", "notes")
+    ).lower()
+
+    return any(word in haystack for word in EVENING_ACTIVITY_WORDS)
+
+
+def _sync_travel_dates(itinerary: dict) -> dict:
+    """
+    Make trip.travel_dates agree with the days actually in the itinerary.
+
+    _enforce_travel_window re-dates every day from the real local arrival,
+    and moves the hotel with them, but travel_dates was left as the model or
+    the fallback first guessed it. Internally that is harmless - days and
+    hotel stay consistent - but the frontend measures every relative day
+    against depart_date, so a stale value is read as the trip being that much
+    longer: a 12-day Singapore trip whose flight landed 289 days after the
+    guessed date rendered 301 day tabs, 289 of them empty.
+
+    Dates are descriptive here, not authoritative. The days are the itinerary.
+    """
+
+    days = itinerary.get("days") or []
+
+    if not days:
+        return itinerary
+
+    first = str(days[0].get("date") or "")[:10]
+    last = str(days[-1].get("date") or "")[:10]
+
+    if not first:
+        return itinerary
+
+    trip = itinerary.setdefault("trip", {})
+    dates = trip.setdefault("travel_dates", {})
+
+    before = (dates.get("depart_date"), dates.get("return_date"))
+
+    dates["depart_date"] = first
+
+    if last:
+        dates["return_date"] = last
+
+    after = (dates.get("depart_date"), dates.get("return_date"))
+
+    if before != after:
+        note = (
+            f"Travel dates re-stated as {after[0]} to {after[1]} to match the "
+            f"itinerary days (were {before[0]} to {before[1]})."
+        )
+        validation = itinerary.setdefault("validation", {})
+        validation["warnings"] = list(
+            dict.fromkeys((validation.get("warnings") or []) + [note])
+        )
+        print(f"      [dates] {note}")
+
+    return itinerary
+
+
+def _enforce_morning_start(itinerary: dict, params: dict) -> dict:
+    """
+    Start the day in the morning unless there is a reason not to, and say
+    what the reason was when there is one.
+
+    DEV-171, second report: a hike opened at 15:00 with an empty morning and
+    nothing explaining it. _enforce_daylight_starts only catches an activity
+    that runs past the end of the day, so a two-hour stop at 15:00 passes it
+    while still wasting the morning.
+
+    The arrival and departure days are left alone: _enforce_travel_window has
+    already placed those around the real flight times, and pulling an
+    activity earlier here would undo it. Evening experiences are left where
+    they are, with the reason written into the day description, because
+    moving a night market to 09:00 is a worse itinerary, not a better one.
+    """
+
+    days = itinerary.get("days") or []
+
+    if not days:
+        return itinerary
+
+    flights = itinerary.get("flights") or []
+
+    outbound = next(
+        (f for f in flights if str(f.get("leg", "")).lower() == "outbound"),
+        None,
+    )
+    inbound = next(
+        (f for f in flights if str(f.get("leg", "")).lower() == "return"),
+        None,
+    )
+
+    protected = set()
+
+    if outbound:
+        protected.add(0)
+
+    if inbound:
+        departure_local = _local_time(
+            inbound.get("departure_datetime"), inbound.get("origin")
+        )
+
+        if departure_local:
+            for index, day in enumerate(days):
+                if str(day.get("date") or "")[:10] == departure_local[:10]:
+                    protected.add(index)
+                    break
+            else:
+                protected.add(len(days) - 1)
+
+    notes = []
+
+    for index, day in enumerate(days):
+
+        if index in protected:
+            continue
+
+        activities = day.get("activities") or []
+
+        if not activities:
+            continue
+
+        first_start = _clock_to_hours(activities[0].get("start_time"))
+
+        if first_start < 0 or first_start < LATE_START_HOUR:
+            continue
+
+        # The day opens late. Either the first thing on it belongs after
+        # dark, or the morning is being wasted.
+        if _is_evening_activity(activities[0]):
+
+            description = str(day.get("description") or "")
+
+            if not re.search(
+                r"\b(evening|night|sunset|after dark|dusk)\b", description, re.I
+            ):
+                day["description"] = (
+                    f"{description.rstrip()} This day starts later because "
+                    f"'{activities[0].get('activity_name')}' is an evening "
+                    "experience."
+                ).strip()
+
+                notes.append(
+                    f"Explained the {_hours_to_clock(first_start)} start on "
+                    f"{day.get('date')}: evening experience."
+                )
+
+            continue
+
+        cursor = DAY_START_HOUR
+        moved = []
+
+        for activity in activities:
+
+            start = _clock_to_hours(activity.get("start_time"))
+
+            try:
+                duration = float(activity.get("duration_hours") or 0)
+            except (TypeError, ValueError):
+                duration = 0.0
+
+            if start < 0:
+                continue
+
+            if _is_evening_activity(activity):
+                cursor = max(cursor, start + duration + ACTIVITY_GAP_HOURS)
+                continue
+
+            target = max(DAY_START_HOUR, cursor)
+
+            # Only ever pull earlier. Pushing an activity later here would
+            # fight _enforce_daylight_starts and the departure buffer.
+            if target < start:
+                activity["start_time"] = _hours_to_clock(target)
+                moved.append(activity.get("activity_name"))
+                start = target
+
+            cursor = max(cursor, start + duration + ACTIVITY_GAP_HOURS)
+
+        if moved:
+            notes.append(
+                f"Moved {len(moved)} activity(ies) on {day.get('date')} into "
+                f"the morning; the day had started at "
+                f"{_hours_to_clock(first_start)} with nothing before it: "
+                f"{', '.join(str(name) for name in moved[:3])}"
+                + ("…" if len(moved) > 3 else "")
+            )
+
+    if notes:
+        validation = itinerary.setdefault("validation", {})
+        validation["warnings"] = list(
+            dict.fromkeys((validation.get("warnings") or []) + notes)
+        )
+        for note in notes:
+            print(f"      [morning] {note}")
+
+    return itinerary
+
+
+def _enforce_daylight_starts(itinerary: dict, params: dict) -> dict:
+    """
+    Stop an activity running past the end of the day.
+
+    DEV-171. _enforce_travel_window only constrains day 1 and the departure
+    day, so nothing prevented a 432-minute mountain hike opening at 15:00 and
+    finishing at 22:12. Two bounds, both applied by pulling the start earlier
+    and never by shortening the activity or dropping it:
+
+      - nothing ends after DAY_END_HOUR;
+      - anything at least LONG_ACTIVITY_HOURS long ends by DAYLIGHT_END_HOUR,
+        because a seven-hour hike is a daytime undertaking.
+
+    Short evening items are deliberately untouched: a three-hour night market
+    at 19:00 ends at 22:00 and is exactly where it belongs. An activity that
+    cannot fit even from the earliest start is left where it is and reported,
+    rather than silently moved to a time that is still wrong.
+    """
+
+    days = itinerary.get("days") or []
+
+    if not days:
+        return itinerary
+
+    notes = []
+
+    for index, day in enumerate(days):
+
+        activities = day.get("activities") or []
+
+        if not activities:
+            continue
+
+        # Day 1 may already be constrained by the arrival transfer; respect
+        # whatever _enforce_travel_window settled on rather than undoing it.
+        earliest = DAY_START_HOUR
+
+        if index == 0:
+            first_start = _clock_to_hours(activities[0].get("start_time"))
+            if first_start >= 0:
+                earliest = max(earliest, first_start)
+
+        previous_end = -1.0
+
+        for activity in activities:
+
+            start = _clock_to_hours(activity.get("start_time"))
+
+            try:
+                duration = float(activity.get("duration_hours") or 0)
+            except (TypeError, ValueError):
+                duration = 0.0
+
+            if start < 0 or duration <= 0:
+                continue
+
+            limit = (
+                DAYLIGHT_END_HOUR
+                if duration >= LONG_ACTIVITY_HOURS
+                else DAY_END_HOUR
+            )
+
+            if start + duration <= limit:
+                previous_end = max(previous_end, start + duration)
+                continue
+
+            floor = earliest
+
+            if previous_end >= 0:
+                floor = max(floor, previous_end + ACTIVITY_GAP_HOURS)
+
+            target = min(start, limit - duration)
+
+            if target < floor:
+                notes.append(
+                    f"'{activity.get('activity_name')}' on {day.get('date')} "
+                    f"runs {duration:.1f}h from {activity.get('start_time')} and "
+                    f"cannot finish by {_hours_to_clock(limit)} without starting "
+                    f"before {_hours_to_clock(floor)}; left as planned."
+                )
+                previous_end = max(previous_end, start + duration)
+                continue
+
+            activity["start_time"] = _hours_to_clock(target)
+
+            notes.append(
+                f"Moved '{activity.get('activity_name')}' on {day.get('date')} "
+                f"to {activity['start_time']}: {duration:.1f}h has to finish by "
+                f"{_hours_to_clock(limit)}."
+            )
+
+            previous_end = max(previous_end, target + duration)
+
+    if notes:
+        validation = itinerary.setdefault("validation", {})
+        validation["warnings"] = list(
+            dict.fromkeys((validation.get("warnings") or []) + notes)
+        )
+        for note in notes:
+            print(f"      [daylight] {note}")
+
+    return itinerary
+
+
+def _enforce_travel_window(itinerary: dict, params: dict) -> dict:
+    """
+    Re-date day 1 from the local arrival, then move or drop any activity
+    outside the time the traveller is actually on the ground.
+
+    Runs after validate_itinerary, so flight fields hold inventory values.
+    """
+
+    days = itinerary.get("days") or []
+
+    if not days:
+        return itinerary
+
+    flights = itinerary.get("flights") or []
+    city = (params.get("destinations") or [""])[0]
+
+    outbound = next(
+        (f for f in flights if str(f.get("leg", "")).lower() == "outbound"),
+        None,
+    )
+    inbound = next(
+        (f for f in flights if str(f.get("leg", "")).lower() == "return"),
+        None,
+    )
+
+    notes = []
+
+    # --- day 1 is the local arrival date --------------------------------
+
+    arrival_local = (
+        _local_time(outbound.get("arrival_datetime"), outbound.get("destination"))
+        if outbound
+        else ""
+    )
+
+    if arrival_local:
+
+        arrival_date = pd.to_datetime(arrival_local, errors="coerce")
+
+        if pd.notna(arrival_date):
+
+            stated = str(days[0].get("date") or "")[:10]
+            target = arrival_date.strftime("%Y-%m-%d")
+
+            _shift_days = 0
+
+            if stated != target:
+
+                _stated_date = pd.to_datetime(stated, errors="coerce")
+
+                if pd.notna(_stated_date):
+                    _shift_days = (arrival_date.normalize()
+                                   - _stated_date.normalize()).days
+
+                notes.append(
+                    f"Day 1 re-dated to {target}, the local arrival date "
+                    f"(was {stated or 'unset'})."
+                )
+
+            for offset, day in enumerate(days):
+                day["date"] = (
+                    arrival_date + timedelta(days=offset)
+                ).strftime("%Y-%m-%d")
+
+            # Hotels are dated independently of the days, so shifting the
+            # days alone left check-in on the old date. The editor places the
+            # hotel row by its own date, so the stay drifted off day 1 and
+            # the first night appeared to start a day late.
+            if _shift_days:
+
+                for hotel in itinerary.get("accommodation") or []:
+
+                    for field in ("check_in", "check_out"):
+
+                        stamp = pd.to_datetime(
+                            hotel.get(field),
+                            errors="coerce",
+                        )
+
+                        if pd.notna(stamp):
+                            hotel[field] = (
+                                stamp + timedelta(days=_shift_days)
+                            ).strftime("%Y-%m-%d")
+
+                notes.append(
+                    f"Hotel check-in and check-out moved {_shift_days:+d} "
+                    "day(s) to stay aligned with day 1."
+                )
+
+    # --- nothing on day 1 before landing + transfer ----------------------
+
+    if arrival_local and outbound:
+
+        transfer = _estimated_transfer_hours(
+            itinerary.get("arrival_transfer"),
+            fallback=_transfer_hours(outbound.get("destination"), city),
+            label=f"arrival transfer to {city}",
+            notes=notes,
+        )
+
+        # R2 floor. The model's estimate is usually right, but it has come
+        # back with 20 minutes for an international arrival, which is not
+        # enough to clear the airport let alone reach the city. The
+        # feasibility check applies the same figures, so an itinerary that
+        # passes here passes there.
+        _international = (
+            str(outbound.get("origin_country") or "").strip().lower()
+            != str(outbound.get("destination_country") or "").strip().lower()
+            if outbound.get("origin_country") and outbound.get("destination_country")
+            else True
+        )
+
+        _floor = (
+            MIN_ARRIVAL_BUFFER_INTERNATIONAL_HOURS
+            if _international
+            else MIN_ARRIVAL_BUFFER_DOMESTIC_HOURS
+        )
+
+        if transfer < _floor:
+            notes.append(
+                f"Arrival buffer raised from {transfer * 60:.0f} to "
+                f"{_floor * 60:.0f} minutes: an "
+                f"{'international' if _international else 'a domestic'} "
+                "arrival needs that long before the first activity."
+            )
+            transfer = _floor
+
+        free_at = _clock_to_hours(arrival_local[11:16]) + transfer
+
+        if free_at >= 0:
+
+            kept = []
+
+            for activity in days[0].get("activities") or []:
+
+                start = _clock_to_hours(activity.get("start_time"))
+
+                if start < 0 or start >= free_at:
+                    kept.append(activity)
+                    continue
+
+                if free_at <= LATEST_USEFUL_START:
+                    activity["start_time"] = _hours_to_clock(free_at)
+                    kept.append(activity)
+                    notes.append(
+                        f"Moved '{activity.get('activity_name')}' to "
+                        f"{activity['start_time']} on day 1: lands "
+                        f"{arrival_local[11:16]} plus {transfer:.0f}h transfer."
+                    )
+                else:
+                    notes.append(
+                        f"Removed '{activity.get('activity_name')}' from day 1: "
+                        f"not free until {_hours_to_clock(free_at)}."
+                    )
+
+            days[0]["activities"] = kept
+
+            if transfer > DIRECT_TRANSFER_HOURS:
+                days[0]["description"] = (
+                    f"{days[0].get('description', '').rstrip()} "
+                    f"Arrives {outbound.get('destination')}, then roughly "
+                    f"{transfer:.0f} hours overland to {city}. This transfer "
+                    "is not included in the package."
+                ).strip()
+
+    # --- nothing on the last day past the airport run --------------------
+
+    departure_local = (
+        _local_time(inbound.get("departure_datetime"), inbound.get("origin"))
+        if inbound
+        else ""
+    )
+
+    # Find the day the return flight actually leaves on, rather than assuming
+    # it is the last one. An exact match on days[-1] silently skipped the
+    # check whenever the model's dates disagreed with the flight, which let a
+    # 10:00 activity sit above an 08:45 departure.
+    _departure_index = None
+
+    if departure_local:
+
+        _departure_index = next(
+            (
+                index
+                for index, day in enumerate(days)
+                if str(day.get("date") or "")[:10] == departure_local[:10]
+            ),
+            None,
+        )
+
+        if _departure_index is None:
+            _departure_index = len(days) - 1
+
+            notes.append(
+                "No day matches the return flight date "
+                f"({departure_local[:10]}); applied the departure-day limit "
+                "to the final day."
+            )
+
+        # Anything after the traveller has flown home is not a tight fit,
+        # it is impossible.
+        for day in days[_departure_index + 1:]:
+
+            for activity in day.get("activities") or []:
+                notes.append(
+                    f"Removed '{activity.get('activity_name')}' from "
+                    f"{day.get('date')}: after the return flight."
+                )
+
+            day["activities"] = []
+
+    if departure_local and _departure_index is not None:
+
+        _fallback_out = DEPARTURE_TRANSFER_HOURS
+
+        if normalize_city(inbound.get("origin")) != normalize_city(city):
+            _fallback_out = max(
+                DEPARTURE_TRANSFER_HOURS,
+                _transfer_hours(inbound.get("origin"), city),
+            )
+
+        transfer_out = _estimated_transfer_hours(
+            itinerary.get("departure_transfer"),
+            fallback=_fallback_out,
+            label="departure transfer to the airport",
+            notes=notes,
+        )
+
+        leave_by = _clock_to_hours(departure_local[11:16]) - transfer_out
+
+        if leave_by >= 0:
+
+            kept = []
+
+            _departure_day = days[_departure_index]
+
+            for activity in _departure_day.get("activities") or []:
+
+                start = _clock_to_hours(activity.get("start_time"))
+
+                try:
+                    duration = float(activity.get("duration_hours") or 2)
+                except (TypeError, ValueError):
+                    duration = 2.0
+
+                if start < 0 or start + duration <= leave_by:
+                    kept.append(activity)
+                else:
+                    notes.append(
+                        f"Removed '{activity.get('activity_name')}' from "
+                        f"{_departure_day.get('date')}: must leave for the "
+                        f"airport by {_hours_to_clock(leave_by)}."
+                    )
+
+            _departure_day["activities"] = kept
+
+    if notes:
+
+        validation = itinerary.setdefault("validation", {})
+        validation["warnings"] = list(
+            dict.fromkeys((validation.get("warnings") or []) + notes)
+        )
+
+        for note in notes:
+            print(f"      [schedule] {note}")
 
     return itinerary
 
@@ -2717,6 +4712,11 @@ def generate_itinerary(
     # deterministic fallback further down.
     t_parse = 0.0
 
+    # Absolute end-to-end deadline.  This starts at generate_itinerary(), so
+    # Supabase time is included and the function can fall back before the
+    # Next.js proxy reaches its ~120 second timeout.
+    request_deadline = t_all_start + LLM_REQUEST_BUDGET_SECONDS
+
     for attempt in range(
         1,
         MAX_LLM_ATTEMPTS + 1,
@@ -2732,11 +4732,21 @@ def generate_itinerary(
 
         try:
 
+            remaining = request_deadline - time.perf_counter()
+            if remaining <= 1.0:
+                failure_reason = (
+                    "Itinerary generation time budget exhausted before "
+                    "another LLM attempt could start."
+                )
+                print(f"      [llm] {failure_reason}")
+                break
+
             attempt_llm_start = time.perf_counter()
             raw = call_llm(
                 SYSTEM_PROMPT,
                 user_prompt
                 + parse_guidance,
+                deadline=request_deadline,
             )
              
             t_llm = time.perf_counter() - attempt_llm_start
@@ -2755,11 +4765,11 @@ def generate_itinerary(
                 f"failed: {failure_reason}"
             )
 
-            # Retry temporary failures.
+            # Retry temporary failures only when enough end-to-end time
+            # remains.  A retry that starts too late merely guarantees the
+            # browser sees a 504 before this function can return its fallback.
             if attempt < MAX_LLM_ATTEMPTS:
 
-                # Back off first. Retrying instantly against a per-minute
-                # quota just earns another rejection.
                 is_rate_limit = (
                     "429" in failure_reason
                     or "rate limit" in failure_reason.lower()
@@ -2767,11 +4777,17 @@ def generate_itinerary(
                 )
 
                 delay = 20 * attempt if is_rate_limit else 2 * attempt
+                remaining = request_deadline - time.perf_counter()
+
+                if remaining <= delay + LLM_MIN_RETRY_SECONDS:
+                    print(
+                        "      [llm] skipping retry: "
+                        f"only {max(0.0, remaining):.1f}s remain in request budget"
+                    )
+                    break
 
                 print(f"      [llm] waiting {delay}s before retry")
-
                 time.sleep(delay)
-
                 continue
 
             break
@@ -2811,26 +4827,40 @@ def generate_itinerary(
                 f"Invalid JSON: {exc}"
             )
 
-            # Always logged. Truncation from the output-token cap shows up
-            # here, and the length says whether that is what happened.
+            # Always logged. Include a short window around the parser
+            # position so malformed output can be diagnosed without dumping
+            # the entire itinerary or prompt into logs.
+            context_start = max(0, exc.pos - 100)
+            context_end = min(len(raw), exc.pos + 140)
+            error_context = raw[context_start:context_end].replace("\n", "\\n")
+
             print(
                 f"      [llm] attempt {attempt}/{MAX_LLM_ATTEMPTS} "
                 f"bad JSON ({len(raw)} chars): {exc}"
             )
+            print(f"      [llm] parse context: {error_context}")
 
             if attempt < MAX_LLM_ATTEMPTS:
 
+                remaining = request_deadline - time.perf_counter()
+                if remaining <= LLM_MIN_RETRY_SECONDS:
+                    print(
+                        "      [llm] skipping JSON retry: "
+                        f"only {max(0.0, remaining):.1f}s remain in request budget"
+                    )
+                    break
+
                 parse_guidance = """
-IMPORTANT:
-Your previous response was invalid JSON.
+IMPORTANT - JSON RETRY:
+Your previous response was invalid JSON. Recreate the response from scratch.
 
 Return ONLY one complete JSON object.
-
-Do not use markdown.
-Do not use code fences.
+Every object property and every array element MUST be separated by a comma.
+Do not use markdown or code fences.
 Do not truncate the response.
 Do not add comments.
 Do not add text before or after the JSON.
+Keep prose concise so the complete object fits comfortably in the output.
 """
 
                 continue
@@ -2891,6 +4921,56 @@ Do not add text before or after the JSON.
         itinerary,
         params,
         inventory,
+    )
+
+    # Correct the schedule against real local flight times. After validation,
+    # so flight fields hold inventory values rather than the model's.
+    itinerary = _enforce_travel_window(itinerary, params)
+
+    # Order matters. The stay hangs off day 1's date, which the travel window
+    # may have just moved to the real local arrival; the daylight pass must
+    # not undo the arrival-transfer start it settled on; and the title is
+    # checked last, once duration_days is final.
+    itinerary = _enforce_stay_length(itinerary, params)
+    # Morning first, then daylight: both only ever pull an activity earlier,
+    # and the morning pass is the one that knows which days the flights own.
+    # After every pass that can move a date, so travel_dates describes the
+    # days the traveller actually gets.
+    itinerary = _sync_travel_dates(itinerary)
+    itinerary = _enforce_morning_start(itinerary, params)
+    itinerary = _enforce_daylight_starts(itinerary, params)
+    itinerary = _enforce_title_day_count(itinerary)
+
+    # Deterministic, not written by the model: the frontend needs a reliable
+    # signal for "there is no flight here" so it can say so to the user.
+    itinerary["flight_availability"] = inventory.get(
+        "flight_availability",
+        {
+            "outbound_available": False,
+            "return_available": False,
+            "requested_city": "",
+            "outbound_via": None,
+            "return_via": None,
+            "message": "",
+        },
+    )
+
+    # Correct the schedule against real local flight times. After validation,
+    # so flight fields hold inventory values rather than the model's.
+    itinerary = _enforce_travel_window(itinerary, params)
+
+    # Deterministic, not written by the model: the frontend needs a reliable
+    # signal for "there is no flight here" so it can say so to the user.
+    itinerary["flight_availability"] = inventory.get(
+        "flight_availability",
+        {
+            "outbound_available": False,
+            "return_available": False,
+            "requested_city": "",
+            "outbound_via": None,
+            "return_via": None,
+            "message": "",
+        },
     )
 
     # ------------------------------------------------------------

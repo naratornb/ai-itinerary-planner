@@ -51,6 +51,18 @@ export type TimelineItem = {
   arrivalDatetime?: string;
   departureTime?: string;
   arrivalTime?: string;
+  /**
+   * Which end of this flight anchors the day it sits on.
+   *
+   * "arrival" - the flight brings the traveller in, so the day is governed by
+   * when it LANDS and nothing can happen before that.
+   * "departure" - the flight takes them out, so the day is governed by when it
+   * TAKES OFF and everything has to finish before it.
+   *
+   * `time` is set to whichever end this names, so ordering, conflict checks
+   * and the displayed headline all read the same field.
+   */
+  flightRole?: "arrival" | "departure";
   cabinClass?: string;
   hotelName?: string;
   city?: string;
@@ -296,8 +308,14 @@ export function formatMinutes(totalMinutes: number): string {
 }
 
 export function getEndTime(startTime: string, durationMinutes: string) {
+  // A hotel row's time is a booking label ("Check-in" / "Overnight stay" /
+  // "Check-out"), not a clock value — there is no time of day to add a
+  // duration to. Returning it unchanged keeps callers honest instead of
+  // producing the string "NaN:NaN" and rendering that as a real time.
+  if (!REAL_TIME_PATTERN.test(startTime)) return startTime;
+
   const [hours, minutes] = startTime.split(":").map(Number);
-  const totalMinutes = hours * 60 + minutes + Number(durationMinutes);
+  const totalMinutes = hours * 60 + minutes + (Number(durationMinutes) || 0);
   return `${String(Math.floor(totalMinutes / 60) % 24).padStart(2, "0")}:${String(totalMinutes % 60).padStart(2, "0")}`;
 }
 
@@ -626,19 +644,58 @@ export function buildDaysFromPackage(pkg: CreatorPackageDetail): BuilderDay[] {
     });
   }
 
-  for (const flight of pkg.flights) {
-    nextId += 1;
+  // Resolved up front because a flight's role depends on where it sits
+  // relative to the OTHER flights, which a single pass cannot know.
+  const plannedFlights = pkg.flights.map((flight) => {
     const scheduleDatetime = flight.arrival_datetime ?? flight.departure_datetime;
     const isRelative = flight.day_number !== null && flight.day_number !== undefined;
-    const dayIndex = isRelative ? dayIndexFromNumber(flight.day_number) : dayIndexFor(scheduleDatetime ?? null);
+    return {
+      flight,
+      scheduleDatetime,
+      isRelative,
+      dayIndex: isRelative ? dayIndexFromNumber(flight.day_number) : dayIndexFor(scheduleDatetime ?? null),
+    };
+  });
+
+  // The earliest flight brings the traveller in; the latest takes them home.
+  // Anything between is a leg out of wherever they currently are, so it is
+  // governed by its take-off like the homeward one. A lone flight on day 1
+  // is an arrival, which is the only sensible reading of a trip that starts
+  // with a flight.
+  const flightDayIndexes = plannedFlights.map((entry) => entry.dayIndex);
+  const firstFlightDay = flightDayIndexes.length ? Math.min(...flightDayIndexes) : -1;
+  const lastFlightDay = flightDayIndexes.length ? Math.max(...flightDayIndexes) : -1;
+  // With every flight on one day, day position can't separate out from home: a
+  // leg that lands back where the trip started is the flight home. "Started" is
+  // the earliest take-off, not the first stored row, which can be in any order.
+  // Compared as local clocks: stored rows mix "HH:MM" and ISO datetimes.
+  const takeOff = ({ flight }: (typeof plannedFlights)[number]) => flight.departure_time
+    || extractClockTimeInZone(flight.departure_datetime ?? null, timezoneForIata(flight.origin_iata)) || "";
+  const homeIata = [...plannedFlights]
+    .sort((a, b) => a.dayIndex - b.dayIndex || takeOff(a).localeCompare(takeOff(b)))[0]?.flight.origin_iata;
+
+  for (const { flight, scheduleDatetime, isRelative, dayIndex } of plannedFlights) {
+    nextId += 1;
     const legacyTime = extractClockTimeInZone(scheduleDatetime ?? null, timezoneForIata(flight.destination_iata ?? flight.origin_iata));
     const departureTime = flight.departure_time
       || extractClockTimeInZone(flight.departure_datetime ?? null, timezoneForIata(flight.origin_iata));
     const arrivalTime = flight.arrival_time
       || extractClockTimeInZone(flight.arrival_datetime ?? null, timezoneForIata(flight.destination_iata));
+
+    const flightRole: "arrival" | "departure" =
+      firstFlightDay === lastFlightDay
+        ? (dayIndex === 0 && (!homeIata || flight.destination_iata !== homeIata) ? "arrival" : "departure")
+        : dayIndex === firstFlightDay ? "arrival" : "departure";
+
+    // The anchor is the end of the flight that actually constrains the day:
+    // when you land, or when you must have left. Sorting, overlap checks and
+    // the headline all read this one value, so they cannot disagree.
+    const anchorTime = flightRole === "arrival" ? arrivalTime : departureTime;
+
     days[dayIndex].items.push({
       id: nextId,
-      time: isRelative ? departureTime || "09:00" : legacyTime || "09:00",
+      time: isRelative ? anchorTime || "09:00" : legacyTime || "09:00",
+      flightRole,
       type: "FLIGHT",
       title: [flight.origin_iata, flight.destination_iata].filter(Boolean).join(" to ") || flight.airline || "Flight",
       subtitle: [flight.airline, formatFlightDuration(flight.departure_datetime, flight.arrival_datetime)].filter(Boolean).join(" · ") || undefined,

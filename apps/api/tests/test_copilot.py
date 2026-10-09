@@ -225,16 +225,19 @@ def test_unknown_package_is_hidden(db):
     db.model.assert_not_called()
 
 
+
 def test_package_fetch_uses_narrow_select(db):
     client.post(BASE, json={"prompt": "Tokyo food"})
     package_calls = [c for c in db.calls if c[1] == "travel_packages"]
     assert package_calls
     for _, _, kwargs in package_calls:
-        assert kwargs["params"]["select"] == (
-            "title,destination_city,destination_country,duration_days,"
-            "package_flights(id),package_hotels(id),package_activities(id)"
-        )
-
+        assert kwargs["params"]["select"] == service.PACKAGE_SELECT
+    # Asserting the constant alone would also pass for select="*", so pin the
+    # shape: named scalars, and joins that name their columns.
+    assert "*" not in service.PACKAGE_SELECT
+    assert service.PACKAGE_SELECT.startswith(
+        "title,destination_city,destination_country,duration_days,"
+    )
 
 def test_activity_turn_does_not_scan_the_flight_catalog(db):
     client.post(BASE, json={"prompt": "Tokyo food"})

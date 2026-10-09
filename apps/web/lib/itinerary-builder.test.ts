@@ -451,6 +451,51 @@ test("flightArrivalDayOffset is 0 for a same-day flight and null when a time is 
   assert.equal(flightArrivalDayOffset(null, "Australia/Sydney", "2026-04-01T13:00:00Z", "Australia/Sydney"), null);
 });
 
+test("on a trip with both flights on the same day, the flight home is anchored by its take-off", () => {
+  const leg = (origin: string, destination: string, departure: string, arrival: string) => ({
+    flight_id: null, airline: "Qantas", flight_number: null, origin_iata: origin, destination_iata: destination,
+    cabin_class: null, price_aud: 200, departure_time: departure, arrival_time: arrival,
+    departure_datetime: null, arrival_datetime: null, day_number: 1,
+  });
+  const pkg: CreatorPackageDetail = {
+    package_id: "pkg-same-day",
+    title: "Melbourne Day Trip",
+    duration_days: 1,
+    days: [],
+    hotels: [],
+    activities: [],
+    flights: [leg("SYD", "MEL", "08:00", "09:30"), leg("MEL", "SYD", "19:00", "20:30")],
+  };
+  const flights = buildDaysFromPackage(pkg)[0].items.filter((entry) => entry.type === "FLIGHT");
+  assert.deepEqual(flights.map((entry) => [entry.title, entry.flightRole, entry.time]), [
+    ["SYD to MEL", "arrival", "09:30"],
+    ["MEL to SYD", "departure", "19:00"],
+  ]);
+
+  // Stored order isn't take-off order: the flight home listed first must not become "home".
+  const reversed = buildDaysFromPackage({ ...pkg, flights: [...pkg.flights].reverse() })[0].items
+    .filter((entry) => entry.type === "FLIGHT");
+  assert.deepEqual(reversed.map((entry) => [entry.title, entry.flightRole]), [
+    ["SYD to MEL", "arrival"],
+    ["MEL to SYD", "departure"],
+  ]);
+
+  // Mixed date formats still find the earliest take-off.
+  const mixed = buildDaysFromPackage({ ...pkg, flights: [
+    { ...pkg.flights[1] },
+    { ...pkg.flights[0], departure_time: null, departure_datetime: "2026-05-01T08:00:00+10:00", arrival_datetime: "2026-05-01T09:30:00+10:00" },
+  ] })[0].items.filter((entry) => entry.type === "FLIGHT");
+  assert.deepEqual(mixed.map((entry) => [entry.title, entry.flightRole]), [
+    ["SYD to MEL", "arrival"],
+    ["MEL to SYD", "departure"],
+  ]);
+
+  // A lone day-1 flight with no airport codes is still the arrival.
+  const [lone] = buildDaysFromPackage({ ...pkg, flights: [{ ...pkg.flights[0], origin_iata: null, destination_iata: null }] })[0].items
+    .filter((entry) => entry.type === "FLIGHT");
+  assert.equal(lone.flightRole, "arrival");
+});
+
 test("the AI day summary loads into the story textarea, not the day meta", () => {
   const pkg: CreatorPackageDetail = {
     package_id: "pkg-2",
