@@ -225,7 +225,7 @@ function PhotoStrip({ photos, label }: { photos: DayPhoto[]; label: string }) {
 }
 
 function PhotoReview({ photos }: { photos: ReviewPhoto[] }) {
-  const unplaced = photos.filter((photo) => !photo.placements.length).length;
+  const unplaced = photos.filter((photo) => !photo.isCover && !photo.placements.length).length;
   return (
     <section className="admin-detail-photos" aria-labelledby="admin-detail-photos-title">
       <div className="admin-detail-section-heading">
@@ -253,7 +253,7 @@ function PhotoReview({ photos }: { photos: ReviewPhoto[] }) {
                   <figcaption>
                     <span className="admin-detail-photo__badges">
                       {photo.isCover ? <b>Cover</b> : null}
-                      {photo.placements.length ? null : <b className="admin-detail-photo__warn">Not placed</b>}
+                      {photo.isCover || photo.placements.length ? null : <b className="admin-detail-photo__warn">Not placed</b>}
                     </span>
                     {photo.caption ? <span>{photo.caption}</span> : null}
                     {photo.placements.length ? <small>{photo.placements.join(", ")}</small> : null}

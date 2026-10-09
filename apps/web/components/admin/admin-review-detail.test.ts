@@ -277,3 +277,18 @@ test("the header badge shows the package's real status", () => {
   assert.equal(badge("rejected"), "Rejected");
   assert.equal(badge("live"), "Live");
 });
+
+test("the cover is in use, so it is never flagged as unplaced", () => {
+  const html = render({
+    packageDetail: {
+      ...packageDetail,
+      cover_image_url: "https://images.example.com/cover.jpg",
+      media: [
+        { media_id: "m1", url: "https://images.example.com/cover.jpg" },
+        { media_id: "m2", url: "https://images.example.com/loose.jpg" },
+      ],
+    },
+  });
+  assert.match(html, /1 photo is not placed on a day or stop\./);
+  assert.equal((html.match(/>Not placed</g) ?? []).length, 1);
+});
