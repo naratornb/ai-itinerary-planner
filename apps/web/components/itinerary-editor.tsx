@@ -52,6 +52,7 @@ import { APP_ROUTES } from "../lib/routes";
 import { iataOf } from "../lib/ai/itinerary";
 import { ACTIVITY_GAP_MIN, minutesToTime, TRANSFER_BUFFER_MIN } from "../lib/feasibility";
 import { supabase } from "../lib/supabase/client";
+import { feasibilityStorageKey, toSubmittedFeasibility } from "../lib/feasibility-result";
 import { baselineOf, liveView, localChecks, type LiveBaseline } from "../lib/live-feasibility";
 import Icon from "./icon";
 
@@ -2396,6 +2397,10 @@ export default function ItineraryEditor({
       // just approved here, without re-fetching (see review-draft.ts).
       try {
         window.sessionStorage.setItem(itinerarySnapshotStorageKey(pkg.package_id), JSON.stringify({ title: packageTitle, days }));
+        // The check that cleared this submission, for the review page to send with
+        // the submit request so the admin can see the score and suggestions.
+        const checked = toSubmittedFeasibility(feasResult, lastCheckedAt);
+        if (checked) window.sessionStorage.setItem(feasibilityStorageKey(pkg.package_id), JSON.stringify(checked));
       } catch {
         // best-effort only
       }

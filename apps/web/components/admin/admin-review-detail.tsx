@@ -12,6 +12,7 @@ import {
   type AdminPackageDetail,
 } from "../../lib/admin-api";
 import { loadAdminPackageForReview } from "../../lib/admin-package-supabase";
+import type { FeasibilityIssue, SubmittedFeasibility } from "../../lib/feasibility-result";
 import { STATUS_LABELS } from "../../lib/creator-api";
 import {
   formatAdminDestination,
@@ -301,6 +302,8 @@ function ItineraryItem({ item }: { item: TimelineItem }) {
   );
 }
 
+const DAY_TABS_SHOWN = 5;
+
 function Itinerary({
   days,
   selectedDay,
@@ -310,7 +313,11 @@ function Itinerary({
   selectedDay: number;
   onSelectDay: (day: number) => void;
 }) {
-  const activeDay = days.find((day) => day.day === selectedDay) ?? days[0];
+  const activeIndex = Math.max(0, days.findIndex((day) => day.day === selectedDay));
+  const activeDay = days[activeIndex];
+  // Only a window of days is shown; the arrows step through them one at a time.
+  const windowStart = Math.max(0, Math.min(activeIndex - Math.floor(DAY_TABS_SHOWN / 2), days.length - DAY_TABS_SHOWN));
+  const visibleDays = days.slice(windowStart, windowStart + DAY_TABS_SHOWN);
   return (
     <section className="admin-detail-itinerary" aria-labelledby="admin-detail-itinerary-title">
       <div className="admin-detail-section-heading">
@@ -319,19 +326,39 @@ function Itinerary({
           <p>Review the submitted sequence, timings, and component prices.</p>
         </div>
       </div>
-      <div className="admin-detail-day-tabs" role="tablist" aria-label="Itinerary days">
-        {days.map((day) => (
-          <button
-            type="button"
-            role="tab"
-            aria-selected={day.day === activeDay?.day}
-            key={day.id}
-            onClick={() => onSelectDay(day.day)}
-          >
-            <span>Day {day.day}</span>
-            <small>{day.title}</small>
-          </button>
-        ))}
+      <div className="admin-detail-day-pager">
+        <button
+          type="button"
+          className="admin-detail-day-pager__arrow"
+          aria-label="Previous day"
+          disabled={activeIndex <= 0}
+          onClick={() => onSelectDay(days[activeIndex - 1].day)}
+        >
+          <Icon name="chevron" size={16} />
+        </button>
+        <div className="admin-detail-day-tabs" role="tablist" aria-label="Itinerary days">
+          {visibleDays.map((day) => (
+            <button
+              type="button"
+              role="tab"
+              aria-selected={day.day === activeDay?.day}
+              key={day.id}
+              onClick={() => onSelectDay(day.day)}
+            >
+              <span>Day {day.day}</span>
+              <small>{day.title}</small>
+            </button>
+          ))}
+        </div>
+        <button
+          type="button"
+          className="admin-detail-day-pager__arrow admin-detail-day-pager__arrow--next"
+          aria-label="Next day"
+          disabled={activeIndex >= days.length - 1}
+          onClick={() => onSelectDay(days[activeIndex + 1].day)}
+        >
+          <Icon name="chevron" size={16} />
+        </button>
       </div>
       {activeDay ? (
         <article className="admin-detail-day" role="tabpanel">
@@ -382,17 +409,171 @@ function Pricing({ pkg }: { pkg: AdminPackageDetail }) {
   );
 }
 
-function LastDecision({ approval, pending }: { approval: AdminApprovalRecord; pending: boolean }) {
-  const approved = approval.decision === "approved";
+const FEASIBILITY_MINIMUM_SCORE = 70;
+const SUGGESTIONS_SHOWN = 2;
+
+function issueDay(field?: string): number | null {
+  const match = field?.match(/^Day (\d+)/);
+  return match ? Number(match[1]) : null;
+}
+
+function formatCheckedAt(iso: string): string {
+  const date = new Date(iso);
+  if (!iso || !Number.isFinite(date.getTime())) return "";
+  return new Intl.DateTimeFormat("en-AU", { dateStyle: "medium", timeStyle: "short" }).format(date);
+}
+
+function FeasibilityIssueCard({ issue, onGoToDay }: { issue: FeasibilityIssue; onGoToDay: (day: number) => void }) {
+  const day = issueDay(issue.field);
   return (
-    <section className="admin-detail-last-decision" aria-label="Previous decision">
-      <h3>{pending ? "Previous decision" : "Last decision"}</h3>
+    <li className="admin-detail-feas__issue">
+      <strong>{issue.affected_item}</strong>
+      <p>{issue.message}</p>
+      {day !== null ? (
+        <button type="button" className="admin-detail-feas__goto" onClick={() => onGoToDay(day)}>
+          Go to Day {day} <Icon name="chevron" size={13} />
+        </button>
+      ) : null}
+    </li>
+  );
+}
+
+// Read-only view of what the creator's editor reported when the package was
+// submitted. Submission requires no critical issues and a passing score, so a
+// result is expected to hold suggestions only. The server does not enforce that
+// gate, so a result that does carry critical issues is flagged as unexpected
+// rather than given a layout of its own.
+function FeasibilityCard({ result, onGoToDay }: { result: SubmittedFeasibility | null | undefined; onGoToDay: (day: number) => void }) {
+  const [open, setOpen] = useState(true);
+  const [showAll, setShowAll] = useState(false);
+
+  if (!result) {
+    return (
+      <section className="admin-detail-feas" aria-labelledby="admin-detail-feas-title">
+        <div className="admin-detail-feas__head"><h2 id="admin-detail-feas-title">Feasibility check</h2></div>
+        <div className="admin-detail-feas__empty">
+          <h3>No feasibility result recorded</h3>
+          <p>This package was submitted before results were saved. Review the itinerary and photos directly.</p>
+        </div>
+      </section>
+    );
+  }
+
+  const critical = result.hard_errors.length > 0;
+  const score = result.quality_score;
+  const passing = score !== null && score >= FEASIBILITY_MINIMUM_SCORE;
+  const suggestions = result.soft_warnings;
+  const visible = showAll ? suggestions : suggestions.slice(0, SUGGESTIONS_SHOWN);
+  const checkedAt = formatCheckedAt(result.checked_at);
+
+  return (
+    <section className="admin-detail-feas" aria-labelledby="admin-detail-feas-title">
+      <div className="admin-detail-feas__head">
+        <h2 id="admin-detail-feas-title">Feasibility check</h2>
+        <span className="admin-detail-feas__source">From creator</span>
+      </div>
+
+      <div className="admin-detail-feas__score">
+        <div className="admin-detail-feas__score-top">
+          <span>Score</span>
+          <span>Minimum score: {FEASIBILITY_MINIMUM_SCORE}</span>
+        </div>
+        {score !== null ? (
+          <>
+            <div className="admin-detail-feas__score-value">
+              <strong>{score}</strong>
+              <span>/100</span>
+              <em className={passing ? "admin-detail-feas__badge admin-detail-feas__badge--pass" : "admin-detail-feas__badge admin-detail-feas__badge--fail"}>
+                {passing ? "Above minimum" : "Below minimum"}
+              </em>
+            </div>
+            <div className="admin-detail-feas__track" role="meter" aria-label="Package quality score" aria-valuemin={0} aria-valuemax={100} aria-valuenow={score}>
+              <span className={passing ? "admin-detail-feas__fill admin-detail-feas__fill--pass" : "admin-detail-feas__fill"} style={{ width: `${Math.min(100, Math.max(0, score))}%` }} />
+              <i style={{ left: `${FEASIBILITY_MINIMUM_SCORE}%` }} aria-hidden="true" />
+            </div>
+          </>
+        ) : (
+          <p className="admin-detail-feas__hint">No score was recorded.</p>
+        )}
+      </div>
+
+      {critical ? (
+        <div className="admin-detail-feas__alert" role="alert">
+          <strong>Unexpected critical issues</strong>
+          <p>A package can&apos;t normally be submitted with any, so treat this result with caution and review the package directly.</p>
+          <ul>
+            {result.hard_errors.map((issue, index) => (
+              <li key={`${issue.error_code}-${index}`}>{issue.affected_item}: {issue.message}</li>
+            ))}
+          </ul>
+        </div>
+      ) : (
+        <p className="admin-detail-feas__clear"><Icon name="check" size={16} /> No critical issues at submission</p>
+      )}
+
+      {suggestions.length === 0 ? (
+        critical ? null : <p className="admin-detail-feas__clear admin-detail-feas__clear--quiet"><Icon name="check" size={16} /> No suggestions</p>
+      ) : (
+        <div className="admin-detail-feas__suggestions">
+          <button type="button" className="admin-detail-feas__toggle" aria-expanded={open} aria-controls="admin-detail-feas-list" onClick={() => setOpen((current) => !current)}>
+            <span><i aria-hidden="true" />Suggestions <em>{suggestions.length}</em></span>
+            <Icon name="chevron" size={16} />
+          </button>
+          {open ? (
+            <div id="admin-detail-feas-list">
+              <ul className="admin-detail-feas__issues" aria-label="Suggestions">
+                {visible.map((issue, index) => (
+                  <FeasibilityIssueCard key={`${issue.error_code}-${index}`} issue={issue} onGoToDay={onGoToDay} />
+                ))}
+              </ul>
+              {suggestions.length > SUGGESTIONS_SHOWN ? (
+                <button type="button" className="admin-detail-feas__more" onClick={() => setShowAll((current) => !current)}>
+                  {showAll ? "Show fewer" : `Show ${suggestions.length - SUGGESTIONS_SHOWN} more`}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      )}
+
+      <div className="admin-detail-feas__foot">
+        <p>Checked by the creator at submission{checkedAt ? ` · ${checkedAt}` : ""}</p>
+        <p>Calculated in the creator&apos;s browser, not verified by the server.</p>
+      </div>
+    </section>
+  );
+}
+
+function DecisionRecord({ approval, pending }: { approval: AdminApprovalRecord | null | undefined; pending: boolean }) {
+  if (!approval) {
+    return (
+      <section className="admin-detail-last-decision" aria-label="Review outcome">
+        <h3>Review outcome</h3>
+        <p>No decision record was found for this package.</p>
+      </section>
+    );
+  }
+  const approved = approval.decision === "approved";
+  // The reason an admin gave: the message sent to the creator when changes
+  // were requested, or the internal note left with an approval.
+  const reason = (approved ? approval.notes : approval.rejection_reason)?.trim();
+  const extraNotes = !approved ? approval.notes?.trim() : "";
+  return (
+    <section className="admin-detail-last-decision" aria-label={pending ? "Previous decision" : "Review outcome"}>
+      <h3>{pending ? "Previous decision" : "Review outcome"}</h3>
       <p className="admin-detail-last-decision__meta">
         <strong>{approved ? "Approved" : "Changes requested"}</strong>
         <span>{formatSubmittedAt(approval.reviewed_at ?? null)}</span>
       </p>
-      {approval.rejection_reason ? <p><b>Reason sent to creator</b>{approval.rejection_reason}</p> : null}
-      {approval.notes ? <p><b>Internal notes</b>{approval.notes}</p> : null}
+      {approved && !reason ? (
+        <p className="admin-detail-last-decision__meta"><strong>Note</strong><span>—</span></p>
+      ) : (
+        <p>
+          <b>{approved ? "Note" : "Reason sent to creator"}</b>
+          {reason || "No reason was recorded."}
+        </p>
+      )}
+      {extraNotes ? <p><b>Internal notes</b>{extraNotes}</p> : null}
     </section>
   );
 }
@@ -401,37 +582,31 @@ function DecisionPanel({
   pkg,
   onOpenApprove,
   onOpenReject,
+  onSelectDay,
 }: {
   pkg: AdminPackageDetail;
   onOpenApprove: () => void;
   onOpenReject: () => void;
+  onSelectDay: (day: number) => void;
 }) {
   const canDecide = pkg.status === "pending_review";
   return (
-    <aside className="admin-detail-sidebar" aria-label="Review decision">
+    <aside className="admin-detail-sidebar" aria-label={canDecide ? "Review decision" : "Review summary"}>
+      {canDecide ? (
+        <section className="admin-detail-decision">
+          <h2>Review decision</h2>
+          <p>Approve this package or return it to the creator with a clear reason.</p>
+          <button className="admin-review-primary-button" type="button" onClick={onOpenApprove}>
+            Approve package
+          </button>
+          <button className="admin-detail-request-button" type="button" onClick={onOpenReject}>
+            Request changes
+          </button>
+        </section>
+      ) : null}
+      {canDecide ? (pkg.latest_approval ? <DecisionRecord approval={pkg.latest_approval} pending /> : null) : <DecisionRecord approval={pkg.latest_approval} pending={false} />}
+      <FeasibilityCard result={pkg.latest_feasibility} onGoToDay={onSelectDay} />
       <Pricing pkg={pkg} />
-      <section className="admin-detail-decision">
-        <h2>Review decision</h2>
-        <p>Approve this package or return it to the creator with a clear reason.</p>
-        <button
-          className="admin-review-primary-button"
-          type="button"
-          disabled={!canDecide}
-          onClick={onOpenApprove}
-        >
-          Approve package
-        </button>
-        <button
-          className="admin-detail-request-button"
-          type="button"
-          disabled={!canDecide}
-          onClick={onOpenReject}
-        >
-          Request changes
-        </button>
-        {!canDecide ? <p className="admin-detail-decision__notice">This package is no longer pending review.</p> : null}
-      </section>
-      {pkg.latest_approval ? <LastDecision approval={pkg.latest_approval} pending={canDecide} /> : null}
     </aside>
   );
 }
@@ -564,7 +739,7 @@ export function AdminReviewDetailView(props: AdminReviewDetailViewProps): ReactN
             <PhotoReview photos={reviewPhotos(props.packageDetail, days)} />
             <Itinerary days={days} selectedDay={props.selectedDay} onSelectDay={props.onSelectDay} />
           </div>
-          <DecisionPanel pkg={props.packageDetail} onOpenApprove={props.onOpenApprove} onOpenReject={props.onOpenReject} />
+          <DecisionPanel pkg={props.packageDetail} onOpenApprove={props.onOpenApprove} onOpenReject={props.onOpenReject} onSelectDay={props.onSelectDay} />
         </div>
       </main>
       <DecisionModal {...props} />

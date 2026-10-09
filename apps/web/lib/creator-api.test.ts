@@ -386,3 +386,22 @@ test("submitPackage identifies an expired login", async () => {
 });
 
 
+
+test("submitPackage includes the feasibility result only when one is given", async () => {
+  const bodies: unknown[] = [];
+  const fetcher: typeof fetch = async (_input, init) => {
+    bodies.push(JSON.parse(String(init?.body)));
+    return Response.json({ package_id: "package-9", status: "pending_review" });
+  };
+  const result = { quality_score: 84, is_feasible: true, hard_errors: [], soft_warnings: [], checked_at: "2026-10-08T04:22:00.000Z" };
+
+  await submitPackage(fetcher, "http://localhost:8000", "t", "package-9", "Ready", result);
+  await submitPackage(fetcher, "http://localhost:8000", "t", "package-9", undefined, result);
+  await submitPackage(fetcher, "http://localhost:8000", "t", "package-9", undefined, null);
+
+  assert.deepEqual(bodies, [
+    { submission_note: "Ready", feasibility_result: result },
+    { feasibility_result: result },
+    {},
+  ]);
+});

@@ -1,4 +1,5 @@
 import type { CreatorPackageDetail } from "./creator-api";
+import { parseSubmittedFeasibility, type SubmittedFeasibility } from "./feasibility-result";
 
 export type ApprovalSort = "submitted_at_asc" | "submitted_at_desc";
 
@@ -81,6 +82,8 @@ export type AdminPackageDetail = Omit<
   vibes?: string[];
   creator?: AdminPackageCreator | null;
   latest_approval?: AdminApprovalRecord | null;
+  /** What the creator's editor reported when submitting; absent for packages submitted before it was recorded. */
+  latest_feasibility?: SubmittedFeasibility | null;
   pricing?: AdminPackagePricing | null;
 };
 
@@ -286,7 +289,10 @@ export async function fetchAdminPackage(
   if (!isAdminPackageDetail(body)) {
     throw new AdminApiError("Unable to load this package for review.", "request", response.status);
   }
-  return body;
+  // Client-supplied data: normalise it so a malformed value reads as "nothing recorded".
+  return "latest_feasibility" in body
+    ? { ...body, latest_feasibility: parseSubmittedFeasibility((body as { latest_feasibility?: unknown }).latest_feasibility) }
+    : body;
 }
 
 async function postDecision(
