@@ -12,6 +12,7 @@ import {
   type AdminPackageDetail,
 } from "../../lib/admin-api";
 import { loadAdminPackageForReview } from "../../lib/admin-package-supabase";
+import { STATUS_LABELS } from "../../lib/creator-api";
 import {
   formatAdminDestination,
   formatAdminDuration,
@@ -24,6 +25,7 @@ import { buildDaysFromPackage, type BuilderDay, type DayPhoto, type TimelineItem
 import { APP_ROUTES } from "../../lib/routes";
 import { supabase } from "../../lib/supabase/client";
 import Icon from "../icon";
+import { creatorPackageStatusStyle } from "../migrated-screens";
 import { AdminHeader } from "./admin-header";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -149,7 +151,9 @@ function ReviewIntro({ pkg }: { pkg: AdminPackageDetail }) {
           <h1>{pkg.title}</h1>
           <p>{formatAdminDestination(pkg)} · by {creatorName(pkg)}</p>
         </div>
-        <span className="admin-detail-status">Pending review</span>
+        <span className="admin-detail-status" style={creatorPackageStatusStyle(pkg.status)}>
+          {pkg.status === "pending_review" ? "Pending review" : STATUS_LABELS[pkg.status] ?? pkg.status}
+        </span>
       </div>
       <p className="admin-detail-submitted">Submitted {formatSubmittedAt(pkg.submitted_at ?? null)}</p>
     </section>

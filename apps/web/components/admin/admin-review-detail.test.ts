@@ -268,3 +268,12 @@ test("a package with no uploads says so instead of hiding the photo section", ()
   assert.match(html, /Photos <span[^>]*>0<\/span>/);
   assert.match(html, /No photos were uploaded for this package\./);
 });
+
+test("the header badge shows the package's real status", () => {
+  const badge = (status: string) =>
+    render({ packageDetail: { ...packageDetail, status } }).match(/<span class="admin-detail-status"[^>]*>([^<]*)<\/span>/)?.[1];
+  assert.equal(badge("pending_review"), "Pending review");
+  assert.equal(badge("approved"), "Approved");
+  assert.equal(badge("rejected"), "Rejected");
+  assert.equal(badge("live"), "Live");
+});
