@@ -665,6 +665,14 @@ export function buildDaysFromPackage(pkg: CreatorPackageDetail): BuilderDay[] {
   const flightDayIndexes = plannedFlights.map((entry) => entry.dayIndex);
   const firstFlightDay = flightDayIndexes.length ? Math.min(...flightDayIndexes) : -1;
   const lastFlightDay = flightDayIndexes.length ? Math.max(...flightDayIndexes) : -1;
+  // With every flight on one day, day position can't separate out from home: a
+  // leg that lands back where the trip started is the flight home. "Started" is
+  // the earliest take-off, not the first stored row, which can be in any order.
+  // Compared as local clocks: stored rows mix "HH:MM" and ISO datetimes.
+  const takeOff = ({ flight }: (typeof plannedFlights)[number]) => flight.departure_time
+    || extractClockTimeInZone(flight.departure_datetime ?? null, timezoneForIata(flight.origin_iata)) || "";
+  const homeIata = [...plannedFlights]
+    .sort((a, b) => a.dayIndex - b.dayIndex || takeOff(a).localeCompare(takeOff(b)))[0]?.flight.origin_iata;
 
   for (const { flight, scheduleDatetime, isRelative, dayIndex } of plannedFlights) {
     nextId += 1;
@@ -676,7 +684,7 @@ export function buildDaysFromPackage(pkg: CreatorPackageDetail): BuilderDay[] {
 
     const flightRole: "arrival" | "departure" =
       firstFlightDay === lastFlightDay
-        ? (dayIndex === 0 ? "arrival" : "departure")
+        ? (dayIndex === 0 && (!homeIata || flight.destination_iata !== homeIata) ? "arrival" : "departure")
         : dayIndex === firstFlightDay ? "arrival" : "departure";
 
     // The anchor is the end of the flight that actually constrains the day:

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { annotateItems, contentMatchesSavedSnapshot, deriveFlightType, findTimeConflict, flightForItem, isCreatorPickComplete, placeUnassociatedMedia, referenceFlightPresentation, removeItemPhotoFromDays } from "./itinerary-editor";
+import { annotateItems, contentMatchesSavedSnapshot, deriveFlightType, findTimeConflict, flightCardTimes, flightForItem, isCreatorPickComplete, placeUnassociatedMedia, referenceFlightPresentation, removeItemPhotoFromDays } from "./itinerary-editor";
 import type { BuilderDay, TimelineItem } from "../lib/itinerary-builder";
 
 function item(overrides: Partial<TimelineItem> & { id: number; time: string }): TimelineItem {
@@ -563,9 +563,32 @@ test("the day's main photo has a remove button wired to removeDayPhoto (DEV-163)
   assert.match(dayPhoto, /remove-photo-btn[\s\S]*?removeDayPhoto/);
 });
 
-test("an overnight arrival flight's card says it departs the day before", () => {
+test("a flight card shows the end that anchors its day, and the other end underneath", () => {
+  // Regression: after #117 and #118 met, the card printed item.time after "from",
+  // and item.time is the landing for an arrival, so it read "05:44 · from 05:44".
+  const flight = (overrides: Partial<TimelineItem>) =>
+    item({ id: 1, type: "FLIGHT", icon: "plane", departureTime: "20:50", arrivalTime: "05:44", ...overrides, time: overrides.time ?? "05:44" });
+
+  assert.deepEqual(flightCardTimes(flight({ flightRole: "arrival" }), false), { main: "05:44", sub: "from 20:50" });
+  assert.deepEqual(flightCardTimes(flight({ flightRole: "arrival" }), true), { main: "05:44", sub: "Departs 20:50 the day before" });
+  assert.deepEqual(
+    flightCardTimes(flight({ flightRole: "departure", time: "21:00", departureTime: "21:00", arrivalTime: "08:00" }), false),
+    { main: "21:00", sub: "lands 08:00" },
+  );
+  // An older dated flight carries its landing in item.time whatever its role.
+  assert.deepEqual(
+    flightCardTimes(flight({ flightRole: "departure", time: "08:00", departureTime: "21:00", arrivalTime: "08:00" }), false),
+    { main: "21:00", sub: "lands 08:00" },
+  );
+
+  // A missing end: show the time there is, and no "from"/"lands" line repeating it.
+  assert.deepEqual(flightCardTimes(flight({ flightRole: "arrival", time: "09:00", departureTime: "10:00", arrivalTime: undefined }), false), { main: "10:00", sub: undefined });
+  assert.deepEqual(flightCardTimes(flight({ flightRole: "departure", time: "09:00", departureTime: undefined, arrivalTime: "14:00" }), false), { main: "14:00", sub: undefined });
+
+  // And the card renders from it rather than from item.time.
   const source = readFileSync(new URL("./itinerary-editor.tsx", import.meta.url), "utf8");
-  assert.match(source, /landing\?\.overnight && landing\.flight\.id === item\.id \? `Departs \$\{item\.time\} the day before` : `from \$\{item\.time\}`/);
+  assert.match(source, /const flightTimes = item\.type === "FLIGHT" \? flightCardTimes\(item,/);
+  assert.match(source, /\{flightTimes\?\.main \?\? item\.time\}/);
 });
 
 test("an overnight arrival flight ends at landing on its own day, so a stop after landing isn't a conflict", () => {
