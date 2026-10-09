@@ -40,7 +40,7 @@ info:
     Error responses use `ErrorResponse`, except user-management upstream failures, which return an `error` string.
     All monetary values are stored and returned as **whole AUD dollars** (integer), matching the database columns.
 
-  version: "2.4.0"
+  version: "2.8.0"
   license:
     name: Academic Use Only
 
@@ -497,6 +497,7 @@ components:
           properties:
             flights:
               type: array
+              description: Optional. Omit or send an empty array for a local travel package without flights.
               items:
                 $ref: '#/components/schemas/FlightInput'
             hotels:
@@ -588,6 +589,7 @@ components:
               type: array
               items:
                 $ref: '#/components/schemas/FlightDetail'
+              description: Empty for a local travel package without flight components.
             hotels:
               type: array
               items:
@@ -754,7 +756,17 @@ components:
 
     FlightInput:
       type: object
-      required: [origin_iata, destination_iata, airline, departure_datetime, arrival_datetime]
+      required: [origin_iata, destination_iata, airline]
+      description: |
+        A package flight is a reference flight: it defines the intended route
+        and itinerary flow, not a seat every buyer takes. Buyers choose real
+        travel dates and departure airport later.
+        Supply either `departure_datetime`/`arrival_datetime` (both together;
+        dated flights), or `day_number` + `departure_time` (relative
+        schedule, no calendar dates). Otherwise 422 "flight requires
+        departure_datetime/arrival_datetime or day_number/departure_time".
+        Sending only one of the datetimes returns 422 "flight requires both
+        departure_datetime and arrival_datetime".
       properties:
         origin_iata:
           type: string
@@ -776,13 +788,33 @@ components:
         departure_datetime:
           type: string
           format: date-time
-          description: Real flight departure timestamp. Flights are not eligible for the undated/relative-day placeholders that hotels and activities support — always required in the existing format.
+          nullable: true
+          description: Dated flights only. Required together with arrival_datetime.
           example: "2025-07-14T06:30:00+10:00"
         arrival_datetime:
           type: string
           format: date-time
-          description: Must be strictly after departure_datetime.
+          nullable: true
+          description: Dated flights only. Must be strictly after departure_datetime.
           example: "2025-07-14T11:45:00+08:00"
+        departure_time:
+          type: string
+          pattern: '^([01]\d|2[0-3]):[0-5]\d$'
+          nullable: true
+          description: Local clock time at the origin (HH:MM). Required with day_number when no datetimes are supplied.
+          example: "21:00"
+        arrival_time:
+          type: string
+          pattern: '^([01]\d|2[0-3]):[0-5]\d$'
+          nullable: true
+          description: Local clock time at the destination (HH:MM). Not compared with departure_time — they are in different time zones.
+          example: "06:00"
+        duration_minutes:
+          type: integer
+          minimum: 1
+          nullable: true
+          description: Elapsed flight time; disambiguates overnight arrivals.
+          example: 585
         cabin_class:
           type: string
           enum: [economy, premium_economy, business, first]
@@ -795,7 +827,7 @@ components:
           type: integer
           minimum: 1
           nullable: true
-          description: Timeline placement (1..duration_days). Independent of departure_datetime's own date.
+          description: Timeline placement (1..duration_days, checked on save → 422 SAVE_PRECONDITION_FAILED). Required with departure_time for relative-schedule flights.
         sequence_order:
           type: integer
           minimum: 1
@@ -977,6 +1009,12 @@ components:
           nullable: true
           description: Per-person activity price in whole AUD dollars.
           example: 120
+        item_type:
+          type: string
+          nullable: true
+          description: Component kind — `activity` (default) or `creator_pick` for a creator's own non-bookable recommendation.
+          enum: [activity, creator_pick]
+          example: "creator_pick"
         category:
           type: string
           nullable: true
@@ -1998,6 +2036,8 @@ paths:
       description: |
         Creates a new travel package in `draft` status. The package may include
         initial flights, hotels, and activities, or these can be added later.
+        Flights are optional throughout the review and publication workflow.
+        A package with zero flight components is a local travel package.
 
         The package is not visible in the marketplace until it has been submitted,
         approved, and published.
@@ -2077,6 +2117,7 @@ paths:
       description: |
         Returns the full detail view of a package including all flights, hotels,
         activities, media, and the latest approval record.
+        Local travel packages return `flights: []`.
 
         Influencers may only retrieve their own packages. Admins may retrieve any package.
 
@@ -2233,10 +2274,12 @@ paths:
 
         **Pre-conditions (all must be met or 422 is returned):**
         - Package status is `draft` or `rejected`
-        - Package has at least one flight
         - Package has at least one hotel
         - Package has at least one activity
         - `base_price_aud` > 0
+
+        Flights are optional. A package with zero flight components is a local
+        travel package and follows the same approval and publication workflow.
 
         **Roles:** `influencer` (own packages only)
         **FR:** FR-I-102
@@ -2291,6 +2334,8 @@ paths:
       description: |
         Returns a paginated list of packages in `pending_review` status, ordered by
         `submitted_at` ascending (oldest submissions first, to prevent starvation).
+        With `view=decided`, returns packages already through review
+        (`approved`, `rejected`, `live`), ordered newest decision first.
 
         **Roles:** `admin`
         **FR:** FR-A-100
@@ -2304,6 +2349,12 @@ paths:
             type: string
             enum: [submitted_at_asc, submitted_at_desc]
             default: submitted_at_asc
+        - name: view
+          in: query
+          schema:
+            type: string
+            enum: [pending, decided]
+            default: pending
       responses:
         "200":
           description: Packages awaiting review.
@@ -2322,6 +2373,38 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         "403":
           $ref: '#/components/responses/Forbidden'
+
+  /approvals/{package_id}:
+    delete:
+      tags: [approvals]
+      summary: Delete a reviewed package
+      description: |
+        Permanently deletes a package and its associated records. Only packages
+        already through review (`approved`, `rejected`, `live`) may be deleted —
+        `pending_review` submissions stay in the queue and `draft` packages stay
+        with their creator.
+
+        **Roles:** `admin`
+        **FR:** FR-A-101
+      operationId: deleteReviewedPackage
+      responses:
+        "204":
+          description: Package deleted successfully. No response body.
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          description: Package is not in a deletable state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error_code: "INVALID_STATUS_TRANSITION"
+                message: "Cannot delete a package in status 'pending_review'; it must be 'approved', 'rejected' or 'live'."
 
   /approvals/{package_id}/approve:
     parameters:
@@ -3012,6 +3095,7 @@ paths:
         Returns the complete public view of a package, including all itinerary
         components (flights, hotels, activities) and media. Only packages with
         status `live` are accessible via this endpoint.
+        Local travel packages return `flights: []`.
 
         **Roles:** Public (no authentication required), `customer`
         **FR:** FR-C-100

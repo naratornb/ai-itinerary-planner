@@ -4,12 +4,14 @@ import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { Session } from "@supabase/supabase-js";
+import * as Dialog from "@radix-ui/react-dialog";
 
 import {
   createPackage,
   deletePackage,
   fetchOwnPackages,
   formatCreatorPackage,
+  publishPackage,
   resolveCreatorProfile,
   signInWithEmail,
   type CreatePackageInput,
@@ -17,6 +19,7 @@ import {
 } from "../lib/creator-api";
 import {
   fetchMarketplacePackages,
+  reusableSearchResults,
   searchMarketplacePackages,
   uniqueDestinationSuggestions,
   type MarketplacePackageSummary,
@@ -27,13 +30,17 @@ import {
   type WizardSelection,
 } from "../lib/ai/itinerary";
 import { wizardVibesStorageKey } from "../lib/review-draft";
+import { VIBES } from "../lib/vibes";
 import { supabase } from "../lib/supabase/client";
-import { creatorPackageRoute } from "../lib/routes";
+import { creatorPackageRoute, creatorPackageShareRoute } from "../lib/routes";
+import { hasAdminApprovalAccess } from "../lib/admin-api";
 import { creatorDashboardBackLink, dashboardActionAlignment } from "./navigation-model";
+import AiDisclaimer from "./ai-disclaimer";
 const creatorBannerImg = "/creator-banner.png";
+const LOGIN_API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 
-export type Screen = "login" | "marketplace" | "dashboard" | "builder" | "manual-builder" | "ai-wizard";
+export type Screen = "login" | "marketplace" | "dashboard" | "admin" | "builder" | "manual-builder" | "ai-wizard";
 
 export function nextRecommendationInfoOpen(
   open: boolean,
@@ -41,17 +48,6 @@ export function nextRecommendationInfoOpen(
 ) {
   return interaction === "leave" ? false : open || interaction === "focus" || interaction === "click";
 }
-
-// ─── Image URLs ────────────────────────────────────────────────────────────────
-const IMG = {
-  hero:      "https://images.unsplash.com/photo-1510391532992-e1b94a277a3a?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=1400",
-  tokyo:     "https://images.unsplash.com/photo-1573455494060-c5595004fb6c?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=800",
-  iceland:   "https://images.unsplash.com/photo-1488415032361-b7e238421f1b?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=800",
-  bali:      "https://images.unsplash.com/photo-1711609110590-5ad5c4599e56?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=800",
-  morocco:   "https://images.unsplash.com/photo-1489749798305-4fea3ae63d43?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=800",
-  santorini: "https://images.unsplash.com/photo-1560703650-ef3e0f254ae0?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=800",
-  maldives:  "https://images.unsplash.com/photo-1514282401047-d79a71a590e8?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=800",
-};
 
 // ─── DS Tokens (mirrors CSS custom properties) ─────────────────────────────────
 const C = {
@@ -68,6 +64,8 @@ const C = {
   successBg:     "#ECFDF5",
   warning:       "#A45B00",
   warningBg:     "#FFF8EC",
+  danger:        "#D40119",
+  dangerBg:      "#FEE2E2",   // --fc-danger-subtle
   focusRing:     "rgba(0,114,234,0.35)",
   shadowCard:    "0 1px 3px rgba(33,33,33,0.07)",
   shadowRaised:  "0 2px 8px rgba(33,33,33,0.09)",
@@ -75,6 +73,19 @@ const C = {
   radiusLg:      16,
   radiusPill:    999,
 };
+
+export function creatorPackageStatusStyle(statusKey: string) {
+  if (statusKey === "live" || statusKey === "approved") {
+    return { color: C.success, background: C.successBg };
+  }
+  if (statusKey === "pending_review") {
+    return { color: C.warning, background: C.warningBg };
+  }
+  if (statusKey === "rejected") {
+    return { color: C.danger, background: C.dangerBg };
+  }
+  return { color: C.secondary, background: C.subtle };
+}
 
 export function destinationOptionBackground(selected: boolean, hovered: boolean) {
   if (selected) return "#EFF6FF";
@@ -149,7 +160,7 @@ function BtnSecondary({
 }
 
 // Brand wordmark: Travel Marketplace® and tagline
-function MarketplaceBrandLogo() {
+export function MarketplaceBrandLogo() {
   return (
     <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", gap: 2 }}>
       <div style={{
@@ -181,16 +192,6 @@ const navItemBase: React.CSSProperties = {
   transition: "background-color 140ms ease",
   gap: 8,
 };
-
-function MarketplaceControl({ children, onClick }: { children: React.ReactNode; onClick?: () => void }) {
-  const [hov, setHov] = useState(false);
-  return (
-    <button onClick={onClick} onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)}
-      style={{ ...navItemBase, background: hov ? "rgba(0,0,0,0.08)" : "none" }}>
-      {children}
-    </button>
-  );
-}
 
 function MarketplaceNavItem({ children, onClick, active }: { children: React.ReactNode; onClick?: () => void; active?: boolean }) {
   const [hov, setHov] = useState(false);
@@ -288,20 +289,6 @@ export function TopNav({ screen, onNav }: { screen: Screen; onNav: (s: Screen) =
 
           {/* Utilities */}
           <div style={{ display: "flex", alignItems: "center", marginLeft: "auto" }}>
-            <MarketplaceControl>
-              {/* phone/tablet icon */}
-              <svg style={{ display: "inline-grid", width: 20, height: 20, placeItems: "center", flexShrink: 0 }}
-                viewBox="0 0 24 24" fill="currentColor">
-                <path d="M17 1.01L7 1c-1.1 0-2 .9-2 2v18c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V3c0-1.1-.9-1.99-2-1.99zM17 19H7V5h10v14z"/>
-              </svg>
-              Get the app
-            </MarketplaceControl>
-            <MarketplaceControl>Get a Quote</MarketplaceControl>
-            <MarketplaceControl>
-              Help
-              <Chevron />
-            </MarketplaceControl>
-
             <div style={{ position: "relative" }}>
               <button
                 onClick={() => marketplaceSession ? setAccountOpen((open) => !open) : onNav("login")}
@@ -455,16 +442,7 @@ export function TopNav({ screen, onNav }: { screen: Screen; onNav: (s: Screen) =
           </nav>
 
           {/* Contact */}
-          <div style={{ display: "flex", alignItems: "center", marginLeft: "auto" }}>
-            <MarketplaceNavItem onClick={() => {}}>Stores</MarketplaceNavItem>
-            <MarketplaceNavItem onClick={() => {}}>
-              <svg style={{ display: "inline-grid", width: 20, height: 20, placeItems: "center", flexShrink: 0 }}
-                viewBox="0 0 24 24" fill="currentColor">
-                <path d="M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z"/>
-              </svg>
-              1300 859 334
-            </MarketplaceNavItem>
-          </div>
+          <div style={{ display: "flex", alignItems: "center", marginLeft: "auto" }} />
         </div>
       </div>
     </header>
@@ -483,8 +461,9 @@ export function LoginScreen({ onNav }: { onNav: (s: Screen) => void }) {
     setErrorMessage("");
     setIsSubmitting(true);
     try {
-      await signInWithEmail(supabase.auth, email, password);
-      onNav("dashboard");
+      const session = await signInWithEmail(supabase.auth, email, password);
+      const isAdmin = await hasAdminApprovalAccess(fetch, LOGIN_API_URL, session.access_token);
+      onNav(isAdmin ? "admin" : "dashboard");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Unable to sign in. Please try again.");
     } finally {
@@ -510,11 +489,12 @@ export function LoginScreen({ onNav }: { onNav: (s: Screen) => void }) {
         {/* Email field — floating label style */}
         <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <div style={{ position: "relative" }}>
-            <label style={{
+            <label htmlFor="login-email" style={{
               position: "absolute", top: -9, left: 12, background: C.white,
               padding: "0 4px", fontSize: 12, color: C.secondary, lineHeight: 1,
             }}>Email address *</label>
             <input
+              id="login-email"
               type="email" value={email}
               onChange={(e) => setEmail(e.target.value)}
               autoComplete="email"
@@ -543,7 +523,6 @@ export function LoginScreen({ onNav }: { onNav: (s: Screen) => void }) {
               onChange={(event) => setPassword(event.target.value)}
               autoComplete="current-password"
               required
-              minLength={8}
               style={{
                 width: "100%", boxSizing: "border-box",
                 height: 52, padding: "0 14px",
@@ -578,51 +557,14 @@ export function LoginScreen({ onNav }: { onNav: (s: Screen) => void }) {
           >{isSubmitting ? "Signing in…" : "Sign in"}</button>
         </form>
 
-        {/* OR divider */}
-        <div style={{ display: "flex", alignItems: "center", gap: 12, margin: "20px 0" }}>
-          <div style={{ flex: 1, height: 1, background: C.border }} />
-          <span style={{ fontSize: 13, color: C.secondary }}>OR</span>
-          <div style={{ flex: 1, height: 1, background: C.border }} />
-        </div>
-
-        {/* Social buttons */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {/* Google */}
-          <button style={{
-            display: "flex", alignItems: "center", gap: 14,
-            height: 48, padding: "0 18px",
-            background: C.white, border: `1px solid ${C.border}`, borderRadius: 6,
-            fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 500, color: C.ink,
-            cursor: "pointer",
-          }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = C.subtle; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = C.white; }}
-          >
-            <svg width="20" height="20" viewBox="0 0 18 18" fill="none">
-              <path d="M17.1 9.2c0-.6-.05-1.18-.14-1.74H9v3.3h4.56a3.9 3.9 0 01-1.69 2.56v2.13h2.74C16.3 13.95 17.1 11.77 17.1 9.2z" fill="#4285F4"/>
-              <path d="M9 18c2.29 0 4.21-.76 5.61-2.05l-2.74-2.13c-.76.51-1.73.81-2.87.81-2.2 0-4.07-1.49-4.73-3.49H1.45v2.2A8.99 8.99 0 009 18z" fill="#34A853"/>
-              <path d="M4.27 11.14A5.4 5.4 0 013.98 9c0-.74.13-1.46.29-2.14V4.66H1.45A9 9 0 000 9c0 1.45.35 2.82.96 4.04l2.93-1.9z" fill="#FBBC05"/>
-              <path d="M9 3.58c1.25 0 2.37.43 3.25 1.27l2.43-2.43A8.84 8.84 0 009 0 8.99 8.99 0 001.45 4.66l2.82 2.2C4.93 5.06 6.8 3.58 9 3.58z" fill="#EA4335"/>
-            </svg>
-            Continue with Google
-          </button>
-
-          {/* Facebook */}
-          <button style={{
-            display: "flex", alignItems: "center", gap: 14,
-            height: 48, padding: "0 18px",
-            background: C.white, border: `1px solid ${C.border}`, borderRadius: 6,
-            fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 500, color: C.ink,
-            cursor: "pointer",
-          }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = C.subtle; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = C.white; }}
-          >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="#1877F2">
-              <path d="M24 12.073C24 5.405 18.627 0 12 0S0 5.405 0 12.073C0 18.1 4.388 23.094 10.125 24v-8.437H7.078v-3.49h3.047V9.413c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.234 2.686.234v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.49h-2.796V24C19.612 23.094 24 18.1 24 12.073z"/>
-            </svg>
-            Continue with Facebook
-          </button>
+        {/* Secondary actions */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", margin: "16px 0 0" }}>
+          <Link href="/forgot-password" style={{ fontSize: 13, color: C.blue, textDecoration: "none", fontFamily: "var(--fc-font-body)" }}>
+            Forgot password?
+          </Link>
+          <Link href="/register" style={{ fontSize: 13, color: C.blue, textDecoration: "none", fontFamily: "var(--fc-font-body)" }}>
+            Create account
+          </Link>
         </div>
 
         {/* Partner logos */}
@@ -631,11 +573,6 @@ export function LoginScreen({ onNav }: { onNav: (s: Screen) => void }) {
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", lineHeight: 1 }}>
             <span style={{ fontSize: 8, color: "#00AACC", fontWeight: 700, letterSpacing: "0.05em" }}>cruise</span>
             <span style={{ fontSize: 10, color: "#00AACC", fontWeight: 700 }}>about</span>
-          </div>
-          {/* Travel Marketplace text logo */}
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", lineHeight: 1 }}>
-            <span style={{ fontSize: 9, fontWeight: 900, color: C.red, letterSpacing: "0.04em" }}>FLIGHT</span>
-            <span style={{ fontSize: 9, fontWeight: 900, color: C.red, letterSpacing: "0.04em" }}>CENTRE</span>
           </div>
           {/* Travel Associates */}
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", lineHeight: 1 }}>
@@ -678,16 +615,28 @@ function marketplacePrice(price: number | null) {
   }).format(price);
 }
 
+function formatFollowerCount(count: number) {
+  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
+  if (count >= 1_000) return `${Math.round(count / 1_000)}K`;
+  return String(count);
+}
+
 export function MarketplaceScreen() {
   const router = useRouter();
   const [search, setSearch] = useState("");
   const [packages, setPackages] = useState<MarketplacePackageSummary[]>([]);
   const [allPackages, setAllPackages] = useState<MarketplacePackageSummary[]>([]);
   const [liveResults, setLiveResults] = useState<MarketplacePackageSummary[]>([]);
+  // Which query liveResults belongs to — results fetched for an earlier
+  // keystroke must never be served under the current text (see submitSearch).
+  const [liveQuery, setLiveQuery] = useState("");
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  // Avatar lookup until the list API exposes influencer.avatar_url — keyed by
+  // instagram handle so one batched query covers every card.
+  const [avatars, setAvatars] = useState<Record<string, string>>({});
 
   const loadPackages = async () => {
     setLoading(true);
@@ -721,6 +670,36 @@ export function MarketplaceScreen() {
   }, []);
 
   useEffect(() => {
+    const handles = [
+      ...new Set(
+        packages
+          .filter((card) => !card.influencer?.avatar_url)
+          .map((card) => card.influencer?.instagram_handle)
+          .filter((handle): handle is string => Boolean(handle))
+      ),
+    ];
+    if (!handles.length) return;
+    let active = true;
+    void supabase
+      .from("influencer_profiles")
+      .select("instagram_handle, profiles(avatar_url)")
+      .in("instagram_handle", handles)
+      .then(({ data }) => {
+        if (!active || !data) return;
+        setAvatars((current) => {
+          const next = { ...current };
+          for (const row of data) {
+            const profile = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles;
+            const url = (profile as { avatar_url?: string | null } | null)?.avatar_url;
+            if (url) next[row.instagram_handle] = url;
+          }
+          return next;
+        });
+      });
+    return () => { active = false; };
+  }, [packages]);
+
+  useEffect(() => {
     const query = search.trim();
     if (query.length < 2) return;
     let active = true;
@@ -729,6 +708,7 @@ export function MarketplaceScreen() {
         const data = await searchMarketplacePackages(fetch, MARKETPLACE_API_URL, query);
         if (!active) return;
         setLiveResults(data);
+        setLiveQuery(query);
         setSuggestions(uniqueDestinationSuggestions(data));
         setShowSuggestions(true);
       } catch {
@@ -752,8 +732,8 @@ export function MarketplaceScreen() {
     setLoading(true);
     setError("");
     try {
-      const data = query === search && liveResults.length ? liveResults
-        : await searchMarketplacePackages(fetch, MARKETPLACE_API_URL, trimmed);
+      const data = reusableSearchResults(trimmed, liveQuery, liveResults)
+        ?? await searchMarketplacePackages(fetch, MARKETPLACE_API_URL, trimmed);
       setPackages(data);
     } catch (searchError) {
       setError(searchError instanceof Error ? searchError.message : "Unable to search marketplace packages.");
@@ -867,27 +847,11 @@ export function MarketplaceScreen() {
               )}
             </div>
 
-            {/* Row 2: filters + search button */}
+            {/* Row 2: search button */}
             <div style={{
-              display: "flex", alignItems: "center", justifyContent: "space-between",
+              display: "flex", alignItems: "center", justifyContent: "flex-end",
               paddingBottom: 24,
             }}>
-              <div style={{ display: "flex", gap: 4 }}>
-                {["All departure dates", "All trip types"].map((label) => (
-                  <button key={label} type="button" style={{
-                    display: "inline-flex", alignItems: "center", gap: 6,
-                    background: "none", border: "none", cursor: "pointer",
-                    fontFamily: "var(--fc-font-body)", fontSize: 15, fontWeight: 500,
-                    color: C.ink, padding: "8px 12px",
-                    textDecoration: "underline", textUnderlineOffset: 3,
-                  }}>
-                    {label}
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                      <polyline points="6 9 12 15 18 9"/>
-                    </svg>
-                  </button>
-                ))}
-              </div>
               <button
                 type="submit"
                 onMouseEnter={(e) => (e.currentTarget.style.background = C.blueDark)}
@@ -937,10 +901,13 @@ export function MarketplaceScreen() {
           {packages.map((card) => {
             const destination = [card.destination_city, card.destination_country].filter(Boolean).join(", ");
             const creatorName = card.influencer?.display_name || "Marketplace creator";
+            const creatorAvatar = card.influencer?.avatar_url
+              ?? (card.influencer?.instagram_handle ? avatars[card.influencer.instagram_handle] : undefined);
             const openTrip = () => router.push(`/marketplace/packages/${card.package_id}`);
             return (
             <article
               key={card.package_id}
+              className="trip-card"
               role="link"
               tabIndex={0}
               onClick={openTrip}
@@ -954,20 +921,43 @@ export function MarketplaceScreen() {
                 cursor: "pointer",
               }}
             >
-              {/* Image */}
-              <div style={{ position: "relative", aspectRatio: "3/2", overflow: "hidden" }}>
-                <img src={card.cover_image_url || IMG.hero} alt={card.title} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+              {/* Image — photo-less packages get a quiet placeholder instead of
+                  the shared stock photo (which made every such card identical). */}
+              <div style={{ position: "relative", aspectRatio: "3/2", overflow: "hidden", background: C.subtle }}>
+                {card.cover_image_url ? (
+                  <img className="trip-card-img" src={card.cover_image_url} alt={card.title} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                ) : (
+                  <div aria-hidden="true" style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", color: C.secondary }}>
+                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="3" y="4" width="18" height="16" rx="2" />
+                      <circle cx="9" cy="10" r="2" />
+                      <path d="m3 17 5-4 4 3 4-3 5 4" />
+                    </svg>
+                  </div>
+                )}
+                {card.tags.length > 0 && (
+                  <div style={{ position: "absolute", left: 12, bottom: 12, display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {card.tags.slice(0, 3).map((tag) => (
+                      <span key={tag} style={{
+                        background: "rgba(255,255,255,0.94)", color: C.ink,
+                        border: `1px solid ${C.border}`,
+                        fontFamily: "var(--fc-font-body)", fontSize: 12, fontWeight: 600,
+                        lineHeight: "16px", padding: "4px 10px", borderRadius: C.radiusPill,
+                      }}>{tag}</span>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {/* Body */}
-              <div style={{ padding: "18px 18px 20px", flex: 1, display: "flex", flexDirection: "column", gap: 10 }}>
+              <div style={{ padding: "16px 16px 20px", flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
                 <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, color: C.secondary, margin: 0 }}>
                   {card.duration_days ? `${card.duration_days} days` : "Duration on request"} · {destination || "Destination coming soon"}
                 </p>
                 <p style={{
-                  fontFamily: "var(--fc-font-body)", fontSize: 15, fontWeight: 600,
-                  color: C.ink, margin: 0, lineHeight: "22px",
-                  display: "-webkit-box", WebkitLineClamp: 3,
+                  fontFamily: "var(--fc-font-body)", fontSize: 16, fontWeight: 600,
+                  color: C.ink, margin: 0, lineHeight: "22px", minHeight: 44,
+                  display: "-webkit-box", WebkitLineClamp: 2,
                   WebkitBoxOrient: "vertical", overflow: "hidden",
                 }}>
                   {card.title}
@@ -975,25 +965,46 @@ export function MarketplaceScreen() {
 
                 {/* Creator info */}
                 <div style={{
-                  display: "flex", alignItems: "center", gap: 10,
-                  padding: "12px 0", borderTop: `1px solid ${C.border}`, marginTop: 6,
+                  display: "flex", alignItems: "center", gap: 8,
+                  paddingTop: 10, marginTop: 4, borderTop: `1px solid ${C.border}`,
                 }}>
-                  <span aria-hidden="true" style={{ width: 34, height: 34, borderRadius: "50%", background: C.subtle, display: "grid", placeItems: "center", fontWeight: 700 }}>{creatorName.charAt(0).toUpperCase()}</span>
-                  <div>
-                    <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 600, color: C.ink, margin: 0, lineHeight: "20px" }}>{creatorName}</p>
-                    {card.influencer?.instagram_handle && <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, color: C.secondary, margin: 0, lineHeight: "18px" }}>{card.influencer.instagram_handle}</p>}
-                  </div>
-                  <span style={{
-                    marginLeft: "auto", background: "#EEF5FF", color: C.blue,
-                    fontFamily: "var(--fc-font-body)", fontSize: 12, fontWeight: 700,
-                    padding: "4px 10px", borderRadius: 999, letterSpacing: "0.05em", flexShrink: 0,
-                  }}>CREATOR</span>
+                  {creatorAvatar ? (
+                    <img src={creatorAvatar} alt="" aria-hidden="true" style={{ width: 28, height: 28, borderRadius: "50%", objectFit: "cover", flexShrink: 0, background: C.subtle }} />
+                  ) : (
+                    <span aria-hidden="true" style={{
+                      width: 28, height: 28, borderRadius: "50%", background: C.subtle,
+                      display: "grid", placeItems: "center", fontSize: 13, fontWeight: 700,
+                      color: C.secondary, flexShrink: 0,
+                    }}>{creatorName.charAt(0).toUpperCase()}</span>
+                  )}
+                  <p style={{
+                    fontFamily: "var(--fc-font-body)", fontSize: 14, color: C.secondary,
+                    margin: 0, lineHeight: "20px",
+                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                  }}>
+                    <span style={{ fontWeight: 600, color: C.ink }}>{creatorName}</span>
+                    {card.influencer?.instagram_handle ? ` · ${card.influencer.instagram_handle}` : ""}
+                    {card.influencer?.follower_count ? ` · ${formatFollowerCount(card.influencer.follower_count)} followers` : ""}
+                  </p>
                 </div>
 
-                <div style={{ paddingTop: 6 }}>
-                  <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 12, color: C.secondary, margin: "0 0 3px" }}>From per person</p>
-                  <p style={{ fontFamily: "var(--fc-font-display)", fontSize: 24, fontWeight: 700, color: C.ink, margin: "0 0 14px", letterSpacing: "-0.01em" }}>{marketplacePrice(card.base_price_aud)}</p>
-                  <BtnPrimary full onClick={openTrip}>View trip</BtnPrimary>
+                <div style={{ marginTop: "auto", paddingTop: 14, display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 8 }}>
+                  <p style={{ fontFamily: "var(--fc-font-display)", fontSize: 22, fontWeight: 700, color: C.ink, margin: 0, letterSpacing: "-0.01em", lineHeight: "28px" }}>
+                    <span style={{ fontFamily: "var(--fc-font-body)", fontSize: 13, fontWeight: 400, color: C.secondary, letterSpacing: 0 }}>From </span>
+                    {marketplacePrice(card.base_price_aud)}
+                    {card.base_price_aud !== null && (
+                      <span style={{ fontFamily: "var(--fc-font-body)", fontSize: 13, fontWeight: 400, color: C.secondary, letterSpacing: 0 }}> / person</span>
+                    )}
+                  </p>
+                  <span style={{
+                    fontFamily: "var(--fc-font-body)", fontSize: 14, fontWeight: 600, color: C.blue,
+                    display: "inline-flex", alignItems: "center", gap: 4, flexShrink: 0,
+                  }}>
+                    View trip
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M5 12h14M12 5l7 7-7 7"/>
+                    </svg>
+                  </span>
                 </div>
               </div>
             </article>
@@ -1035,6 +1046,7 @@ export function MarketplaceScreen() {
                 display: "inline-flex", alignItems: "center", gap: 8,
                 marginBottom: 12,
               }}
+                onClick={() => router.push("/register")}
                 onMouseEnter={(e) => { e.currentTarget.style.background = C.blueDark; }}
                 onMouseLeave={(e) => { e.currentTarget.style.background = C.blue; }}
               >
@@ -1072,7 +1084,7 @@ export function MarketplaceScreen() {
               textTransform: "uppercase", color: C.white, margin: "0 0 12px",
             }}>Travel Marketplace</p>
             <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, lineHeight: "20px", color: "rgba(255,255,255,0.5)", margin: 0 }}>
-              Australia&apos;s favourite travel retailer since 1981.
+              Real itineraries from creators who&apos;ve actually been there.
             </p>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: "0 64px" }}>
@@ -1103,7 +1115,7 @@ export function MarketplaceScreen() {
             fontFamily: "var(--fc-font-body)", fontSize: 12, lineHeight: "16px",
             color: "rgba(255,255,255,0.35)", margin: 0,
           }}>
-            © 2026 Travel Marketplace Travel Group Limited. All rights reserved. Prices are per person, land only, subject to availability.
+            © 2026 Travel Marketplace. All rights reserved. Prices are per person, land only, subject to availability.
           </p>
         </div>
       </footer>
@@ -1112,6 +1124,21 @@ export function MarketplaceScreen() {
 }
 
 // ─── Dashboard Screen ──────────────────────────────────────────────────────────
+export const CREATOR_DASHBOARD_TABS = [
+  "All",
+  "Approved",
+  "Live",
+  "Under review",
+  "Rejected",
+  "Drafts",
+] as const;
+
+export function creatorPackageMatchesTab(activeTab: string, packageStatus: string) {
+  return activeTab === "All"
+    || packageStatus === activeTab
+    || (activeTab === "Drafts" && packageStatus === "Draft");
+}
+
 export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void }) {
   const router = useRouter();
   const [packages, setPackages] = useState<CreatorPackage[]>([]);
@@ -1123,16 +1150,21 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
   const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string } | null>(null);
   const [deleteError, setDeleteError] = useState("");
   const [isDeleting, setIsDeleting] = useState(false);
-  const tabs = ["All", "Approved", "Under review", "Drafts"];
+  const [pendingPublish, setPendingPublish] = useState<{ id: string; name: string } | null>(null);
+  const [publishError, setPublishError] = useState("");
+  const [isPublishing, setIsPublishing] = useState(false);
+  const [dashboardNotice, setDashboardNotice] = useState("");
+  const publishTriggerRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     if (!pendingDelete) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setPendingDelete(null);
+      if (event.key !== "Escape" || isDeleting) return;
+      setPendingDelete(null);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [pendingDelete]);
+  }, [isDeleting, pendingDelete]);
 
   const confirmDeletePackage = async () => {
     if (!pendingDelete) return;
@@ -1179,6 +1211,56 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
     }
   };
 
+  const showDashboardNotice = (message: string) => {
+    setDashboardNotice(message);
+    window.setTimeout(() => setDashboardNotice(""), 2000);
+  };
+
+  const handleSharePackage = async (pkg: { id: string; name: string; statusKey: string }) => {
+    const sharePath = creatorPackageShareRoute(pkg.id, pkg.statusKey);
+    if (!sharePath) return;
+    const url = new URL(sharePath, window.location.origin).toString();
+
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: pkg.name, url });
+        return;
+      }
+      await navigator.clipboard.writeText(url);
+      showDashboardNotice("Link copied");
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      showDashboardNotice("Unable to share link");
+    }
+  };
+
+  const confirmPublishPackage = async () => {
+    if (!pendingPublish) return;
+    setIsPublishing(true);
+    setPublishError("");
+    try {
+      const { data } = await supabase.auth.getSession();
+      const accessToken = data.session?.access_token;
+      if (!accessToken) {
+        router.replace("/login");
+        return;
+      }
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const published = await publishPackage(fetch, apiUrl, accessToken, pendingPublish.id);
+      setPackages((current) => current.map((pkg) => (
+        pkg.package_id === published.package_id ? { ...pkg, ...published } : pkg
+      )));
+      setPendingPublish(null);
+      showDashboardNotice("Package is live");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to publish this package.";
+      setPublishError(message);
+      if (message.includes("sign in again")) router.replace("/login");
+    } finally {
+      setIsPublishing(false);
+    }
+  };
+
   useEffect(() => {
     let cancelled = false;
     void supabase.auth.getSession().then(async ({ data }) => {
@@ -1206,9 +1288,7 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
   const dashboardPackages = packages.map(formatCreatorPackage);
   const normalizedSearch = searchQ.trim().toLowerCase();
   const filtered = dashboardPackages.filter((pkg) => {
-    const matchesTab = activeTab === "All"
-      || pkg.status === activeTab
-      || (activeTab === "Drafts" && pkg.status === "Draft");
+    const matchesTab = creatorPackageMatchesTab(activeTab, pkg.status);
     const matchesSearch = !normalizedSearch
       || pkg.name.toLowerCase().includes(normalizedSearch)
       || pkg.destination.toLowerCase().includes(normalizedSearch);
@@ -1223,11 +1303,12 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
   ];
 
   const cols = {
-    grid: "minmax(0,1.8fr) minmax(140px,1fr) 100px 120px 140px 200px",
+    grid: "minmax(0,1.8fr) minmax(140px,1fr) 110px 90px 110px 130px 200px",
     gap: 24,
     headers: [
       { h: "Package",        align: "left"  },
       { h: "Destination",    align: "left"  },
+      { h: "Created",        align: "left"  },
       { h: "Duration",       align: "right" },
       { h: "Price",          align: "right" },
       { h: "Status",         align: "center" },
@@ -1246,7 +1327,7 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
               Creator dashboard
             </h1>
             <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, color: C.secondary, margin: 0 }}>
-              Manage your packages, bookings and earnings.
+              Manage your packages and track their review status.
             </p>
           </div>
           <BtnPrimary onClick={() => _onNav("builder")}>
@@ -1262,10 +1343,7 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
           {stats.map(({ label, value, sub }) => (
             <div key={label} style={{
               background: C.white,
-              borderTop: `1px solid ${C.border}`,
-              borderRight: `1px solid ${C.border}`,
-              borderBottom: `1px solid ${C.border}`,
-              borderLeft: `1px solid ${C.border}`,
+              border: `1px solid ${C.border}`,
               borderRadius: C.radiusMd,
               padding: "24px 24px 20px",
               boxShadow: C.shadowCard,
@@ -1287,7 +1365,7 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
         </div>
 
         {/* Packages table */}
-        <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 6, overflow: "hidden" }}>
+        <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 6, overflowX: "auto", overflowY: "hidden" }}>
 
           {/* Table toolbar */}
           {/* Toolbar: search + filter tabs */}
@@ -1302,9 +1380,10 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
                 value={searchQ}
                 onChange={(e) => setSearchQ(e.target.value)}
                 placeholder="Search packages..."
+                aria-label="Search packages"
                 style={{
                   width: "100%", boxSizing: "border-box",
-                  height: 42, paddingLeft: 38, paddingRight: 14,
+                  height: 42, paddingLeft: 38, paddingRight: 36,
                   fontFamily: "var(--fc-font-body)", fontSize: 14, color: C.ink,
                   background: C.white, border: `1px solid ${C.border}`,
                   borderRadius: 6, outline: "none",
@@ -1312,6 +1391,12 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
                 onFocus={(e) => { e.currentTarget.style.borderColor = "#9E9E9E"; }}
                 onBlur={(e) => { e.currentTarget.style.borderColor = C.border; }}
               />
+              {searchQ && (
+                <button type="button" aria-label="Clear package search" onClick={() => setSearchQ("")}
+                  style={{ position: "absolute", right: 4, top: "50%", transform: "translateY(-50%)", width: 34, height: 34, display: "grid", placeItems: "center", border: 0, background: "transparent", color: C.secondary, cursor: "pointer" }}>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M6 6l12 12M18 6 6 18" /></svg>
+                </button>
+              )}
             </div>
 
             {/* Spacer */}
@@ -1319,7 +1404,7 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
 
             {/* Filter tabs */}
             <div style={{ display: "flex", gap: 4 }}>
-              {tabs.map((t) => {
+              {CREATOR_DASHBOARD_TABS.map((t) => {
                 const on = activeTab === t;
                 return (
                   <button key={t} onClick={() => setActiveTab(t)} style={{
@@ -1337,6 +1422,9 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
               })}
             </div>
           </div>
+
+          {/* Scrollable table body — min-width keeps Status/Actions reachable on narrow viewports */}
+          <div style={{ minWidth: 1020 }}>
 
           {/* Column headers */}
           <div style={{ display: "grid", gridTemplateColumns: cols.grid, columnGap: cols.gap, padding: "14px 28px", background: "#FAFAFA", borderBottom: `1px solid ${C.border}` }}>
@@ -1366,18 +1454,21 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
               <p style={{ margin: 0, color: C.secondary, fontSize: 14 }}>
                 {packages.length === 0 ? "Create your first package to get started." : "Try a different search or status."}
               </p>
+              {packages.length > 0 && (
+                <div style={{ marginTop: 16 }}>
+                  <BtnSecondary onClick={() => { setSearchQ(""); setActiveTab("All"); }}>
+                    Clear filters
+                  </BtnSecondary>
+                </div>
+              )}
             </div>
           ) : null}
 
           {/* Rows */}
           {filtered.map((pkg, i) => {
-            const hov = hovRow === pkg.name;
+            const hov = hovRow === pkg.id;
             const packageHref = creatorPackageRoute(pkg.id, pkg.statusKey);
-            const statusStyle = pkg.statusKey === "live" || pkg.statusKey === "approved"
-              ? { color: C.success, background: C.successBg }
-              : pkg.statusKey === "pending_review"
-                ? { color: C.warning, background: C.warningBg }
-                : { color: C.secondary, background: C.subtle };
+            const statusStyle = creatorPackageStatusStyle(pkg.statusKey);
             return (
               <div key={pkg.id}
                 style={{
@@ -1387,7 +1478,7 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
                   background: hov ? "#FAFAFA" : "transparent",
                   transition: "background 120ms",
                 }}
-                onMouseEnter={() => setHovRow(pkg.name)}
+                onMouseEnter={() => setHovRow(pkg.id)}
                 onMouseLeave={() => setHovRow(null)}
               >
                 {/* Package name */}
@@ -1406,6 +1497,10 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
 
                 <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, color: C.secondary, margin: 0 }}>
                   {pkg.destination}
+                </p>
+
+                <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, color: C.secondary, margin: 0, whiteSpace: "nowrap" }}>
+                  {pkg.created}
                 </p>
 
                 <p style={{ fontFamily: "var(--fc-font-body)", fontSize: 14, color: C.ink, margin: 0, textAlign: "right" }}>
@@ -1433,6 +1528,35 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
                       ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>
                       : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z" /><circle cx="12" cy="12" r="3" /></svg>}
                   </Link>
+                  {pkg.statusKey === "approved" && (
+                    <button
+                      className="dashboard-row-publish"
+                      type="button"
+                      onClick={(event) => {
+                        publishTriggerRef.current = event.currentTarget;
+                        setPublishError("");
+                        setPendingPublish({ id: pkg.id, name: pkg.name });
+                      }}
+                    >
+                      Publish
+                    </button>
+                  )}
+                  {pkg.statusKey === "live" && (
+                    <button
+                      className="dashboard-row-action"
+                      type="button"
+                      aria-label={`Share ${pkg.name}`}
+                      title="Share"
+                      onClick={() => void handleSharePackage(pkg)}
+                    >
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <circle cx="18" cy="5" r="3" />
+                        <circle cx="6" cy="12" r="3" />
+                        <circle cx="18" cy="19" r="3" />
+                        <path d="m8.6 10.5 6.8-4M8.6 13.5l6.8 4" />
+                      </svg>
+                    </button>
+                  )}
                   {pkg.statusKey === "draft" && (
                     <button className="dashboard-row-action dashboard-row-action-delete"
                       aria-label={`Delete ${pkg.name}`} title="Delete"
@@ -1445,6 +1569,7 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
               </div>
             );
           })}
+          </div>
         </div>
 
       </div>
@@ -1471,6 +1596,29 @@ export function DashboardScreen({ onNav: _onNav }: { onNav: (s: Screen) => void 
           </section>
         </div>
       )}
+      {pendingPublish && (
+        <Dialog.Root open onOpenChange={(open) => { if (!open && !isPublishing) setPendingPublish(null); }}>
+          <Dialog.Overlay className="delete-day-backdrop" />
+          <Dialog.Content
+            className="delete-day-dialog"
+            onCloseAutoFocus={(event) => {
+              event.preventDefault();
+              publishTriggerRef.current?.focus();
+            }}
+          >
+            <Dialog.Title>Publish &ldquo;{pendingPublish.name}&rdquo;?</Dialog.Title>
+            <Dialog.Description>This package will become publicly visible and shareable in the marketplace.</Dialog.Description>
+            {publishError && <p role="alert" style={{ color: "#B42318", margin: "12px 0 0", fontSize: 14 }}>{publishError}</p>}
+            <div className="delete-day-actions">
+              <Dialog.Close asChild><button className="quiet-button" disabled={isPublishing}>Cancel</button></Dialog.Close>
+              <button className="confirm-publish-button" disabled={isPublishing} onClick={() => void confirmPublishPackage()}>
+                {isPublishing ? "Publishing…" : "Publish package"}
+              </button>
+            </div>
+          </Dialog.Content>
+        </Dialog.Root>
+      )}
+      {dashboardNotice && <div className="editor-toast" role="status">{dashboardNotice}</div>}
     </div>
   );
 }
@@ -1529,15 +1677,6 @@ export function CreatorNav({ onNav }: { onNav: (s: Screen) => void }) {
           </div>
 
           <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-            <MarketplaceControl>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="12" cy="12" r="10"/>
-                <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
-                <line x1="12" y1="17" x2="12.01" y2="17"/>
-              </svg>
-              Help
-            </MarketplaceControl>
-
             {/* Profile pill */}
             <div style={{ position: "relative" }}>
               <button
@@ -1583,7 +1722,6 @@ export function CreatorNav({ onNav }: { onNav: (s: Screen) => void }) {
                 }}>
                   {[
                     { label: "View Travel Marketplace", action: () => { onNav("marketplace"); setProfileOpen(false); } },
-                    { label: "Account settings",   action: () => setProfileOpen(false) },
                     { label: "Log out",            action: handleLogOut },
                   ].map(({ label, action }) => (
                     <button key={label} onClick={action} style={{
@@ -2116,14 +2254,7 @@ function PackageWizardProgress({
   );
 }
 
-const VIBES = [
-  { id: "chill",      label: "Chill",            desc: "Spa days, yoga sessions, and slow-paced downtime",          img: "https://images.unsplash.com/photo-1602002418816-5c0aeef426aa?w=600&h=320&fit=crop" },
-  { id: "adventure",  label: "Adventure",        desc: "Active experiences and outdoor activities",                 img: "https://images.unsplash.com/photo-1533240332313-0db49b459ad6?w=600&h=320&fit=crop" },
-  { id: "luxury",     label: "Luxury",           desc: "Premium stays and high-end, curated experiences",           img: "https://images.unsplash.com/photo-1551918120-9739cb430c6d?w=600&h=320&fit=crop" },
-  { id: "local",      label: "Local Experience", desc: "Walking tours, museums, and hands-on culture classes",      img: "https://images.unsplash.com/photo-1747396108528-682b02327818?w=600&h=320&fit=crop" },
-  { id: "foodie",     label: "Foodie",           desc: "Street food tours, cooking classes, and night markets",     img: "https://images.unsplash.com/photo-1777576506689-d28f3b4cb33a?w=600&h=320&fit=crop" },
-  { id: "scenic",     label: "Scenic",           desc: "Countryside day trips, river cruises, and scenic viewpoints", img: "https://images.unsplash.com/photo-1626948688703-0136bc0a90da?w=600&h=320&fit=crop" },
-];
+
 
 const DURATION_DAYS = { short: 4, mid: 7, long: 12 } as const;
 
@@ -2279,6 +2410,7 @@ function PackageGenerationLoader({ elapsedMs, complete }: { elapsedMs: number; c
           </div>
           <span style={{ minWidth: 36, textAlign: "right", fontFamily: "var(--fc-font-body)", fontSize: 13, lineHeight: "18px", fontWeight: 600, fontVariantNumeric: "tabular-nums", color: C.secondary }}>{generationProgressLabel(progress)}</span>
         </div>
+        <AiDisclaimer style={{ marginTop: 16, textAlign: "center" }} />
       </div>
     </div>
   );
@@ -2305,6 +2437,9 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
   const inFlightSetupRef = useRef<string | null>(null);
   const [createError, setCreateError] = useState("");
   const [manualCreating, setManualCreating] = useState(false);
+  // `manualCreating` state re-renders too late to stop a second click inside
+  // the same frame, which would create a duplicate orphan draft package.
+  const manualCreatingRef = useRef(false);
 
   // Manual builds skip AI generation entirely, so they never enter the
   // full-screen generation step — creation happens inline on the last step.
@@ -2353,13 +2488,18 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
           season,
         };
         const res = await generateItinerary(selection);
-        const base = wizardDraftToPackageInput({
-          destination: selected ?? dest.trim(),
-          vibes: vibes.map((vibe) => VIBES.find((item) => item.id === vibe)?.label ?? vibe),
-          duration: duration ?? "short",
-          customDurationDays,
-          season: season ?? "",
-        });
+        const base = {
+          ...wizardDraftToPackageInput({
+            destination: selected ?? dest.trim(),
+            vibes: vibes.map((vibe) => VIBES.find((item) => item.id === vibe)?.label ?? vibe),
+            duration: duration ?? "short",
+            customDurationDays,
+            season: season ?? "",
+          }),
+          // Persist the raw vibe ids — tags is the only backend field that
+          // carries them (see lib/vibes.ts for the canonical list).
+          tags: vibes,
+        };
         const { package_id } = await createPackage(
           timeoutFetch,
           BUILDER_API_URL,
@@ -2453,6 +2593,8 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
   // Manual builds skip AI drafting — create the package directly and go
   // straight to the editor, no fake generation screen.
   const createManualPackage = async (seasonOverride: string | null = season) => {
+    if (manualCreatingRef.current) return;
+    manualCreatingRef.current = true;
     setCreateError("");
     setManualCreating(true);
     try {
@@ -2468,11 +2610,12 @@ export function AIWizardScreen({ onNav, initialStep = 0, requestedStep, stepRequ
         season: seasonOverride ?? "",
       });
       const description = `${styleLabels.length ? `A ${styleLabels.join(", ")} trip` : "A custom trip"}${seasonOverride ? `, built for ${seasonOverride}` : ", built from scratch"}.`;
-      const { package_id } = await createPackage(fetch, BUILDER_API_URL, accessToken, { ...base, description });
+      const { package_id } = await createPackage(fetch, BUILDER_API_URL, accessToken, { ...base, description, tags: vibes });
       router.push(`/packages/editor/${encodeURIComponent(package_id)}`);
     } catch (error) {
       setCreateError(error instanceof Error ? error.message : "Unable to create this package.");
     } finally {
+      manualCreatingRef.current = false;
       setManualCreating(false);
     }
   };

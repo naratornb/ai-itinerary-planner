@@ -5,6 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import core
+from app.approvals import service as approvals_service
 from app.main import app
 from app.packages import service
 
@@ -416,6 +417,38 @@ def test_get_detail(fake):
     assert missing.json()["error_code"] == "NOT_FOUND"
 
 
+def test_get_detail_rejected_returns_latest_approval(fake):
+    rejected = copy.deepcopy(DETAIL_ROW)
+    rejected["status"] = "rejected"
+    approval = {
+        "approval_id": "appr-1",
+        "package_id": PKG,
+        "decision": "rejected",
+        "rejection_reason": "Please clarify which transfers are included.",
+        "reviewed_at": "2026-10-07T04:22:00Z",
+    }
+    fake.route("GET", "travel_packages", FakeResp([rejected]))
+    fake.route("GET", "package_approvals", FakeResp([approval]))
+
+    resp = client.get(f"/packages/{PKG}")
+    assert resp.status_code == 200
+    assert resp.json()["latest_approval"] == approval
+
+    call = fake.find("GET", "package_approvals")[0]
+    # package_approvals RLS is admin-only — the creator path must read it
+    # through the service role after ownership is verified above.
+    assert call["headers"]["apikey"] == "service-key"
+    assert call["params"]["limit"] == 1
+
+
+def test_get_detail_draft_does_not_query_approvals(fake):
+    fake.route("GET", "travel_packages", FakeResp([DETAIL_ROW]))
+    resp = client.get(f"/packages/{PKG}")
+    assert resp.status_code == 200
+    assert resp.json()["latest_approval"] is None
+    assert fake.find("GET", "package_approvals") == []
+
+
 # Mixed fixture: one legacy linked component per type (details IS NULL,
 # catalog embed present) plus one new custom component per type (details is
 # its authoritative snapshot, catalog id/embed null). Exercises both branches
@@ -795,8 +828,13 @@ def test_delete(fake):
         "package_flights": [{"flight_id": "f1"}, {"flight_id": "f2"}],
         "package_hotels": [{"hotel_id": "h1"}, {"hotel_id": "h2"}],
         "package_activities": [{"activity_id": "a1"}, {"activity_id": "a2"}],
+        "package_media": [
+            {"url": f"https://sb/storage/v1/object/public/package-media/{PKG}/x.jpg"},
+            {"url": None},
+        ],
     }
     fake.route("GET", "travel_packages", FakeResp([linked]))
+    fake.route("DELETE", "/storage/v1/object/package-media", FakeResp({}))
     fake.route("DELETE", "/rest/v1/travel_packages", FakeResp([{"package_id": PKG}]))
     fake.route("DELETE", "/rest/v1/flights", FakeResp([]))
     fake.route("DELETE", "/rest/v1/hotels", FakeResp([]))
@@ -805,6 +843,8 @@ def test_delete(fake):
     resp = client.delete(f"/packages/{PKG}")
     assert resp.status_code == 204
     assert resp.content == b""
+    storage = fake.find("DELETE", "/storage/v1/object/package-media")
+    assert [c["json"] for c in storage] == [{"prefixes": [f"{PKG}/x.jpg"]}]
     assert (
         fake.find("DELETE", "/rest/v1/flights")[0]["params"]["flight_id"]
         == "in.(f1,f2)"
@@ -883,6 +923,63 @@ def test_submit_preconditions(fake):
     assert body["error_code"] == "SUBMISSION_PRECONDITION_FAILED"
     assert body["details"]["missing"] == ["hotel"]
     assert "price" in (body["message"] + str(body["details"])).lower()
+
+
+def test_get_local_package_detail(fake):
+    row = copy.deepcopy(DETAIL_ROW)
+    row["package_flights"] = []
+    fake.route("GET", "travel_packages", FakeResp([row]))
+    resp = client.get(f"/packages/{PKG}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["flights"] == []
+    assert body["pricing"]["flights_total"] == 0
+    assert body["hotels"]
+    assert body["activities"]
+
+
+def test_local_package_lifecycle(fake, monkeypatch):
+    monkeypatch.setattr(approvals_service, "requests", service.requests)
+    app.dependency_overrides[core.require_admin_ctx] = lambda: {
+        "uid": UID, "headers": dict(USER_HEADERS),
+    }
+    fake.route(
+        "POST", "rpc/submit_package_for_review",
+        FakeResp({"outcome": "ok", "package_id": PKG}),
+    )
+    pending = _summary_row(status="pending_review")
+    approved = _summary_row(status="approved")
+    live = _summary_row(status="live", published_at="2026-10-08T00:00:00+00:00")
+    for row in (pending, pending, approved):
+        fake.route("GET", "travel_packages", FakeResp([row]))
+    fake.route("POST", "package_approvals", FakeResp([{
+        "approval_id": "approval-1", "package_id": PKG, "reviewer_id": UID,
+        "decision": "approved", "reviewed_at": "2026-10-08T00:00:00+00:00",
+    }]))
+    fake.route("PATCH", "travel_packages", FakeResp([approved]))
+    fake.route("PATCH", "travel_packages", FakeResp([live]))
+
+    submitted = client.post(f"/packages/{PKG}/submit")
+    assert submitted.status_code == 200
+    assert submitted.json()["status"] == "pending_review"
+    decision = client.post(f"/approvals/{PKG}/approve")
+    assert decision.status_code == 200
+    assert decision.json()["package"]["status"] == "approved"
+    assert decision.json()["approval"]["decision"] == "approved"
+    published = client.post(f"/approvals/{PKG}/publish")
+    assert published.status_code == 200
+    assert published.json()["status"] == "live"
+    assert published.json()["published_at"]
+    assert fake.find("PATCH", "travel_packages")[-1]["json"]["published_at"]
+
+    row = copy.deepcopy(DETAIL_ROW)
+    row.update(status="live", published_at=live["published_at"], package_flights=[])
+    for endpoint in (f"/packages/{PKG}", f"/marketplace/packages/{PKG}"):
+        fake.route("GET", "travel_packages", FakeResp([row]))
+        detail = client.get(endpoint)
+        assert detail.status_code == 200
+        assert detail.json()["flights"] == []
+        assert detail.json()["status"] == "live"
 
 
 def test_submit_pending_review_package_rejects_later_save(fake):
@@ -982,3 +1079,147 @@ def test_detail_returns_vibes_and_season(fake):
     assert resp.status_code == 200
     assert resp.json()["vibes"] == ["luxury"]
     assert resp.json()["season"] == "autumn"
+
+
+# ─── Relative (date-free) reference flights — issue #75 ──────────────────────
+
+RELATIVE_FLIGHT = {
+    "origin_iata": "SYD",
+    "destination_iata": "NRT",
+    "airline": "JL",
+    "day_number": 1,
+    "departure_time": "21:00",
+    # Next-day local arrival: earlier clock time than departure is valid.
+    "arrival_time": "06:00",
+    "duration_minutes": 585,
+}
+
+
+def _validation_msgs(resp):
+    return " ".join(e["msg"] for e in resp.json()["details"]["errors"])
+
+
+def _relative_body(**flight_over):
+    return {
+        **CREATE_BODY,
+        "duration_days": 4,
+        "flights": [{**RELATIVE_FLIGHT, **flight_over}],
+        "hotels": [
+            {"hotel_name": "Shinjuku Stay", "city": "Tokyo", "check_in_day": 1, "check_out_day": 4}
+        ],
+        "activities": [
+            {"activity_name": "Ramen tour", "city": "Tokyo", "day_number": 2, "start_time": "14:00"}
+        ],
+    }
+
+
+def test_create_accepts_undated_flight_hotel_and_activity(fake):
+    fake.route("POST", "rpc/save_package_details", FakeResp({"outcome": "ok", "package_id": PKG}))
+    fake.route("GET", "travel_packages", FakeResp([copy.deepcopy(DETAIL_ROW)]))
+
+    resp = client.post("/packages", json=_relative_body())
+    assert resp.status_code == 201, resp.json()
+
+    flight = fake.find("POST", "rpc/save_package_details")[0]["json"]["p_payload"]["flights"][0]
+    assert flight["day_number"] == 1
+    assert flight["departure_time"] == "21:00"
+    assert flight["arrival_time"] == "06:00"
+    assert flight["duration_minutes"] == 585
+    # The backend never invents placeholder dates.
+    assert flight["departure_datetime"] is None
+    assert flight["arrival_datetime"] is None
+
+
+def test_update_accepts_undated_flight(fake):
+    fake.route("POST", "rpc/save_package_details", FakeResp({"outcome": "ok", "package_id": PKG}))
+    fake.route("GET", "travel_packages", FakeResp([copy.deepcopy(DETAIL_ROW)]))
+
+    resp = client.put(f"/packages/{PKG}", json={"flights": [RELATIVE_FLIGHT]})
+    assert resp.status_code == 200, resp.json()
+    flight = fake.find("POST", "rpc/save_package_details")[0]["json"]["p_payload"]["flights"][0]
+    assert flight["departure_time"] == "21:00"
+
+
+def test_create_still_accepts_dated_flight(fake):
+    fake.route("POST", "rpc/save_package_details", FakeResp({"outcome": "ok", "package_id": PKG}))
+    fake.route("GET", "travel_packages", FakeResp([copy.deepcopy(DETAIL_ROW)]))
+
+    resp = client.post("/packages", json=CREATE_BODY)
+    assert resp.status_code == 201
+    flight = fake.find("POST", "rpc/save_package_details")[0]["json"]["p_payload"]["flights"][0]
+    assert flight["departure_datetime"] == "2026-03-01T09:00:00+00:00"
+    assert flight["departure_time"] is None
+
+
+@pytest.mark.parametrize("missing", ["day_number", "departure_time"])
+def test_create_rejects_flight_without_dates_or_relative_schedule(fake, missing):
+    flight = {k: v for k, v in RELATIVE_FLIGHT.items() if k != missing}
+    resp = client.post("/packages", json={**CREATE_BODY, "flights": [flight]})
+    assert resp.status_code == 422
+    assert "day_number/departure_time" in _validation_msgs(resp)
+    assert fake.find("POST", "rpc/save_package_details") == []
+
+
+@pytest.mark.parametrize("field", ["departure_datetime", "arrival_datetime"])
+def test_create_rejects_flight_with_only_one_datetime(fake, field):
+    flight = {**RELATIVE_FLIGHT, field: "2026-03-01T09:00:00+00:00"}
+    resp = client.post("/packages", json={**CREATE_BODY, "flights": [flight]})
+    assert resp.status_code == 422
+    assert "both departure_datetime and arrival_datetime" in _validation_msgs(resp)
+    assert fake.find("POST", "rpc/save_package_details") == []
+
+
+def test_create_stores_datetime_pair_and_relative_fields_together(fake):
+    fake.route("POST", "rpc/save_package_details", FakeResp({"outcome": "ok", "package_id": PKG}))
+    fake.route("GET", "travel_packages", FakeResp([copy.deepcopy(DETAIL_ROW)]))
+
+    flight = {**CREATE_BODY["flights"][0], "day_number": 1, "departure_time": "09:00"}
+    resp = client.post("/packages", json={**CREATE_BODY, "flights": [flight]})
+    assert resp.status_code == 201, resp.json()
+    sent = fake.find("POST", "rpc/save_package_details")[0]["json"]["p_payload"]["flights"][0]
+    assert sent["departure_datetime"] == "2026-03-01T09:00:00+00:00"
+    assert sent["departure_time"] == "09:00"
+
+
+@pytest.mark.parametrize(
+    "over", [{"departure_time": "9:00"}, {"departure_time": "25:00"}, {"arrival_time": "6pm"},
+             {"duration_minutes": 0}]
+)
+def test_create_rejects_malformed_relative_flight_fields(fake, over):
+    resp = client.post("/packages", json=_relative_body(**over))
+    assert resp.status_code == 422
+    assert fake.find("POST", "rpc/save_package_details") == []
+
+
+def test_detail_returns_relative_flight_fields(fake):
+    row = copy.deepcopy(DETAIL_ROW)
+    row["package_flights"] = [
+        {
+            "id": "pf-relative",
+            "flight_id": None,
+            "day_number": 1,
+            "sequence_order": 1,
+            "notes": None,
+            "details": {**RELATIVE_FLIGHT, "sequence_order": 1, "media_ids": []},
+            "flights": None,
+        }
+    ]
+    fake.route("GET", "travel_packages", FakeResp([row]))
+
+    resp = client.get(f"/packages/{PKG}")
+    assert resp.status_code == 200
+    flight = resp.json()["flights"][0]
+    assert flight["day_number"] == 1
+    assert flight["departure_time"] == "21:00"
+    assert flight["arrival_time"] == "06:00"
+    assert flight["duration_minutes"] == 585
+    assert flight["departure_datetime"] is None
+
+
+def test_detail_legacy_flight_has_null_relative_fields(fake):
+    fake.route("GET", "travel_packages", FakeResp([copy.deepcopy(DETAIL_ROW)]))
+    flight = client.get(f"/packages/{PKG}").json()["flights"][0]
+    assert flight["departure_datetime"] == "2026-03-01T09:00:00+00:00"
+    assert flight["departure_time"] is None
+    assert flight["arrival_time"] is None
+    assert flight["duration_minutes"] is None

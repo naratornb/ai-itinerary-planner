@@ -136,7 +136,37 @@ def get_package_detail(package_id, headers, uid):
         headers=headers,
     )
     rows = response.json()
-    return _to_detail(rows[0]) if rows else None
+    if not rows:
+        return None
+    detail = _to_detail(rows[0])
+    if detail.get("status") == "rejected":
+        # Creator-scoped only — the public detail path must never see
+        # package_approvals data.
+        detail["latest_approval"] = _latest_approval(package_id)
+    return detail
+
+
+def _latest_approval(package_id):
+    """Newest review decision for the creator's own package. package_approvals
+    RLS is admin-only, so this reads through the service role — safe only
+    because callers already scoped the package to its owner. Best-effort: a
+    broken approvals read must not take the package detail down with it."""
+    try:
+        rows = _call(
+            "get",
+            "package_approvals",
+            params={
+                "package_id": f"eq.{package_id}",
+                "select": "approval_id,package_id,decision,rejection_reason,reviewed_at",
+                "order": "reviewed_at.desc",
+                "limit": 1,
+            },
+            headers=_admin_headers(),
+        ).json()
+    except UpstreamError:
+        logger.error("latest_approval lookup failed for package %s", package_id)
+        return None
+    return rows[0] if rows else None
 
 
 def get_public_package_detail(package_id):
@@ -174,6 +204,9 @@ def _flight_from_row(pf):
             "flight_number": details.get("flight_number"),
             "departure_datetime": details.get("departure_datetime"),
             "arrival_datetime": details.get("arrival_datetime"),
+            "departure_time": details.get("departure_time"),
+            "arrival_time": details.get("arrival_time"),
+            "duration_minutes": details.get("duration_minutes"),
             "cabin_class": details.get("cabin_class"),
             "price_aud": details.get("price_aud"),
             "day_number": details.get("day_number"),
@@ -192,6 +225,9 @@ def _flight_from_row(pf):
         "flight_number": catalog.get("flight_number"),
         "departure_datetime": catalog.get("departure_datetime"),
         "arrival_datetime": catalog.get("arrival_datetime"),
+        "departure_time": None,
+        "arrival_time": None,
+        "duration_minutes": None,
         "cabin_class": catalog.get("cabin_class"),
         "price_aud": catalog.get("price_aud"),
         "day_number": pf.get("day_number"),
@@ -262,6 +298,7 @@ def _activity_from_row(pa):
             "start_time": details.get("start_time"),
             "duration_hours": details.get("duration_hours"),
             "price_aud": details.get("price_aud"),
+            "item_type": details.get("item_type"),
             "category": details.get("category"),
             "address": details.get("address"),
             "notes": details.get("notes"),
@@ -282,6 +319,7 @@ def _activity_from_row(pa):
         "start_time": None,
         "duration_hours": catalog.get("duration_hours"),
         "price_aud": catalog.get("price_aud"),
+        "item_type": None,
         "category": None,
         "address": None,
         "notes": pa.get("notes"),
@@ -344,7 +382,8 @@ def _to_detail(row):
         "base_price_aud": row.get("base_price_aud"),
     }
     row["cover_image_url"] = _cover_url(row["media"])
-    # ponytail: approvals RLS is admin-only, wire when the approvals feature lands.
+    # Populated by get_package_detail for rejected creator-owned packages;
+    # stays None on the public detail path so review data never leaks.
     row["latest_approval"] = None
     return row
 
@@ -433,7 +472,7 @@ def update_package(package_id, headers, uid, payload):
 def delete_package(package_id, user_headers):
     select = (
         "status,package_flights(flight_id),package_hotels(hotel_id),"
-        "package_activities(activity_id)"
+        "package_activities(activity_id),package_media(url)"
     )
 
     def _resolve():
@@ -463,8 +502,37 @@ def delete_package(package_id, user_headers):
             return "not_found", None
         return "not_deletable", row.get("status")
 
-    # ponytail: spec says delete all associated records; catalog rows have no FK
-    # back to the package and would otherwise orphan.
+    _cleanup_orphaned_catalog_rows(row)
+    _delete_media_objects(row)
+    return "ok", None
+
+
+def _delete_media_objects(row):
+    """The cascade removes package_media rows, not their storage objects, which
+    would stay publicly readable. Best-effort, after the rows are gone: a
+    leftover object is tolerated, a row pointing at a missing file is not.
+    The bucket name is spelled out because media.service imports this module."""
+    paths = [
+        m["url"].split("/package-media/", 1)[1]
+        for m in row.get("package_media") or []
+        if "/package-media/" in (m.get("url") or "")
+    ]
+    if paths:
+        try:
+            requests.delete(
+                f"{core.SUPABASE_URL}/storage/v1/object/package-media",
+                json={"prefixes": paths},
+                headers=_admin_headers(),
+                timeout=15,
+            )
+        except RequestException:
+            pass
+
+
+def _cleanup_orphaned_catalog_rows(row):
+    """ponytail: spec says delete all associated records; catalog rows have no
+    FK back to the package and would otherwise orphan. Shared by the creator
+    draft-delete path and the admin decided-package delete."""
     for table, key in (
         ("flights", "flight_id"),
         ("hotels", "hotel_id"),
@@ -483,7 +551,6 @@ def delete_package(package_id, user_headers):
                 # Shared seeded catalog rows are FK-RESTRICTed by other packages;
                 # the package itself is already gone, so this is best-effort.
                 pass
-    return "ok", None
 
 
 def submit_package(package_id, headers, uid, note):

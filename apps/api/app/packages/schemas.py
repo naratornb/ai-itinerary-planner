@@ -26,8 +26,14 @@ class FlightInput(BaseModel):
     destination_iata: str = Field(min_length=3, max_length=3)
     airline: str
     flight_number: str | None = None
-    departure_datetime: str
-    arrival_datetime: str
+    # Dated flights send the datetime pair. Reusable packages send a
+    # reference flight on a relative schedule (day_number + local clock
+    # times) instead — buyers pick real dates later (spec 2026-09-26).
+    departure_datetime: str | None = None
+    arrival_datetime: str | None = None
+    departure_time: str | None = Field(default=None, pattern=_TIME_RE.pattern)
+    arrival_time: str | None = Field(default=None, pattern=_TIME_RE.pattern)
+    duration_minutes: int | None = Field(default=None, ge=1)
     cabin_class: str | None = None
     price_aud: int | None = Field(default=None, ge=0)
     day_number: int | None = Field(default=None, ge=1)
@@ -39,6 +45,19 @@ class FlightInput(BaseModel):
     @model_validator(mode="after")
     def _validate(self) -> "FlightInput":
         _reject_duplicate_media_ids(self.media_ids)
+        if self.departure_datetime is None and self.arrival_datetime is None:
+            # No ordering check: departure/arrival clock times are local to
+            # different time zones (SYD 21:00 -> NRT 06:00 is valid).
+            if self.day_number is None or self.departure_time is None:
+                raise ValueError(
+                    "flight requires departure_datetime/arrival_datetime or "
+                    "day_number/departure_time"
+                )
+            return self
+        if self.departure_datetime is None or self.arrival_datetime is None:
+            raise ValueError(
+                "flight requires both departure_datetime and arrival_datetime"
+            )
         try:
             departure = datetime.fromisoformat(self.departure_datetime)
             arrival = datetime.fromisoformat(self.arrival_datetime)
@@ -91,6 +110,7 @@ class ActivityInput(BaseModel):
     start_time: str | None = Field(default=None, pattern=_TIME_RE.pattern)
     duration_hours: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     price_aud: int | None = Field(default=None, ge=0)
+    item_type: Literal["activity", "creator_pick"] | None = None
     category: str | None = None
     address: str | None = None
     notes: str | None = None
@@ -227,6 +247,9 @@ class FlightDetailOut(BaseModel):
     flight_number: str | None = None
     departure_datetime: str | None = None
     arrival_datetime: str | None = None
+    departure_time: str | None = None
+    arrival_time: str | None = None
+    duration_minutes: int | None = None
     cabin_class: str | None = None
     price_aud: int | None = None
     day_number: int | None = None
@@ -265,6 +288,7 @@ class ActivityDetailOut(BaseModel):
     start_time: str | None = None
     duration_hours: float | None = None
     price_aud: int | None = None
+    item_type: Literal["activity", "creator_pick"] | None = None
     category: str | None = None
     address: str | None = None
     notes: str | None = None

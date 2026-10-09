@@ -65,11 +65,11 @@ export function itinerarySnapshotStorageKey(packageId: string): string {
 }
 
 /**
- * Flights, hotels, and activities added in the editor aren't persisted by
- * PUT /packages/{id} yet (see itinerary-editor.tsx's saveDraft) — only title,
- * price, and day titles/summaries are. Without this snapshot, navigating
- * from the editor to the review page would re-fetch the server's stale
- * component list and silently drop anything added this session.
+ * Belt-and-braces handover from the editor to the review page: the editor
+ * writes its working days/title right before navigating here so review shows
+ * exactly what was on screen, without re-fetching (and without depending on
+ * every in-flight field surviving the PUT → GET round-trip). Falls back to
+ * the fetched package on a direct visit.
  */
 export function parseItinerarySnapshot(value: string | null): ItinerarySnapshot | null {
   if (!value) return null;

@@ -9,12 +9,20 @@ const file = ts.createSourceFile("editor.tsx", source, ts.ScriptTarget.Latest, t
 const buttons: ts.JsxOpeningElement[] = [];
 let submitHandler = "";
 let submissionButtonLabel = "";
+let displayScoreExpr = "";
+let scoreWithheldExpr = "";
 function visit(node: ts.Node) {
   if (ts.isVariableDeclaration(node) && node.name.getText(file) === "handleSubmit") {
     submitHandler = `const handleSubmit = ${node.initializer!.getText(file)};`;
   }
   if (ts.isVariableDeclaration(node) && node.name.getText(file) === "submissionButtonLabel") {
     submissionButtonLabel = node.initializer!.getText(file);
+  }
+  if (ts.isVariableDeclaration(node) && node.name.getText(file) === "displayScore") {
+    displayScoreExpr = node.initializer!.getText(file);
+  }
+  if (ts.isVariableDeclaration(node) && node.name.getText(file) === "scoreWithheld") {
+    scoreWithheldExpr = node.initializer!.getText(file);
   }
   // submissionButtonLabel is the shared label expression only the two real
   // "continue to review" buttons render — other buttons sharing the same
@@ -67,7 +75,9 @@ async function clickSubmit(
     days: [],
     window: { sessionStorage: { setItem: (key: string, value: string) => { sessionStorageWrites[key] = value; } } },
     itinerarySnapshotStorageKey: (id: string) => `package-itinerary-snapshot:${id}`,
-    displayScore: score,
+    // Mirrors the editor: a checked result with critical issues carries no score.
+    scoreWithheld: score !== undefined && critical,
+    displayScore: critical ? undefined : score,
     feasResult: score === undefined ? null : { is_feasible: !critical },
     hardErrors: critical ? [{}] : [],
     isReadyToSubmit: score !== undefined && score >= 70 && !critical && !stale,
@@ -110,8 +120,8 @@ async function clickSubmit(
   return { notices, submitting, packageStatus, events, continuedToReview, sessionStorageWrites };
 }
 
-test("both submission buttons explain insufficient scores without continuing", async () => {
-  assert.equal(buttons.length, 2);
+test("the submission button explains insufficient scores without continuing", async () => {
+  assert.equal(buttons.length, 1);
   for (const button of buttons) {
     const result = await clickSubmit(button, 69);
     assert.equal(result.continuedToReview, false);
@@ -121,6 +131,37 @@ test("both submission buttons explain insufficient scores without continuing", a
 
 test("a ready package continues to review rather than describing itself as submitted", () => {
   assert.equal(readyButtonLabel(), "Continue to review");
+});
+
+test("an empty first or last day does not zero the trip score", () => {
+  // R9 rates an empty arrival/departure day a soft warning (see feasibility.test.ts),
+  // but the editor overrode displayScore to 0 whenever ANY day had no items —
+  // silently re-blocking the exact case the rule says to allow.
+  assert.notEqual(displayScoreExpr, "", "displayScore must remain a named expression");
+  const context = {
+    hasEmptyDay: true,
+    days: [{ items: [] }],
+    feasResult: { quality_score: 80 },
+    scoreWithheld: false,
+    __score: undefined as number | undefined,
+  };
+  runInNewContext(`__score = (${displayScoreExpr});`, context);
+  assert.equal(context.__score, 80);
+});
+
+test("the score stays withheld while a critical issue is open and after it is fixed live, until a re-check", () => {
+  // The server leaves the score out because of critical issues. Once the live
+  // rules clear them there is no score yet, and `null` must never be shown as one.
+  assert.notEqual(scoreWithheldExpr, "", "scoreWithheld must remain a named expression");
+  const withheld = (criticalOpen: boolean, criticalFixedLive: boolean, feasResult: object | null) => {
+    const context = { criticalOpen, criticalFixedLive, feasResult, __withheld: undefined as boolean | undefined };
+    runInNewContext(`__withheld = (${scoreWithheldExpr});`, context);
+    return context.__withheld;
+  };
+  assert.equal(withheld(true, false, {}), true, "critical issue open");
+  assert.equal(withheld(false, true, {}), true, "critical issue fixed live, no score until re-check");
+  assert.equal(withheld(false, false, {}), false, "a clean result shows its score");
+  assert.equal(withheld(false, true, null), false, "no result at all is not a withheld score");
 });
 
 test("submission explains unchecked content and critical issues; only eligible trips proceed", async () => {

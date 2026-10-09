@@ -20,6 +20,11 @@ function toLatLng(coordinate: [number, number]): google.maps.LatLngLiteral {
   return { lat: coordinate[0], lng: coordinate[1] };
 }
 
+/** Plain-text popup content — a DOM textContent target, never setContent(string), which parses markup and would run scripts from user-named stops. */
+export function stopInfoText(stop: RouteStop): string {
+  return `${stop.label}${stop.time ? ` · ${stop.time}` : ""}`;
+}
+
 function RouteMap({ stops }: { stops: RouteStop[] }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<google.maps.Map | null>(null);
@@ -60,7 +65,9 @@ function RouteMap({ stops }: { stops: RouteStop[] }) {
         pin.textContent = String(index + 1);
         const marker = new AdvancedMarkerElement({ map, position: toLatLng(stop.coordinate), content: pin });
         marker.addListener("click", () => {
-          infoWindow.setContent(`${stop.label}${stop.time ? ` · ${stop.time}` : ""}`);
+          const content = document.createElement("div");
+          content.textContent = stopInfoText(stop);
+          infoWindow.setContent(content);
           infoWindow.open({ map, anchor: marker });
         });
         return marker;

@@ -10,6 +10,7 @@ export type MarketplacePackageSummary = {
   cover_image_url: string | null;
   tags: string[];
   influencer: {
+    avatar_url?: string | null;
     display_name: string | null;
     instagram_handle: string | null;
     follower_count: number | null;
@@ -17,9 +18,21 @@ export type MarketplacePackageSummary = {
   published_at: string | null;
 };
 
+export type MarketplaceReview = {
+  review_id: string;
+  rating: number;
+  comment: string | null;
+  created_at: string;
+  profiles?: { full_name: string | null; avatar_url: string | null } | null;
+};
+
 export type MarketplacePackageDetail = MarketplacePackageSummary & {
   description?: string | null;
+  status?: string | null;
   max_group_size?: number | null;
+  // Not yet in the API response — renders when the backend ships these columns.
+  season?: string | null;
+  suitable_for?: string | null;
   creator?: {
     full_name?: string | null;
     avatar_url?: string | null;
@@ -72,6 +85,15 @@ export async function fetchMarketplacePackage(fetcher: typeof fetch, apiUrl: str
   const response = await fetcher(`${apiBase(apiUrl)}/marketplace/packages/${encodeURIComponent(packageId)}`);
   if (response.status === 404) throw new Error("Package not found.");
   return readJson<MarketplacePackageDetail>(response, "Unable to load this package.");
+}
+
+/**
+ * Live-search results are only safe to reuse for the exact query that
+ * produced them — a submit fired before the debounce would otherwise show
+ * an earlier query's results under the new text.
+ */
+export function reusableSearchResults<T>(query: string, forQuery: string, results: T[]): T[] | null {
+  return query === forQuery && results.length > 0 ? results : null;
 }
 
 export function uniqueDestinationSuggestions(packages: MarketplacePackageSummary[]) {

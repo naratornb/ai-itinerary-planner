@@ -1,14 +1,16 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import Icon from "./icon";
+import AiDisclaimer from "./ai-disclaimer";
 import {
   computePackagePrice,
   buildDaysFromPackage,
   formatMinutes,
   summarizeDay,
   summarizePackageComponents,
+  type BuilderDay,
 } from "../lib/itinerary-builder";
 import {
   deletePackageMedia,
@@ -18,6 +20,7 @@ import {
   uploadPackageMedia,
   SubmitPackageError,
   type CreatorPackageDetail,
+  type PackageDayInput,
   type PackageMedia,
 } from "../lib/creator-api";
 import {
@@ -29,6 +32,7 @@ import {
   wizardVibesStorageKey,
   type ReviewDraft,
 } from "../lib/review-draft";
+import { vibeLabelsFromTags } from "../lib/vibes";
 import { supabase } from "../lib/supabase/client";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -36,6 +40,20 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 type SubmitResult = { kind: "success" | "error"; message: string; code?: string };
 
 const capitalize = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
+
+// The save RPC upserts every supplied day row wholesale: a day object sent
+// without media_ids/meta is written back with both emptied, so omitting them
+// here wipes day photos and meta the editor already saved. Mirrors the field
+// set itinerary-editor's buildPackageUpdate sends for days.
+export function buildReviewDayUpdates(days: BuilderDay[]): PackageDayInput[] {
+  return days.map((day, index) => ({
+    day_number: index + 1,
+    title: day.title === `Day ${index + 1}` ? null : day.title || null,
+    summary: day.story || null,
+    meta: day.meta || null,
+    media_ids: day.photos.flatMap((photo) => photo.media_id ? [photo.media_id] : []),
+  }));
+}
 
 export default function ItineraryReview({
   pkg,
@@ -46,11 +64,10 @@ export default function ItineraryReview({
   onBackToEditor: () => void;
   onBackToDashboard: () => void;
 }) {
-  // Flights/hotels/activities added in the editor this session aren't saved
-  // by PUT yet (see itinerary-editor.tsx's saveDraft), so this prefers the
-  // snapshot the editor wrote right before navigating here over a fresh —
-  // and possibly stale — fetch. Falls back to the fetched package for a
-  // direct visit (e.g. a reload, or a link from elsewhere).
+  // Prefers the snapshot the editor wrote right before navigating here so
+  // this page shows exactly what was on screen there, without re-fetching.
+  // Falls back to the fetched package for a direct visit (e.g. a reload, or
+  // a link from elsewhere).
   const [{ days, packageTitle }] = useState(() => {
     if (typeof window !== "undefined") {
       const snapshot = parseItinerarySnapshot(window.sessionStorage.getItem(itinerarySnapshotStorageKey(pkg.package_id)));
@@ -63,6 +80,9 @@ export default function ItineraryReview({
       ? null
       : parseWizardVibesDraft(window.sessionStorage.getItem(wizardVibesStorageKey(pkg.package_id)))
   ));
+  // The session draft only exists right after the wizard ran; on later visits
+  // the persisted tags carry the same vibe picks (see lib/vibes.ts).
+  const vibeLabels = vibesDraft?.vibes.length ? vibesDraft.vibes : vibeLabelsFromTags(pkg.tags);
   const [reviewDraft, setReviewDraft] = useState<ReviewDraft>(() => {
     // A stored draft means the user already started editing this session —
     // resume it exactly, even if they cleared the description to empty.
@@ -77,6 +97,11 @@ export default function ItineraryReview({
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [uploadingCount, setUploadingCount] = useState(0);
+  // A pending cover photo can be removed while its upload is still running —
+  // the temp media_id doesn't exist server-side yet, so the finished row must
+  // be deleted when the upload resolves rather than swapped into the list.
+  const cancelledPreviews = useRef(new Set<string>());
   const [submitResult, setSubmitResult] = useState<SubmitResult | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [notice, setNotice] = useState("");
@@ -91,9 +116,9 @@ export default function ItineraryReview({
   const backendCoverId = photos.find((photo) => photo.is_cover)?.media_id ?? null;
   const coverMediaId = reviewDraft.coverMediaId ?? backendCoverId ?? photos[0]?.media_id ?? null;
 
-  // Persisted client-side only: PUT /packages/{id} doesn't accept description
-  // or a cover reference yet (see the Sept 2026 save/submit handover) — this
-  // is what lets a trip to the editor and back resume exactly where it left off.
+  // The description persists via PUT, but the cover pick has no server field —
+  // this stash is what lets a trip to the editor and back resume exactly
+  // where it left off.
   useEffect(() => {
     try {
       window.sessionStorage.setItem(reviewDraftStorageKey(pkg.package_id), JSON.stringify(reviewDraft));
@@ -132,22 +157,22 @@ export default function ItineraryReview({
     });
   };
 
+  const persistReview = async (token: string) => {
+    await updatePackage(fetch, API_URL, token, pkg.package_id, {
+      title: packageTitle,
+      description: reviewDraft.description,
+      base_price_aud: Math.round(packagePrice),
+      days: buildReviewDayUpdates(days),
+    });
+  };
+
   const saveDraft = async () => {
-    if (saving) return;
+    if (saving || uploadingCount > 0) return;
     setSaving(true);
     try {
       const token = await accessToken();
       if (!token) throw new Error("Your session expired. Please sign in again.");
-      await updatePackage(fetch, API_URL, token, pkg.package_id, {
-        title: packageTitle,
-        description: reviewDraft.description,
-        base_price_aud: Math.round(packagePrice),
-        days: days.map((day, index) => ({
-          day_number: index + 1,
-          title: day.title === `Day ${index + 1}` ? null : day.title || null,
-          summary: day.story || null,
-        })),
-      });
+      await persistReview(token);
       showNotice("Draft saved");
     } catch (error) {
       showNotice(error instanceof Error ? error.message : "Unable to save this draft.");
@@ -165,9 +190,14 @@ export default function ItineraryReview({
         .filter((item) => item.type !== "FLIGHT" && item.type !== "HOTEL")
         .map((item) => (item.notes ? `${item.title} (${item.notes})` : item.title));
 
+      const token = await accessToken();
+      if (!token) {
+        showNotice("Your session expired. Please sign in again.");
+        return;
+      }
       const response = await fetch("/api/ai/generate-content", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({
           scope: "package",
           packageTitle,
@@ -175,15 +205,15 @@ export default function ItineraryReview({
           selectedHotel: pkg.hotels[0]?.hotel_name ?? "",
           totalDays: days.length,
           items: activityNames,
-          vibe: vibesDraft?.vibes.join(", ") ?? "",
+          vibe: vibeLabels.join(", "),
         }),
       });
-      const data = (await response.json()) as { listing?: string; error?: string };
+      const data = (await response.json()) as { listing?: string; error?: string; message?: string };
       if (data.listing) {
         setReviewDraft((current) => ({ ...current, description: data.listing! }));
         showNotice("Description generated");
       } else {
-        showNotice(data.error || "The description generator returned nothing.");
+        showNotice(data.message || data.error || "The description generator returned nothing.");
       }
     } catch {
       showNotice("Failed to connect to the description generator.");
@@ -208,22 +238,37 @@ export default function ItineraryReview({
     const isFirstCover = coverMediaId === null;
     const preview = URL.createObjectURL(file);
     const tempId = `pending-${preview}`;
+    setUploadingCount((count) => count + 1);
     setPhotos((current) => [...current, { media_id: tempId, package_id: pkg.package_id, media_type: "image", url: preview, caption: file.name, is_cover: isFirstCover }]);
     try {
       const token = await accessToken();
       if (!token) throw new Error("Your session expired. Please sign in again.");
       const uploaded = await uploadPackageMedia(fetch, API_URL, token, pkg.package_id, file, isFirstCover);
+      if (cancelledPreviews.current.has(tempId)) {
+        cancelledPreviews.current.delete(tempId);
+        await deletePackageMedia(fetch, API_URL, token, uploaded.media_id).catch(() => {});
+        return;
+      }
       setPhotos((current) => current.map((photo) => (photo.media_id === tempId ? uploaded : photo)));
       showNotice("Photo uploaded");
     } catch (error) {
+      cancelledPreviews.current.delete(tempId);
       setPhotos((current) => current.filter((photo) => photo.media_id !== tempId));
       showNotice(error instanceof Error ? error.message : "Unable to upload this photo.");
     } finally {
+      setUploadingCount((count) => Math.max(0, count - 1));
       URL.revokeObjectURL(preview);
     }
   };
 
   const removePhoto = async (photo: PackageMedia) => {
+    // Still uploading — no server row exists to delete yet, so mark the
+    // preview cancelled; addCoverPhoto deletes the finished row instead.
+    if (photo.media_id.startsWith("pending-")) {
+      cancelledPreviews.current.add(photo.media_id);
+      setPhotos((current) => current.filter((entry) => entry.media_id !== photo.media_id));
+      return;
+    }
     try {
       const token = await accessToken();
       if (!token) throw new Error("Your session expired. Please sign in again.");
@@ -237,13 +282,16 @@ export default function ItineraryReview({
   };
 
   const handleSubmit = async () => {
-    if (submitting) return;
+    if (submitting || uploadingCount > 0) return;
     setSubmitting(true);
     try {
       const token = await accessToken();
       if (!token) throw new Error("Your session expired. Please sign in again.");
-      const result = await submitPackage(fetch, API_URL, token, pkg.package_id);
-      setSubmitResult({ kind: "success", message: `This package's status is now "${result.status}". An admin will review it next.` });
+      // The description lives in page state — submitting without persisting it
+      // shipped the stale server copy and stranded this page's edits.
+      await persistReview(token);
+      await submitPackage(fetch, API_URL, token, pkg.package_id);
+      setSubmitResult({ kind: "success", message: "Your package is now under review. You can track its status on your dashboard." });
     } catch (error) {
       if (error instanceof SubmitPackageError) {
         setSubmitResult({ kind: "error", message: error.message, code: error.code ?? String(error.status) });
@@ -261,9 +309,9 @@ export default function ItineraryReview({
         <button className="text-action back-action" onClick={onBackToEditor} aria-label="Back to editor"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg> Back to editor</button>
         <div className="editor-title-block"><span className="editor-kicker">Finalise & review</span><h1>Finalise your package</h1></div>
         <div className="editor-actions">
-          <button className="quiet-button" disabled={saving} onClick={() => { void saveDraft(); }}>{saving ? "Saving…" : "Save Draft"}</button>
+          <button className="quiet-button" disabled={saving || uploadingCount > 0} onClick={() => { void saveDraft(); }}>{saving ? "Saving…" : "Save Draft"}</button>
           <button className="quiet-button" onClick={() => setPreviewOpen(true)}>Preview</button>
-          <button className="publish-button" disabled={submitting} onClick={() => { void handleSubmit(); }}>{submitting ? "Submitting…" : "Submit for Review"}</button>
+          <button className="publish-button" disabled={submitting || uploadingCount > 0} onClick={() => { void handleSubmit(); }}>{uploadingCount > 0 ? `Uploading ${uploadingCount}…` : submitting ? "Submitting…" : "Submit for Review"}</button>
         </div>
       </header>
 
@@ -278,7 +326,7 @@ export default function ItineraryReview({
           <dl className="stat-grid review-panel-body">
             <div><dt>Destination</dt><dd>{destination}</dd></div>
             <div><dt>Duration</dt><dd>{days.length} Day{days.length === 1 ? "" : "s"} / {nights} Night{nights === 1 ? "" : "s"}</dd></div>
-            <div><dt>Vibes</dt><dd>{vibesDraft?.vibes.length ? vibesDraft.vibes.join(", ") : "Not set"}</dd></div>
+            <div><dt>Vibes</dt><dd>{vibeLabels.length ? vibeLabels.join(", ") : "Not set"}</dd></div>
             <div><dt>Season</dt><dd>{vibesDraft?.season ? capitalize(vibesDraft.season) : "Not set"}</dd></div>
             <div><dt>Flights</dt><dd>{componentCounts.flightCount}</dd></div>
             <div><dt>Hotels</dt><dd>{componentCounts.hotelCount}</dd></div>
@@ -289,17 +337,33 @@ export default function ItineraryReview({
         <section className="editor-panel">
           <h2>Select cover image</h2>
           <div className="review-panel-body">
-            <div className="photo-grid">
-              {photos.map((photo) => (
-                <figure key={photo.media_id} className={photo.media_id === coverMediaId ? "is-cover" : undefined}>
-                  <button type="button" className="set-cover-btn" onClick={() => setReviewDraft((current) => ({ ...current, coverMediaId: photo.media_id }))} aria-label={`Set ${photo.caption ?? "this photo"} as the cover image`}>
-                    <img src={toSafeImageSrc(photo.url)} alt={photo.caption ?? "Package photo"} />
-                  </button>
-                  {photo.media_id === coverMediaId && <span className="cover-badge"><Icon name="star" size={12} /> Cover</span>}
-                  <button type="button" className="remove-photo-btn" aria-label={`Remove ${photo.caption ?? "photo"}`} onClick={() => { void removePhoto(photo); }}><Icon name="plus" size={10} /></button>
-                </figure>
-              ))}
-              <label className="photo-add"><input type="file" accept="image/png,image/jpeg" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (!file) return; void addCoverPhoto(file); }} /><Icon name="plus" size={30} /><span>Add</span><small>JPG or PNG</small></label>
+            <div className="cover-gallery">
+              {photos.map((photo) => {
+                const isCover = photo.media_id === coverMediaId;
+                return (
+                  <figure key={photo.media_id} className={`cover-gallery-item${isCover ? " is-cover" : ""}`}>
+                    <button
+                      type="button"
+                      className="cover-gallery-select"
+                      aria-pressed={isCover}
+                      onClick={() => setReviewDraft((current) => ({ ...current, coverMediaId: photo.media_id }))}
+                      aria-label={isCover ? `${photo.caption ?? "This photo"} is the cover image` : `Set ${photo.caption ?? "this photo"} as the cover image`}
+                    >
+                      <img src={toSafeImageSrc(photo.url)} alt={photo.caption ?? "Package photo"} />
+                    </button>
+                    {isCover && <span className="cover-gallery-badge"><Icon name="star" size={11} /> Cover</span>}
+                    <button type="button" className="cover-gallery-remove" aria-label={`Remove ${photo.caption ?? "photo"}`} onClick={() => { void removePhoto(photo); }}>
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg>
+                    </button>
+                  </figure>
+                );
+              })}
+              <label className="cover-gallery-add">
+                <input type="file" accept="image/png,image/jpeg" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (!file) return; void addCoverPhoto(file); }} />
+                <Icon name="plus" size={22} />
+                <span>Add photo</span>
+                <small>JPG or PNG</small>
+              </label>
             </div>
             <p className="review-photo-hint">{photos.length} photo{photos.length === 1 ? "" : "s"} available</p>
           </div>
@@ -307,9 +371,13 @@ export default function ItineraryReview({
 
         <section className="editor-panel">
           <h2>Description</h2>
-          <div className="review-panel-body story-copy">
-            <div className="section-label"><h3>Package description</h3><button className="ai-button" disabled={generating} aria-label="Generate description with AI" onClick={() => { void generateDescription(); }}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m12 3 1.2 3.8L17 8l-3.8 1.2L12 13l-1.2-3.8L7 8l3.8-1.2zM18 14l.8 2.2L21 17l-2.2.8L18 20l-.8-2.2L15 17l2.2-.8z" /></svg> {generating ? "Generating…" : "Generate with AI"}</button></div>
+          <div className="review-description-panel">
+            <div className="review-description-header">
+              <h3>Package description</h3>
+              <button className="ai-button" disabled={generating} aria-label="Generate description with AI" onClick={() => { void generateDescription(); }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m12 3 1.2 3.8L17 8l-3.8 1.2L12 13l-1.2-3.8L7 8l3.8-1.2zM18 14l.8 2.2L21 17l-2.2.8L18 20l-.8-2.2L15 17l2.2-.8z" /></svg> {generating ? "Generating…" : "Generate with AI"}</button>
+            </div>
             <textarea value={reviewDraft.description} onChange={(event) => setReviewDraft((current) => ({ ...current, description: event.target.value }))} placeholder="Describe this package for travellers…" aria-label="Package description" />
+            <AiDisclaimer />
           </div>
         </section>
 

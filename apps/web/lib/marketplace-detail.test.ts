@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { assignDayImages, buildStopImages, formatTripLength, initials } from "./marketplace-detail";
+import { formatTripLength, initials, planItineraryPhotos } from "./marketplace-detail";
 
 test("formatTripLength renders nights as one less than days", () => {
   assert.equal(formatTripLength(3), "3 Days / 2 Nights");
@@ -12,41 +12,74 @@ test("formatTripLength returns null when duration is unknown", () => {
   assert.equal(formatTripLength(null), null);
 });
 
-test("assignDayImages maps sorted media to slots by index", () => {
+test("with no links, uploads other than the cover become day headers once each, in order", () => {
+  // Regression: the whole pool was re-spread from the start on every day, so a
+  // 3-photo package showed the same pictures on all days and every first stop.
   const media = [
     { url: "second.jpg", sort_order: 2 },
-    { url: "first.jpg", sort_order: 1 },
+    { url: "cover.jpg", sort_order: 1 },
+    { url: "third.jpg", sort_order: 3 },
   ];
+  const days = [{ items: [{}, {}] }, { items: [{}] }, { items: [] }, { items: [] }];
+  const plan = planItineraryPhotos(days, media, "cover.jpg");
 
-  assert.deepEqual(assignDayImages(3, media, "fallback.jpg"), [
-    "first.jpg",
-    "second.jpg",
-    "fallback.jpg",
-  ]);
+  assert.deepEqual(plan.dayImages, ["second.jpg", "third.jpg", null, null]);
+  assert.deepEqual(plan.stopImages, [[[], []], [[]], [], []], "stops get no photo from an unlinked pool");
+  assert.equal(new Set(plan.dayImages.filter(Boolean)).size, 2, "no photo is shown twice");
 });
 
-test("assignDayImages falls back when there is no media at all", () => {
-  assert.deepEqual(assignDayImages(1, undefined, "fallback.jpg"), ["fallback.jpg"]);
+test("a package with only its cover shows no day photos instead of repeating the hero", () => {
+  const plan = planItineraryPhotos([{ items: [{}] }, { items: [] }], [{ url: "cover.jpg" }], "cover.jpg");
+  assert.deepEqual(plan.dayImages, [null, null]);
 });
 
-test("assignDayImages prefers media_url over url", () => {
-  const media = [{ url: "url.jpg", media_url: "media-url.jpg", sort_order: 0 }];
-  assert.deepEqual(assignDayImages(1, media, "fallback.jpg"), ["media-url.jpg"]);
+test("planItineraryPhotos prefers media_url over url and handles no media at all", () => {
+  assert.deepEqual(
+    planItineraryPhotos([{ items: [] }], [{ url: "url.jpg", media_url: "media-url.jpg" }], null).dayImages,
+    ["media-url.jpg"],
+  );
+  assert.deepEqual(planItineraryPhotos([{ items: [] }, { items: [] }], undefined, null).dayImages, [null, null]);
 });
 
-test("buildStopImages gives the first item up to 6 photos, the rest one each", () => {
-  const media = Array.from({ length: 9 }, (_, i) => ({ url: `p${i + 1}.jpg`, sort_order: i + 1 }));
-  const result = buildStopImages(4, media, "fallback.jpg");
-  assert.deepEqual(result[0], ["p1.jpg", "p2.jpg", "p3.jpg", "p4.jpg", "p5.jpg", "p6.jpg"]);
-  assert.deepEqual(result[1], ["p7.jpg"]);
-  assert.deepEqual(result[2], ["p8.jpg"]);
-  assert.deepEqual(result[3], ["p9.jpg"]);
+test("linked photos are used where the creator placed them", () => {
+  const days = [
+    { photos: [{ src: "day1.jpg" }, { src: "day1b.jpg" }], items: [{ photos: [{ src: "walk.jpg" }, { src: "walk2.jpg" }] }, { photos: [] }] },
+    { photos: [], items: [{ photos: [{ src: "food.jpg" }] }] },
+  ];
+  const plan = planItineraryPhotos(days, [{ url: "ignored.jpg" }], "cover.jpg");
+
+  assert.deepEqual(plan.dayImages, ["day1.jpg", null], "a day header is its first photo; no stand-in when it has none");
+  assert.deepEqual(plan.stopImages, [[["walk.jpg", "walk2.jpg"], []], [["food.jpg"]]]);
 });
 
-test("buildStopImages falls back per item once the pool runs out", () => {
-  const media = [{ url: "only.jpg", sort_order: 1 }];
-  const result = buildStopImages(3, media, "fallback.jpg");
-  assert.deepEqual(result, [["only.jpg"], ["fallback.jpg"], ["fallback.jpg"]]);
+test("a hotel photo repeated on every night row, or reused as a day header, is shown once", () => {
+  const night = (n: number) => ({ photos: [], items: [{ photos: [{ src: "hotel.jpg" }] }], n });
+  const plan = planItineraryPhotos(
+    [{ photos: [{ src: "hotel.jpg" }], items: [{ photos: [{ src: "hotel.jpg" }, { src: "lobby.jpg" }] }] }, night(2), night(3)],
+    undefined,
+    null,
+  );
+  assert.deepEqual(plan.dayImages, ["hotel.jpg", null, null]);
+  assert.deepEqual(plan.stopImages, [[["lobby.jpg"]], [[]], [[]]]);
+});
+
+test("a stop shows at most six linked photos", () => {
+  const photos = Array.from({ length: 9 }, (_, i) => ({ src: `p${i}.jpg` }));
+  assert.equal(planItineraryPhotos([{ items: [{ photos }] }], undefined, null).stopImages[0][0].length, 6);
+});
+
+test("a linked cover is not shown again below the hero", () => {
+  const days = [{ photos: [{ src: "cover.jpg" }], items: [{ photos: [{ src: "cover.jpg" }, { src: "walk.jpg" }] }] }];
+  const plan = planItineraryPhotos(days, undefined, "cover.jpg");
+  assert.deepEqual(plan.dayImages, [null]);
+  assert.deepEqual(plan.stopImages, [[["walk.jpg"]]]);
+});
+
+test("a photo past a stop's six is still shown on a later stop it is linked to", () => {
+  // Regression: the 7th photo was marked used by stop A even though only six were shown there.
+  const photos = Array.from({ length: 7 }, (_, i) => ({ src: `p${i + 1}.jpg` }));
+  const plan = planItineraryPhotos([{ items: [{ photos }, { photos: [photos[6]] }] }], undefined, null);
+  assert.deepEqual(plan.stopImages[0][1], ["p7.jpg"]);
 });
 
 test("initials derives up to two uppercase letters from a name", () => {
