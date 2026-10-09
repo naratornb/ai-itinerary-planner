@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import type { AdminPackageDetail } from "../../lib/admin-api";
 import {
   AdminReviewDetailView,
+  decisionNotice,
   detailFailure,
   rejectionReasonError,
   type AdminReviewDetailViewProps,
@@ -195,4 +196,99 @@ test("decision dialogs opt out of the browser's absolute dialog positioning", ()
     "utf8",
   );
   assert.match(css, /\.admin-detail-dialog\s*\{[\s\S]*?position:\s*relative/);
+});
+
+test("a decided package opened for viewing shows its status, not a generic conflict", () => {
+  const html = render({ status: "conflict", packageDetail: { ...packageDetail, status: "approved" } });
+  assert.match(html, /Already approved/);
+  assert.doesNotMatch(html, /Review already completed/);
+  assert.equal(decisionNotice("rejected").title, "Changes already requested");
+  assert.equal(decisionNotice("live").title, "Already live");
+  assert.deepEqual(decisionNotice("pending_review", "Taken by someone else"), {
+    title: "No longer pending review",
+    message: "Taken by someone else",
+  });
+});
+
+test("the previous decision is shown with its reason and internal notes", () => {
+  const html = render({
+    packageDetail: {
+      ...packageDetail,
+      status: "rejected",
+      latest_approval: {
+        decision: "rejected",
+        rejection_reason: "Add clearer inclusions.",
+        notes: "Second time this creator.",
+        reviewed_at: "2026-10-05T01:00:00Z",
+      },
+    },
+  });
+  assert.match(html, /Last decision/);
+  assert.match(html, /Changes requested/);
+  assert.match(html, /Add clearer inclusions\./);
+  assert.match(html, /Second time this creator\./);
+  assert.match(html, /5 Oct 2026/);
+  assert.doesNotMatch(render(), /Last decision|Previous decision/);
+});
+
+test("approve and request-changes stay disabled once the package is not pending", () => {
+  const html = render({ status: "conflict", packageDetail: { ...packageDetail, status: "rejected" } });
+  assert.equal((html.match(/disabled=""/g) ?? []).length >= 2, true);
+});
+
+test("the review page shows every uploaded photo, flags unplaced ones, and opens them safely", () => {
+  const html = render({
+    packageDetail: {
+      ...packageDetail,
+      cover_image_url: "https://images.example.com/a.jpg",
+      media: [
+        { media_id: "m1", url: "https://images.example.com/a.jpg", caption: "Rice terraces" },
+        { media_id: "m2", url: "https://images.example.com/b.jpg" },
+        { media_id: "m3", url: "javascript:alert(1)" },
+      ],
+      days: [
+        { id: "day-1", day_number: 1, title: "Arrive and settle in", summary: "A gentle first day.", media_ids: ["m1"] },
+        { id: "day-2", day_number: 2, title: "Ubud at your pace", summary: "Food and craft." },
+      ],
+    },
+  });
+
+  assert.match(html, /<h2 id="admin-detail-photos-title">Photos <span[^>]*>3<\/span><\/h2>/);
+  assert.match(html, /href="https:\/\/images\.example\.com\/a\.jpg" target="_blank" rel="noopener noreferrer"/);
+  assert.match(html, /aria-label="Open photo 2 in a new tab"/);
+  assert.match(html, /<b>Cover<\/b>/);
+  assert.match(html, /2 photos are not placed on a day or stop\./);
+  assert.match(html, /Invalid image address/);
+  assert.doesNotMatch(html, /javascript:alert/);
+  assert.match(html, /aria-label="Photos for day 1"/, "day photos appear inside the day panel");
+});
+
+test("a package with no uploads says so instead of hiding the photo section", () => {
+  const html = render();
+  assert.match(html, /Photos <span[^>]*>0<\/span>/);
+  assert.match(html, /No photos were uploaded for this package\./);
+});
+
+test("the header badge shows the package's real status", () => {
+  const badge = (status: string) =>
+    render({ packageDetail: { ...packageDetail, status } }).match(/<span class="admin-detail-status"[^>]*>([^<]*)<\/span>/)?.[1];
+  assert.equal(badge("pending_review"), "Pending review");
+  assert.equal(badge("approved"), "Approved");
+  assert.equal(badge("rejected"), "Rejected");
+  assert.equal(badge("live"), "Live");
+});
+
+test("the cover is in use, so it is never flagged as unplaced", () => {
+  const html = render({
+    packageDetail: {
+      ...packageDetail,
+      cover_image_url: "https://images.example.com/cover.jpg",
+      media: [
+        { media_id: "m1", url: "https://images.example.com/cover.jpg" },
+        { media_id: "m2", url: "https://images.example.com/loose.jpg" },
+      ],
+    },
+  });
+  assert.match(html, /1 photo is not placed on a day or stop\./);
+  assert.equal((html.match(/>Not placed</g) ?? []).length, 1);
 });

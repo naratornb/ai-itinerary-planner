@@ -1,4 +1,6 @@
 import type { AdminApprovalPackage, AdminUser, ApprovalListResponse } from "./admin-api";
+import type { CreatorMediaDetail } from "./creator-api";
+import type { BuilderDay } from "./itinerary-builder";
 
 const NOT_AVAILABLE = "Not available";
 const NOT_PROVIDED = "Not provided";
@@ -84,4 +86,59 @@ export function requestSequenceIsCurrent(sequence: number, activeSequence: numbe
 
 export async function optionalAdminUsers(request: Promise<AdminUser[]>): Promise<AdminUser[]> {
   return request.catch(() => []);
+}
+
+/** http(s) image addresses only; anything else (javascript:, data:, junk) renders as "invalid". */
+export function safeImageSrc(value: string | null | undefined): string {
+  if (!value) return "";
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:" ? url.href : "";
+  } catch {
+    return "";
+  }
+}
+
+export type ReviewPhoto = {
+  mediaId: string;
+  src: string;
+  caption: string;
+  isCover: boolean;
+  /** Where the creator placed it, e.g. "Day 2" or "Day 2 · Hilton New York". Empty = not placed. */
+  placements: string[];
+};
+
+/**
+ * Every uploaded image of a package with the days and stops that use it, so a
+ * reviewer sees all of it — including photos that never made it onto a day.
+ * The cover is the package's cover URL, falling back to the first upload.
+ */
+export function reviewPhotos(
+  pkg: { media?: CreatorMediaDetail[] | null; cover_image_url?: string | null },
+  days: BuilderDay[],
+): ReviewPhoto[] {
+  const media = pkg.media ?? [];
+  const placements = new Map<string, string[]>();
+  const place = (mediaId: string | undefined, label: string) => {
+    if (!mediaId) return;
+    const labels = placements.get(mediaId) ?? [];
+    if (!labels.includes(label)) labels.push(label);
+    placements.set(mediaId, labels);
+  };
+  for (const day of days) {
+    for (const photo of day.photos ?? []) place(photo.media_id, `Day ${day.day}`);
+    for (const item of day.items) {
+      for (const photo of item.photos ?? []) place(photo.media_id, `Day ${day.day} · ${item.title}`);
+    }
+  }
+  const coverIndex = pkg.cover_image_url
+    ? Math.max(0, media.findIndex((item) => item.url === pkg.cover_image_url))
+    : 0;
+  return media.map((item, index) => ({
+    mediaId: item.media_id,
+    src: item.url,
+    caption: item.caption?.trim() ?? "",
+    isCover: index === coverIndex,
+    placements: placements.get(item.media_id) ?? [],
+  }));
 }

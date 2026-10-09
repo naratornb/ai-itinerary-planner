@@ -4,6 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
   fetchAdminPackageFromSupabase,
+  fetchLatestApproval,
   loadAdminPackageForReview,
 } from "./admin-package-supabase";
 
@@ -169,4 +170,65 @@ test("review loading uses the RLS fallback only when the owner-scoped endpoint r
 
   assert.equal(detail?.title, "Admin-visible package");
   assert.equal(fallbackCalls, 1);
+});
+
+function approvalsClient(result: { data: unknown; error: { message: string } | null } | "throw") {
+  const calls: string[] = [];
+  const chain = {
+    select: () => chain,
+    eq: (column: string, value: string) => { calls.push(`${column}=${value}`); return chain; },
+    order: (column: string, opts: { ascending: boolean }) => { calls.push(`order ${column} ${opts.ascending ? "asc" : "desc"}`); return chain; },
+    limit: (n: number) => { calls.push(`limit ${n}`); return chain; },
+    maybeSingle: async () => { if (result === "throw") throw new Error("boom"); return result; },
+  };
+  const client = { from: (table: string) => { calls.push(table); return chain; } } as unknown as SupabaseClient;
+  return { client, calls };
+}
+
+test("latest approval reads the newest decision for the package", async () => {
+  const { client, calls } = approvalsClient({
+    data: { approval_id: "a1", package_id: "p1", decision: "rejected", rejection_reason: "Fix pricing", notes: null, reviewed_at: "2026-10-05T01:00:00Z" },
+    error: null,
+  });
+  const approval = await fetchLatestApproval(client, "p1");
+  assert.deepEqual(approval, {
+    approval_id: "a1",
+    package_id: "p1",
+    decision: "rejected",
+    rejection_reason: "Fix pricing",
+    notes: null,
+    reviewed_at: "2026-10-05T01:00:00Z",
+  });
+  assert.deepEqual(calls, ["package_approvals", "package_id=p1", "order reviewed_at desc", "limit 1"]);
+});
+
+test("latest approval never blocks the review: errors, missing rows and odd data all read as none", async () => {
+  assert.equal(await fetchLatestApproval(approvalsClient({ data: null, error: null }).client, "p1"), null);
+  assert.equal(await fetchLatestApproval(approvalsClient({ data: null, error: { message: "denied" } }).client, "p1"), null);
+  assert.equal(await fetchLatestApproval(approvalsClient("throw").client, "p1"), null);
+  assert.equal(
+    await fetchLatestApproval(approvalsClient({ data: { decision: "maybe" }, error: null }).client, "p1"),
+    null,
+  );
+});
+
+test("the RLS fallback attaches the previous decision so admins can see it", async () => {
+  const pkg = {
+    package_id: "package-1", title: "Decided", duration_days: 1, base_price_aud: 100, status: "rejected",
+    creator_id: "creator-1", created_at: "2026-10-01T00:00:00Z",
+    package_media: [], package_days: [], package_flights: [], package_hotels: [], package_activities: [],
+  };
+  const approval = { approval_id: "a1", package_id: "package-1", decision: "rejected", rejection_reason: "Needs work, please revise.", notes: null, reviewed_at: "2026-10-05T01:00:00Z" };
+  const client = {
+    from(table: string) {
+      const data = table === "package_approvals" ? approval : pkg;
+      const chain = { select: () => chain, eq: () => chain, order: () => chain, limit: () => chain, maybeSingle: async () => ({ data, error: null }) };
+      return chain;
+    },
+  } as unknown as SupabaseClient;
+  const fetcher: typeof fetch = async () => Response.json({ message: "Package not found" }, { status: 404 });
+
+  const detail = await loadAdminPackageForReview(fetcher, client, "http://localhost:8000", "t", "package-1");
+
+  assert.equal(detail.latest_approval?.rejection_reason, "Needs work, please revise.");
 });

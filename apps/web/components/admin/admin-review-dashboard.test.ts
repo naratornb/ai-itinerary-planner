@@ -54,9 +54,17 @@ function render(overrides: Partial<AdminReviewDashboardViewProps> = {}): string 
     users: [{ id: "creator-1", username: "Mina Travels", email: "mina@example.com" }],
     now: "2026-10-07T12:00:00Z",
     isUpdating: false,
+    reviewedPackages: [],
+    reviewedMeta: { total: 0, page: 1, per_page: 20, total_pages: 0 },
+    pendingDelete: null,
+    isDeleting: false,
     onSortChange: noop,
     onPerPageChange: noop,
     onPageChange: noop,
+    onReviewedPageChange: noop,
+    onDeleteRequest: noop,
+    onDeleteConfirm: noop,
+    onDeleteCancel: noop,
     onRefresh: noop,
     onSignOut: noop,
     ...overrides,
@@ -201,4 +209,66 @@ test("queue enhancements settle independently without blocking one another", asy
   resolveOldest("2026-10-04T12:00:00Z");
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.deepEqual(updates, ["users:1", "oldest:2026-10-04T12:00:00Z"]);
+});
+
+const reviewedPackages: AdminApprovalPackage[] = [
+  {
+    package_id: "package-old",
+    title: "Osaka Highlights",
+    destination_country: "Japan",
+    destination_city: "Osaka",
+    duration_days: 5,
+    base_price_aud: 2100,
+    status: "live",
+    creator_id: "creator-1",
+    created_at: "2026-08-01T00:00:00Z",
+    submitted_at: "2026-08-10T00:00:00Z",
+  },
+];
+
+test("reviewed packages render with status badge and a per-row delete action", () => {
+  const html = render({
+    initialTab: "reviewed",
+    reviewedPackages,
+    reviewedMeta: { total: 1, page: 1, per_page: 20, total_pages: 1 },
+  });
+
+  assert.match(html, /Reviewed packages/);
+  assert.match(html, /Osaka Highlights/);
+  assert.match(html, /admin-review-status[^>]*>Live</);
+  assert.match(html, /aria-label="Delete Osaka Highlights"/);
+  assert.match(html, /aria-label="View Osaka Highlights"/);
+  assert.doesNotMatch(html, /Packages waiting for review/);
+});
+
+test("tabs show both counts and default to the pending queue", () => {
+  const html = render({
+    reviewedPackages,
+    reviewedMeta: { total: 1, page: 1, per_page: 20, total_pages: 1 },
+  });
+
+  assert.match(html, /role="tablist"/);
+  assert.match(html, /id="admin-review-tab-pending"[^>]*aria-selected="true"/);
+  assert.match(html, /id="admin-review-tab-reviewed"[^>]*aria-selected="false"[^>]*tabindex="-1"/);
+  assert.match(html, /Reviewed<span class="admin-review-tab__count">1<\/span>/);
+  assert.match(html, /Packages waiting for review/);
+  assert.doesNotMatch(html, /Osaka Highlights/);
+});
+
+test("an empty reviewed list still explains itself", () => {
+  assert.match(render({ initialTab: "reviewed" }), /No packages have been reviewed yet\./);
+});
+
+test("a reviewed-list failure is contained to that section", () => {
+  const html = render({ initialTab: "reviewed", reviewedError: "Unable to load reviewed packages." });
+  assert.match(html, /role="alert">Unable to load reviewed packages\./);
+  // The pending tab stays available and reports its own count.
+  assert.match(html, /id="admin-review-tab-pending"/);
+});
+
+test("a pending delete renders the confirm dialog naming the package", () => {
+  const html = render({ pendingDelete: reviewedPackages[0] });
+  assert.match(html, /role="dialog"/);
+  assert.match(html, /Delete “Osaka Highlights”\?/);
+  assert.match(html, /permanently deleted/);
 });

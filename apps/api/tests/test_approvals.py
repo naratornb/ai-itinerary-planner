@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from app import core
 from app.approvals import service
 from app.main import app
+from app.packages import service as packages_service
 
 client = TestClient(app)
 
@@ -87,17 +88,17 @@ def fake(monkeypatch):
     monkeypatch.setattr(core, "SUPABASE_ANON_KEY", "anon-key")
     monkeypatch.setattr(core, "SUPABASE_SERVICE_ROLE_KEY", "service-key")
     fr = FakeRequests()
-    monkeypatch.setattr(
-        service,
-        "requests",
-        types.SimpleNamespace(
-            get=fr.get,
-            post=fr.post,
-            patch=fr.patch,
-            delete=fr.delete,
-            RequestException=FakeRequestException,
-        ),
+    fake_ns = types.SimpleNamespace(
+        get=fr.get,
+        post=fr.post,
+        patch=fr.patch,
+        delete=fr.delete,
+        RequestException=FakeRequestException,
     )
+    monkeypatch.setattr(service, "requests", fake_ns)
+    # delete_reviewed cleans catalog rows through packages.service._call —
+    # route those through the same fake.
+    monkeypatch.setattr(packages_service, "requests", fake_ns)
     app.dependency_overrides[core.require_admin_ctx] = lambda: dict(CTX)
     app.dependency_overrides[core.require_user_ctx] = lambda: dict(CTX)
     yield fr
@@ -155,6 +156,65 @@ def test_list_pending_sort_desc(fake):
     assert fake.find("GET", "travel_packages")[0]["params"]["order"] == (
         "submitted_at.desc"
     )
+
+
+def test_list_decided_filters_reviewed_statuses(fake):
+    row = _summary_row(status="approved")
+    row["package_media"] = []
+    fake.route(
+        "GET", "travel_packages", FakeResp([row], headers={"Content-Range": "0-0/1"})
+    )
+    resp = client.get("/approvals?view=decided")
+    assert resp.status_code == 200
+    assert resp.json()["data"][0]["package_id"] == PKG
+    params = fake.find("GET", "travel_packages")[0]["params"]
+    assert params["status"] == "in.(approved,rejected,live)"
+    assert params["order"] == "updated_at.desc"
+
+
+def test_delete_reviewed_ok(fake):
+    row = _summary_row(status="live")
+    row["package_flights"] = [{"flight_id": "flight-1"}]
+    row["package_hotels"] = []
+    row["package_activities"] = []
+    row["package_media"] = [
+        {"url": f"https://example.supabase.co/storage/v1/object/public/package-media/{PKG}/a.png"},
+    ]
+    fake.route("GET", "travel_packages", FakeResp([row]))
+    fake.route("DELETE", "travel_packages", FakeResp([row]))
+    fake.route("DELETE", "flights", FakeResp([]))
+    fake.route("DELETE", "/storage/v1/object/package-media", FakeResp({}))
+
+    resp = client.delete(f"/approvals/{PKG}")
+    assert resp.status_code == 204
+
+    # The cascade drops package_media rows but not the files, which stay public.
+    storage = fake.find("DELETE", "/storage/v1/object/package-media")
+    assert len(storage) == 1
+    assert storage[0]["json"] == {"prefixes": [f"{PKG}/a.png"]}
+    assert storage[0]["headers"]["apikey"] == "service-key"
+    assert "package_media(url)" in fake.find("GET", "travel_packages")[0]["params"]["select"]
+
+    package_delete = fake.find("DELETE", "travel_packages")[0]
+    # Decided packages belong to creators, and RLS has no admin delete policy —
+    # the delete must run through the service role.
+    assert package_delete["headers"]["apikey"] == "service-key"
+    assert package_delete["params"]["status"] == "in.(approved,rejected,live)"
+    # The orphaned catalog flight is cleaned up too.
+    assert fake.find("DELETE", "flights")[0]["params"]["flight_id"] == "in.(flight-1)"
+
+
+def test_delete_reviewed_pending_is_409(fake):
+    fake.route("GET", "travel_packages", FakeResp([_summary_row()]))  # pending_review
+    resp = client.delete(f"/approvals/{PKG}")
+    assert resp.status_code == 409
+    assert fake.find("DELETE", "travel_packages") == []
+
+
+def test_delete_reviewed_not_found(fake):
+    fake.route("GET", "travel_packages", FakeResp([]))
+    resp = client.delete(f"/approvals/{PKG}")
+    assert resp.status_code == 404
 
 
 def test_list_pending_unauthorized(monkeypatch):

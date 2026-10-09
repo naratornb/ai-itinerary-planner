@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { AdminApprovalPackage, AdminUser } from "./admin-api";
+import type { BuilderDay } from "./itinerary-builder";
 import {
   approvalResultRange,
   creatorLabel,
@@ -12,6 +13,8 @@ import {
   formatWaitingAge,
   optionalAdminUsers,
   requestSequenceIsCurrent,
+  reviewPhotos,
+  safeImageSrc,
 } from "./admin-review";
 
 const users: AdminUser[] = [
@@ -79,4 +82,44 @@ test("optionalAdminUsers preserves users but turns enrichment failure into an em
 test("requestSequenceIsCurrent accepts only the active request", () => {
   assert.equal(requestSequenceIsCurrent(3, 3), true);
   assert.equal(requestSequenceIsCurrent(2, 3), false);
+});
+
+test("safeImageSrc only lets http(s) addresses through", () => {
+  assert.equal(safeImageSrc("https://cdn.example.com/a.jpg"), "https://cdn.example.com/a.jpg");
+  assert.equal(safeImageSrc("http://cdn.example.com/a.jpg"), "http://cdn.example.com/a.jpg");
+  for (const bad of ["javascript:alert(1)", "data:image/png;base64,AAA", "/relative.jpg", "not a url", "", null, undefined]) {
+    assert.equal(safeImageSrc(bad), "", String(bad));
+  }
+});
+
+test("reviewPhotos lists every upload with where it is used, and marks the cover and unplaced photos", () => {
+  const day = (n: number, photos: BuilderDay["photos"], items: BuilderDay["items"] = []): BuilderDay =>
+    ({ id: `day-${n}`, day: n, title: `Day ${n}`, meta: "", story: "", photos, items }) as BuilderDay;
+  const photos = reviewPhotos(
+    {
+      cover_image_url: "https://cdn.example.com/b.jpg",
+      media: [
+        { media_id: "m1", url: "https://cdn.example.com/a.jpg", caption: " Beach " },
+        { media_id: "m2", url: "https://cdn.example.com/b.jpg" },
+        { media_id: "m3", url: "https://cdn.example.com/c.jpg" },
+      ],
+    },
+    [
+      day(1, [{ src: "x", alt: "", media_id: "m1" }]),
+      day(2, [], [{ id: 1, title: "Hilton", photos: [{ src: "x", alt: "", media_id: "m1" }, { src: "x", alt: "", media_id: "m2" }] } as BuilderDay["items"][number]]),
+    ],
+  );
+
+  assert.deepEqual(photos.map((p) => p.isCover), [false, true, false]);
+  assert.equal(photos[0].caption, "Beach");
+  assert.deepEqual(photos[0].placements, ["Day 1", "Day 2 · Hilton"]);
+  assert.deepEqual(photos[1].placements, ["Day 2 · Hilton"]);
+  assert.deepEqual(photos[2].placements, [], "an upload no day or stop uses is reported as unplaced");
+});
+
+test("reviewPhotos falls back to the first upload as cover and tolerates no media", () => {
+  assert.deepEqual(reviewPhotos({ media: null }, []), []);
+  const [first, second] = reviewPhotos({ media: [{ media_id: "a", url: "https://x.test/1.jpg" }, { media_id: "b", url: "https://x.test/2.jpg" }] }, []);
+  assert.equal(first.isCover, true);
+  assert.equal(second.isCover, false);
 });

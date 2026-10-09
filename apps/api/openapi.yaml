@@ -40,7 +40,7 @@ info:
     Error responses use `ErrorResponse`, except user-management upstream failures, which return an `error` string.
     All monetary values are stored and returned as **whole AUD dollars** (integer), matching the database columns.
 
-  version: "2.7.0"
+  version: "2.8.0"
   license:
     name: Academic Use Only
 
@@ -2327,6 +2327,8 @@ paths:
       description: |
         Returns a paginated list of packages in `pending_review` status, ordered by
         `submitted_at` ascending (oldest submissions first, to prevent starvation).
+        With `view=decided`, returns packages already through review
+        (`approved`, `rejected`, `live`), ordered newest decision first.
 
         **Roles:** `admin`
         **FR:** FR-A-100
@@ -2340,6 +2342,12 @@ paths:
             type: string
             enum: [submitted_at_asc, submitted_at_desc]
             default: submitted_at_asc
+        - name: view
+          in: query
+          schema:
+            type: string
+            enum: [pending, decided]
+            default: pending
       responses:
         "200":
           description: Packages awaiting review.
@@ -2358,6 +2366,38 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         "403":
           $ref: '#/components/responses/Forbidden'
+
+  /approvals/{package_id}:
+    delete:
+      tags: [approvals]
+      summary: Delete a reviewed package
+      description: |
+        Permanently deletes a package and its associated records. Only packages
+        already through review (`approved`, `rejected`, `live`) may be deleted —
+        `pending_review` submissions stay in the queue and `draft` packages stay
+        with their creator.
+
+        **Roles:** `admin`
+        **FR:** FR-A-101
+      operationId: deleteReviewedPackage
+      responses:
+        "204":
+          description: Package deleted successfully. No response body.
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          description: Package is not in a deletable state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error_code: "INVALID_STATUS_TRANSITION"
+                message: "Cannot delete a package in status 'pending_review'; it must be 'approved', 'rejected' or 'live'."
 
   /approvals/{package_id}/approve:
     parameters:

@@ -36,13 +36,35 @@ def list_pending_approvals(
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
     sort: Literal["submitted_at_asc", "submitted_at_desc"] = "submitted_at_asc",
+    view: Literal["pending", "decided"] = "pending",
     ctx: dict = Depends(require_admin_ctx),
 ):
     try:
-        rows, meta = service.list_pending(ctx["headers"], page, per_page, sort)
+        if view == "decided":
+            rows, meta = service.list_decided(ctx["headers"], page, per_page)
+        else:
+            rows, meta = service.list_pending(ctx["headers"], page, per_page, sort)
     except service.UpstreamError as exc:
         return _upstream(exc)
     return {"data": rows, "meta": meta}
+
+
+@router.delete("/approvals/{package_id}", status_code=204)
+def delete_reviewed_package(
+    package_id: str,
+    ctx: dict = Depends(require_admin_ctx),
+):
+    """Remove a decided package (approved/rejected/live) from the marketplace
+    and its records — the admin counterpart to the creator draft delete."""
+    try:
+        outcome, result = service.delete_reviewed(package_id)
+    except service.UpstreamError as exc:
+        return _upstream(exc)
+    if outcome == "not_found":
+        return _not_found()
+    if outcome == "not_deletable":
+        return _invalid_status("delete", result, "approved', 'rejected' or 'live")
+    return None
 
 
 @router.post("/approvals/{package_id}/approve", response_model=DecisionResponse)

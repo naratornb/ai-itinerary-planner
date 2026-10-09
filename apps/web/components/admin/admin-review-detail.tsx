@@ -8,18 +8,25 @@ import {
   AdminApiError,
   approveAdminPackage,
   rejectAdminPackage,
+  type AdminApprovalRecord,
   type AdminPackageDetail,
 } from "../../lib/admin-api";
 import { loadAdminPackageForReview } from "../../lib/admin-package-supabase";
+import { STATUS_LABELS } from "../../lib/creator-api";
 import {
   formatAdminDestination,
   formatAdminDuration,
   formatSubmittedAt,
+  reviewPhotos,
+  safeImageSrc,
+  type ReviewPhoto,
 } from "../../lib/admin-review";
-import { buildDaysFromPackage, type BuilderDay, type TimelineItem } from "../../lib/itinerary-builder";
+import { buildDaysFromPackage, type BuilderDay, type DayPhoto, type TimelineItem } from "../../lib/itinerary-builder";
 import { APP_ROUTES } from "../../lib/routes";
 import { supabase } from "../../lib/supabase/client";
 import Icon from "../icon";
+import { creatorPackageStatusStyle } from "../migrated-screens";
+import { AdminHeader } from "./admin-header";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -49,6 +56,15 @@ export type AdminReviewDetailViewProps = {
   onRetry: () => void;
   onSignOut: () => void;
 };
+
+// Shown when the package is no longer pending: either an admin opened a decided
+// package from the Reviewed list, or another admin decided it first.
+export function decisionNotice(status: string | undefined, fallback?: string): { title: string; message: string } {
+  if (status === "approved") return { title: "Already approved", message: "This package has been approved and can be published by its creator." };
+  if (status === "rejected") return { title: "Changes already requested", message: "This package was returned to its creator for changes." };
+  if (status === "live") return { title: "Already live", message: "This package is published in the marketplace." };
+  return { title: "No longer pending review", message: fallback || "This package is no longer pending review." };
+}
 
 export function rejectionReasonError(reason: string): string {
   return reason.trim().length < 10 ? "Enter at least 10 characters." : "";
@@ -124,16 +140,6 @@ function LoadingState() {
   );
 }
 
-function Header({ onSignOut }: { onSignOut: () => void }) {
-  return (
-    <header className="admin-review-header">
-      <Link href={APP_ROUTES.marketplace} className="admin-review-brand">Travel Marketplace</Link>
-      <span className="admin-review-context">Admin workspace</span>
-      <button type="button" onClick={onSignOut}>Sign out</button>
-    </header>
-  );
-}
-
 function ReviewIntro({ pkg }: { pkg: AdminPackageDetail }) {
   return (
     <section className="admin-detail-intro">
@@ -145,7 +151,9 @@ function ReviewIntro({ pkg }: { pkg: AdminPackageDetail }) {
           <h1>{pkg.title}</h1>
           <p>{formatAdminDestination(pkg)} · by {creatorName(pkg)}</p>
         </div>
-        <span className="admin-detail-status">Pending review</span>
+        <span className="admin-detail-status" style={creatorPackageStatusStyle(pkg.status)}>
+          {pkg.status === "pending_review" ? "Pending review" : STATUS_LABELS[pkg.status] ?? pkg.status}
+        </span>
       </div>
       <p className="admin-detail-submitted">Submitted {formatSubmittedAt(pkg.submitted_at ?? null)}</p>
     </section>
@@ -156,10 +164,10 @@ function Cover({ pkg }: { pkg: AdminPackageDetail }) {
   return (
     <section className="admin-detail-cover" aria-labelledby="admin-detail-overview-title">
       <div className="admin-detail-cover__media">
-        {pkg.cover_image_url ? (
+        {safeImageSrc(pkg.cover_image_url) ? (
           // The API owns this URL and may return any configured storage host.
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={pkg.cover_image_url} alt={`Cover for ${pkg.title}`} />
+          <img src={safeImageSrc(pkg.cover_image_url)} alt={`Cover for ${pkg.title}`} />
         ) : (
           <div className="admin-detail-cover__placeholder">
             <Icon name="pin" size={24} />
@@ -182,6 +190,82 @@ function Cover({ pkg }: { pkg: AdminPackageDetail }) {
           </ul>
         ) : null}
       </div>
+    </section>
+  );
+}
+
+// Reviewers approve what travellers will see, so every uploaded image is shown
+// here and opens full size in a new tab. An unusable address is flagged instead
+// of silently dropped.
+function PhotoLink({ src, alt, label, className }: { src: string; alt: string; label: string; className?: string }) {
+  const safe = safeImageSrc(src);
+  if (!safe) {
+    return <span className={`admin-detail-photo__invalid ${className ?? ""}`}>Invalid image address</span>;
+  }
+  return (
+    <a className={`admin-detail-photo__link ${className ?? ""}`} href={safe} target="_blank" rel="noopener noreferrer" aria-label={label}>
+      {/* Storage hosts vary per environment, so next/image is not configured for them. */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={safe} alt={alt} loading="lazy" />
+    </a>
+  );
+}
+
+function PhotoStrip({ photos, label }: { photos: DayPhoto[]; label: string }) {
+  if (!photos.length) return null;
+  return (
+    <ul className="admin-detail-photo-strip" aria-label={label}>
+      {photos.map((photo, index) => (
+        <li key={`${photo.media_id ?? photo.src}-${index}`}>
+          <PhotoLink src={photo.src} alt={photo.alt} label={`Open ${photo.alt || "photo"} in a new tab`} />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function PhotoReview({ photos }: { photos: ReviewPhoto[] }) {
+  const unplaced = photos.filter((photo) => !photo.isCover && !photo.placements.length).length;
+  return (
+    <section className="admin-detail-photos" aria-labelledby="admin-detail-photos-title">
+      <div className="admin-detail-section-heading">
+        <div>
+          <h2 id="admin-detail-photos-title">Photos <span className="admin-detail-photos__count">{photos.length}</span></h2>
+          <p>Check every image the creator uploaded before approving. Select a photo to open it full size.</p>
+        </div>
+      </div>
+      {photos.length ? (
+        <>
+          {unplaced ? (
+            <p className="admin-detail-photos__note" role="status">
+              {unplaced} {unplaced === 1 ? "photo is" : "photos are"} not placed on a day or stop.
+            </p>
+          ) : null}
+          <ul className="admin-detail-photo-grid">
+            {photos.map((photo, index) => (
+              <li key={photo.mediaId || index}>
+                <figure>
+                  <PhotoLink
+                    src={photo.src}
+                    alt={photo.caption || `Package photo ${index + 1}`}
+                    label={`Open photo ${index + 1} in a new tab`}
+                  />
+                  <figcaption>
+                    <span className="admin-detail-photo__badges">
+                      {photo.isCover ? <b>Cover</b> : null}
+                      {photo.isCover || photo.placements.length ? null : <b className="admin-detail-photo__warn">Not placed</b>}
+                    </span>
+                    {photo.caption ? <span>{photo.caption}</span> : null}
+                    {photo.placements.length ? <small>{photo.placements.join(", ")}</small> : null}
+                  </figcaption>
+                </figure>
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : (
+        <p className="admin-detail-empty-day">No photos were uploaded for this package.</p>
+      )}
     </section>
   );
 }
@@ -210,6 +294,7 @@ function ItineraryItem({ item }: { item: TimelineItem }) {
         <h4>{item.title}</h4>
         {metadata.length ? <p>{metadata.join(" · ")}</p> : null}
         {item.notes ? <p className="admin-detail-item__notes">{item.notes}</p> : null}
+        <PhotoStrip photos={item.photos ?? []} label={`Photos for ${item.title}`} />
       </div>
       <strong className="admin-detail-item__price">{item.price}</strong>
     </li>
@@ -258,6 +343,7 @@ function Itinerary({
             <strong>{activeDay.items.length} {activeDay.items.length === 1 ? "item" : "items"}</strong>
           </div>
           {activeDay.story ? <p className="admin-detail-day__story">{activeDay.story}</p> : null}
+          <PhotoStrip photos={activeDay.photos ?? []} label={`Photos for day ${activeDay.day}`} />
           {activeDay.items.length ? (
             <ol className="admin-detail-items">
               {activeDay.items.map((item) => <ItineraryItem item={item} key={`${activeDay.id}-${item.id}`} />)}
@@ -296,6 +382,21 @@ function Pricing({ pkg }: { pkg: AdminPackageDetail }) {
   );
 }
 
+function LastDecision({ approval, pending }: { approval: AdminApprovalRecord; pending: boolean }) {
+  const approved = approval.decision === "approved";
+  return (
+    <section className="admin-detail-last-decision" aria-label="Previous decision">
+      <h3>{pending ? "Previous decision" : "Last decision"}</h3>
+      <p className="admin-detail-last-decision__meta">
+        <strong>{approved ? "Approved" : "Changes requested"}</strong>
+        <span>{formatSubmittedAt(approval.reviewed_at ?? null)}</span>
+      </p>
+      {approval.rejection_reason ? <p><b>Reason sent to creator</b>{approval.rejection_reason}</p> : null}
+      {approval.notes ? <p><b>Internal notes</b>{approval.notes}</p> : null}
+    </section>
+  );
+}
+
 function DecisionPanel({
   pkg,
   onOpenApprove,
@@ -330,6 +431,7 @@ function DecisionPanel({
         </button>
         {!canDecide ? <p className="admin-detail-decision__notice">This package is no longer pending review.</p> : null}
       </section>
+      {pkg.latest_approval ? <LastDecision approval={pkg.latest_approval} pending={canDecide} /> : null}
     </aside>
   );
 }
@@ -418,7 +520,7 @@ function DecisionModal(props: Pick<
 
 export function AdminReviewDetailView(props: AdminReviewDetailViewProps): ReactNode {
   if (props.status === "loading") {
-    return <div className="admin-review-page"><Header onSignOut={props.onSignOut} /><LoadingState /></div>;
+    return <div className="admin-review-page"><AdminHeader onSignOut={props.onSignOut} /><LoadingState /></div>;
   }
 
   if (!props.packageDetail || props.status === "not-found" || props.status === "forbidden" || props.status === "error") {
@@ -429,7 +531,7 @@ export function AdminReviewDetailView(props: AdminReviewDetailViewProps): ReactN
         : { title: "This package could not be loaded", message: props.errorMessage || "Please check the connection and try again." };
     return (
       <div className="admin-review-page">
-        <Header onSignOut={props.onSignOut} />
+        <AdminHeader onSignOut={props.onSignOut} />
         <main className="admin-detail-shell">
           <Link className="admin-detail-back" href={APP_ROUTES.admin}>← Back to review dashboard</Link>
           <StatePanel
@@ -447,18 +549,19 @@ export function AdminReviewDetailView(props: AdminReviewDetailViewProps): ReactN
   const days = buildDaysFromPackage(props.packageDetail);
   return (
     <div className="admin-review-page">
-      <Header onSignOut={props.onSignOut} />
+      <AdminHeader onSignOut={props.onSignOut} />
       <main className="admin-detail-shell">
         <ReviewIntro pkg={props.packageDetail} />
         {props.status === "conflict" ? (
           <div className="admin-detail-conflict" role="status">
-            <strong>Review already completed</strong>
-            <span>{props.errorMessage || "This package is no longer pending review."}</span>
+            <strong>{decisionNotice(props.packageDetail.status, props.errorMessage).title}</strong>
+            <span>{decisionNotice(props.packageDetail.status, props.errorMessage).message}</span>
           </div>
         ) : null}
         <div className="admin-detail-layout">
           <div className="admin-detail-main">
             <Cover pkg={props.packageDetail} />
+            <PhotoReview photos={reviewPhotos(props.packageDetail, days)} />
             <Itinerary days={days} selectedDay={props.selectedDay} onSelectDay={props.onSelectDay} />
           </div>
           <DecisionPanel pkg={props.packageDetail} onOpenApprove={props.onOpenApprove} onOpenReject={props.onOpenReject} />
@@ -557,9 +660,10 @@ export default function AdminReviewDetail({ packageId }: { packageId: string }) 
         return;
       }
       if (error instanceof AdminApiError && error.status === 409) {
+        // Another admin decided first — reload so the page (and its buttons)
+        // reflect the package's real status instead of staying actionable.
         setDialog(null);
-        setStatus("conflict");
-        setErrorMessage(error.message);
+        setRetryKey((current) => current + 1);
       } else {
         setDecisionError(error instanceof Error ? error.message : "Unable to save this decision.");
       }
