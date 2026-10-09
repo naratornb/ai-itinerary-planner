@@ -68,6 +68,20 @@ test("a stop shows at most six linked photos", () => {
   assert.equal(planItineraryPhotos([{ items: [{ photos }] }], undefined, null).stopImages[0][0].length, 6);
 });
 
+test("a linked cover is not shown again below the hero", () => {
+  const days = [{ photos: [{ src: "cover.jpg" }], items: [{ photos: [{ src: "cover.jpg" }, { src: "walk.jpg" }] }] }];
+  const plan = planItineraryPhotos(days, undefined, "cover.jpg");
+  assert.deepEqual(plan.dayImages, [null]);
+  assert.deepEqual(plan.stopImages, [[["walk.jpg"]]]);
+});
+
+test("a photo past a stop's six is still shown on a later stop it is linked to", () => {
+  // Regression: the 7th photo was marked used by stop A even though only six were shown there.
+  const photos = Array.from({ length: 7 }, (_, i) => ({ src: `p${i + 1}.jpg` }));
+  const plan = planItineraryPhotos([{ items: [{ photos }, { photos: [photos[6]] }] }], undefined, null);
+  assert.deepEqual(plan.stopImages[0][1], ["p7.jpg"]);
+});
+
 test("initials derives up to two uppercase letters from a name", () => {
   assert.equal(initials("Elena Rossi"), "ER");
   assert.equal(initials("Madonna"), "M");

@@ -45,6 +45,35 @@ test("an issue that is still present stays, and a newly introduced one appears",
   assert.deepEqual(result.map((i) => i.error_code), ["MISSING_PHOTOS", "TIME_OVERLAP"]);
 });
 
+test("an issue still present after an edit shows its current details, not the ones from the last check", () => {
+  // Regression: moving Lunch 11:00 → 11:30 still overlaps Museum, but the panel kept saying "starts at 11:00".
+  const payload = (lunch: string) => ({ photo_count: 1, days_json: JSON.stringify([{
+    day_number: 1, has_accommodation: true, flights: [], activities: [
+      { activity_name: "Museum", start_time: "10:00", duration_hours: 2, price: "$10" },
+      { activity_name: "Lunch", start_time: lunch, duration_hours: 1, price: "$20" },
+    ],
+  }]) });
+  const checked = localChecks(payload("11:00"));
+  const travel = issue("SHORT_TRAVEL_TIME", "Lunch", "Day 1");
+  const result = { hard_errors: [...checked.hard, travel], soft_warnings: checked.soft };
+
+  const now = localChecks(payload("11:30"));
+  const view = liveView(result, baselineOf(checked), now);
+  const overlap = view.hardErrors.find((i) => i.error_code === "TIME_OVERLAP");
+  assert.equal(overlap, now.hard.find((i) => i.error_code === "TIME_OVERLAP"));
+  assert.match(overlap?.message ?? "", /starts at 11:30/);
+  assert.equal(view.hardErrors.find((i) => i.error_code === "SHORT_TRAVEL_TIME"), travel, "travel-time finding untouched");
+});
+
+test("issues sharing a key are each replaced once, never duplicated", () => {
+  const old = [{ ...issue("TIME_OVERLAP", "Lunch", "Day 1"), message: "a" }, { ...issue("TIME_OVERLAP", "Lunch", "Day 1"), message: "b" }];
+  const now = [{ ...old[0], message: "a2" }, { ...old[1], message: "b2" }];
+  const result = applyLiveFixes(old, baselineOf({ hard: old, soft: [] }).hard, now);
+  assert.deepEqual(result.map((i) => i.message), ["a2", "b2"]);
+  const grown = applyLiveFixes(old.slice(0, 1), baselineOf({ hard: old.slice(0, 1), soft: [] }).hard, now);
+  assert.deepEqual(grown.map((i) => i.message), ["a2", "b2"], "a second copy of an existing issue appears");
+});
+
 test("findings the deterministic rules never reported are left exactly as the server returned them", () => {
   const ai = issue("AI_OPENING_HOURS", "Day 1 – Temple", "day_1");
   const brand = issue("POLICY_VIOLATION", "Entire Package");

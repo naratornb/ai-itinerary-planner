@@ -25,19 +25,22 @@ export function planItineraryPhotos(
   media: MediaLike[] | undefined,
   coverUrl: string | null | undefined,
 ): { dayImages: (string | null)[]; stopImages: string[][][] } {
-  const seen = new Set<string>();
-  const unseen = (src: string) => {
-    if (!src || seen.has(src)) return false;
-    seen.add(src);
-    return true;
-  };
   const linked = days.some((day) =>
     (day.photos?.length ?? 0) > 0 || (day.items ?? []).some((item) => (item.photos?.length ?? 0) > 0));
 
   if (linked) {
-    const dayImages = days.map((day) => (day.photos ?? []).map((photo) => photo.src).find(unseen) ?? null);
-    const stopImages = days.map((day) =>
-      (day.items ?? []).map((item) => (item.photos ?? []).map((photo) => photo.src).filter(unseen).slice(0, 6)));
+    // The hero already shows the cover. Only photos actually picked count as
+    // shown, so one cut by a stop's limit stays free for a later slot.
+    const seen = new Set(coverUrl ? [coverUrl] : []);
+    const take = (photos: PhotoLike[] | undefined, limit: number) => {
+      const picked = [...new Set((photos ?? []).map((photo) => photo.src))]
+        .filter((src) => src && !seen.has(src))
+        .slice(0, limit);
+      picked.forEach((src) => seen.add(src));
+      return picked;
+    };
+    const dayImages = days.map((day) => take(day.photos, 1)[0] ?? null);
+    const stopImages = days.map((day) => (day.items ?? []).map((item) => take(item.photos, 6)));
     return { dayImages, stopImages };
   }
 

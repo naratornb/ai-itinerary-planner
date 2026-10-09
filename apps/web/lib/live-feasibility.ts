@@ -38,20 +38,26 @@ export function baselineOf(issues: { hard: CodeIssue[]; soft: CodeIssue[] }): Li
 
 /**
  * Applies edits made since the last full check to its result: an issue the
- * deterministic rules reported then and no longer report now is dropped, one
- * they newly report is added, and everything else (AI findings, travel-time
- * and policy blocks) stays exactly as the server returned it.
+ * deterministic rules reported then is replaced by its current version (so its
+ * times and wording match the schedule now) or dropped once they no longer
+ * report it, one they newly report is added, and everything else (AI findings,
+ * travel-time and policy blocks) stays exactly as the server returned it.
  */
 export function applyLiveFixes<T extends IssueLike>(
   serverIssues: T[],
   baseline: Set<string>,
   current: CodeIssue[],
-): T[] {
-  const currentKeys = new Set(current.map(issueKey));
-  const kept = serverIssues.filter((issue) => !baseline.has(issueKey(issue)) || currentKeys.has(issueKey(issue)));
-  const keptKeys = new Set(kept.map(issueKey));
-  const added = current.filter((issue) => !baseline.has(issueKey(issue)) && !keptKeys.has(issueKey(issue)));
-  return [...kept, ...(added as unknown as T[])];
+): (T | CodeIssue)[] {
+  const unused = [...current];
+  // One-for-one, since issues can share a key (same-named activities): the
+  // server returns each deterministic issue unmodified, so whatever is left
+  // over afterwards is new.
+  const kept = serverIssues.flatMap((issue): (T | CodeIssue)[] => {
+    if (!baseline.has(issueKey(issue))) return [issue];
+    const at = unused.findIndex((now) => issueKey(now) === issueKey(issue));
+    return at < 0 ? [] : unused.splice(at, 1);
+  });
+  return [...kept, ...unused];
 }
 
 type ResultLike<T> = { hard_errors: T[]; soft_warnings: T[] };
@@ -66,7 +72,7 @@ export function liveView<T extends IssueLike>(
   result: ResultLike<T> | null,
   baseline: LiveBaseline | null,
   current: { hard: CodeIssue[]; soft: CodeIssue[] } | null,
-): { hardErrors: T[]; softWarnings: T[]; criticalFixedLive: boolean } {
+): { hardErrors: (T | CodeIssue)[]; softWarnings: (T | CodeIssue)[]; criticalFixedLive: boolean } {
   const serverHard = result?.hard_errors ?? [];
   const serverSoft = result?.soft_warnings ?? [];
   const live = baseline && current;
