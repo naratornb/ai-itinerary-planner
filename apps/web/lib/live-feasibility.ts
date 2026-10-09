@@ -1,0 +1,83 @@
+import { checkPackagePhotos, runCodeChecks, type ArrivalLanding, type CodeIssue } from "./feasibility";
+
+// The server check runs these deterministic rules first and the AI after.
+// They need no network, so the editor can re-run them on every edit and let a
+// fixed critical issue disappear immediately; only the AI part waits for Re-check.
+
+type IssueLike = { error_code: string; field?: string; affected_item: string };
+
+export type LiveBaseline = { hard: Set<string>; soft: Set<string> };
+
+export function issueKey(issue: IssueLike): string {
+  return `${issue.error_code}|${issue.affected_item}|${issue.field ?? ""}`;
+}
+
+type LivePayload = {
+  days_json: string;
+  arrival_landing?: ArrivalLanding | null;
+  photo_count?: number;
+};
+
+/** The rules the server runs without the AI, evaluated on the editor's current content. */
+export function localChecks(payload: LivePayload): { hard: CodeIssue[]; soft: CodeIssue[] } {
+  let days: unknown[] = [];
+  try {
+    const parsed: unknown = JSON.parse(payload.days_json);
+    if (Array.isArray(parsed)) days = parsed;
+  } catch {
+    // Unparseable days: fall through with none, like the server does.
+  }
+  const { hard, soft } = runCodeChecks(days, payload.arrival_landing);
+  const photos = checkPackagePhotos(payload);
+  return { hard: [...hard, ...(photos ? [photos] : [])], soft };
+}
+
+export function baselineOf(issues: { hard: CodeIssue[]; soft: CodeIssue[] }): LiveBaseline {
+  return { hard: new Set(issues.hard.map(issueKey)), soft: new Set(issues.soft.map(issueKey)) };
+}
+
+/**
+ * Applies edits made since the last full check to its result: an issue the
+ * deterministic rules reported then is replaced by its current version (so its
+ * times and wording match the schedule now) or dropped once they no longer
+ * report it, one they newly report is added, and everything else (AI findings,
+ * travel-time and policy blocks) stays exactly as the server returned it.
+ */
+export function applyLiveFixes<T extends IssueLike>(
+  serverIssues: T[],
+  baseline: Set<string>,
+  current: CodeIssue[],
+): (T | CodeIssue)[] {
+  const unused = [...current];
+  // One-for-one, since issues can share a key (same-named activities): the
+  // server returns each deterministic issue unmodified, so whatever is left
+  // over afterwards is new.
+  const kept = serverIssues.flatMap((issue): (T | CodeIssue)[] => {
+    if (!baseline.has(issueKey(issue))) return [issue];
+    const at = unused.findIndex((now) => issueKey(now) === issueKey(issue));
+    return at < 0 ? [] : unused.splice(at, 1);
+  });
+  return [...kept, ...unused];
+}
+
+type ResultLike<T> = { hard_errors: T[]; soft_warnings: T[] };
+
+/**
+ * What the feasibility panel shows: the last full result with edits made since
+ * applied. `criticalFixedLive` means every critical issue the server reported
+ * is now fixed; the server withheld its score because of them, so there is
+ * none to show until a full re-check produces one.
+ */
+export function liveView<T extends IssueLike>(
+  result: ResultLike<T> | null,
+  baseline: LiveBaseline | null,
+  current: { hard: CodeIssue[]; soft: CodeIssue[] } | null,
+): { hardErrors: (T | CodeIssue)[]; softWarnings: (T | CodeIssue)[]; criticalFixedLive: boolean } {
+  const serverHard = result?.hard_errors ?? [];
+  const serverSoft = result?.soft_warnings ?? [];
+  const live = baseline && current;
+  const hardErrors = live ? applyLiveFixes(serverHard, baseline.hard, current.hard) : serverHard;
+  const softWarnings = live ? applyLiveFixes(serverSoft, baseline.soft, current.soft) : serverSoft;
+  const criticalFixedLive = serverHard.length > 0 && hardErrors.length === 0;
+  return { hardErrors, softWarnings, criticalFixedLive };
+}

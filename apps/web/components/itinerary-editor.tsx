@@ -52,6 +52,7 @@ import { APP_ROUTES } from "../lib/routes";
 import { iataOf } from "../lib/ai/itinerary";
 import { ACTIVITY_GAP_MIN, minutesToTime, TRANSFER_BUFFER_MIN } from "../lib/feasibility";
 import { supabase } from "../lib/supabase/client";
+import { baselineOf, liveView, localChecks, type LiveBaseline } from "../lib/live-feasibility";
 import Icon from "./icon";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -1044,6 +1045,8 @@ export default function ItineraryEditor({
   const [titleDraft, setTitleDraft] = useState(pkg.title);
   const [editingTitle, setEditingTitle] = useState(false);
   const [feasResult, setFeasResult] = useState<FeasibilityResult | null>(null);
+  // The deterministic issues present when feasResult was produced, so edits made since can be re-evaluated live.
+  const [liveBaseline, setLiveBaseline] = useState<LiveBaseline | null>(null);
   const [feasLoading, setFeasLoading] = useState(false);
   const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(null);
   const [resultStale, setResultStale] = useState(false);
@@ -1312,13 +1315,18 @@ export default function ItineraryEditor({
         showNotice("Your session expired. Please sign in again.");
         return;
       }
+      const payload = buildValidationPayload();
+      // Baseline = what the deterministic rules say about the content being sent,
+      // not about whatever it becomes while the request is in flight.
+      const baseline = baselineOf(localChecks(payload));
       const res = await fetch("/api/ai/validate", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify(buildValidationPayload()),
+        body: JSON.stringify(payload),
       });
       if (res.ok) {
         const data = await res.json();
+        setLiveBaseline(baseline);
         setFeasResult(data);
         // Timestamps a check that only ever runs from a click handler, never
         // during render — safe despite the purity lint's static analysis.
@@ -2271,10 +2279,21 @@ export default function ItineraryEditor({
     showNotice(`Day ${indexToDelete + 1} deleted`);
   };
 
-  const hardErrors = feasResult?.hard_errors ?? [];
-  const softWarnings = feasResult?.soft_warnings ?? [];
+  // Edits since the last full check are re-run through the deterministic rules
+  // (no network), so a fixed critical issue clears at once. AI findings and
+  // policy blocks stay as the server returned them until Re-check.
+  const currentLocalChecks = useMemo(
+    () => (feasResult ? localChecks(buildValidationPayload()) : null),
+    // buildValidationPayload reads days, packageTitle and landing — listed via those.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [feasResult, days, packageTitle, landing],
+  );
+  const live = liveView(feasResult, liveBaseline, currentLocalChecks);
+  const { hardErrors, softWarnings, criticalFixedLive } = live;
+  const criticalOpen = Boolean(feasResult) && hardErrors.length > 0;
   // No score while critical issues block submission — the check leaves it out too.
-  const scoreWithheld = Boolean(feasResult) && hardErrors.length > 0;
+  // Once they are fixed live there is still no score until a full re-check makes one.
+  const scoreWithheld = criticalOpen || (Boolean(feasResult) && criticalFixedLive);
   const displayScore = scoreWithheld ? undefined : feasResult?.quality_score;
 
   const isReadyToSubmit = Boolean(
@@ -2840,7 +2859,8 @@ export default function ItineraryEditor({
                 <div className={`feas-score-display${!feasResult || resultStale ? " feas-score-display-stale" : scorePassing ? " feas-score-display-pass" : ""}`}>
                   <strong>{displayScore !== undefined ? displayScore : "—"}</strong><span>/100</span>
                 </div>
-                {scoreWithheld && !resultStale && <p className="feas-score-hint">Fix the critical issues to see your score.</p>}
+                {criticalOpen && !resultStale && <p className="feas-score-hint">Fix the critical issues to see your score.</p>}
+                {criticalFixedLive && <p className="feas-score-hint" role="status">Critical issues fixed. Re-check to confirm and see your score.</p>}
                 <div className={`score-track${resultStale ? " score-track-stale" : scorePassing ? " score-track-pass" : ""}`} role="meter" aria-label={displayScore !== undefined ? `Package quality score, ${displayScore} out of 100${resultStale ? " (stale — content changed since this was calculated)" : ""}. Minimum score to submit is 70.` : scoreWithheld ? "Package quality score not shown until the critical issues are fixed. Minimum score to submit is 70." : "Package quality score not yet checked. Minimum score to submit is 70."} aria-valuemin={0} aria-valuemax={100} aria-valuenow={displayScore ?? 0}>
                   <span className="score-fill" style={{ width: displayScore !== undefined ? `${Math.min(100, Math.max(0, displayScore))}%` : "0%" }} />
                   <i aria-hidden="true" />
@@ -2891,7 +2911,7 @@ export default function ItineraryEditor({
               {passedChecklist.filter((c) => c.passed).map((c) => <li key={c.label}><Icon name="check" size={15} />{c.label}</li>)}
               {passedChecklist.every((c) => !c.passed) && <p style={{ padding: "8px", fontSize: "0.85rem" }}>No checks passed yet.</p>}
             </ul>}
-            <p className="quality-footer">Last update: {feasResult && lastCheckedAt ? formatRelativeTime(lastCheckedAt) : "Not yet checked"}</p>
+            <p className="quality-footer">Last update: {feasResult && lastCheckedAt ? formatRelativeTime(lastCheckedAt) : "Not yet checked"}{feasResult && resultStale ? " · Fixes show live; Re-check runs the full check." : ""}</p>
           </section>
           <Panel title="Trip details" className="trip-params-panel">
             <div className="trip-params-rows">

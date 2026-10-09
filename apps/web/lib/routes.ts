@@ -22,6 +22,18 @@ export function creatorPackageRoute(packageId: string, status: string): string {
   return `/packages/editor/${encodedId}`;
 }
 
+/**
+ * Where "back" leads from a creator's package preview. A draft or rejected
+ * package is previewed from its editor, so back returns there; an approved
+ * package is previewed from the dashboard row, so back returns there.
+ */
+export function creatorPreviewBack(packageId: string, status: string | null | undefined): { href: string; label: string } {
+  if (status === "draft" || status === "rejected") {
+    return { href: `/packages/editor/${encodeURIComponent(packageId)}`, label: "Back to editor" };
+  }
+  return { href: APP_ROUTES.dashboard, label: "Back to dashboard" };
+}
+
 export function adminApprovalRoute(packageId: string): string {
   return `/admin/approvals/${encodeURIComponent(packageId)}`;
 }

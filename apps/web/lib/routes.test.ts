@@ -6,6 +6,7 @@ import {
   APP_ROUTES,
   creatorPackageRoute,
   creatorPackageShareRoute,
+  creatorPreviewBack,
   routeFor,
 } from "./routes";
 
@@ -53,4 +54,15 @@ test("a package that is neither approved nor live opens in the editor", () => {
 
 test("an administrator review path encodes the package id", () => {
   assert.equal(adminApprovalRoute("package/id"), "/admin/approvals/package%2Fid");
+});
+
+test("a preview opened from the editor goes back to the editor, one opened from the dashboard goes back there", () => {
+  // Drafts and rejected packages are previewed from the editor.
+  assert.deepEqual(creatorPreviewBack("pkg/1", "draft"), { href: "/packages/editor/pkg%2F1", label: "Back to editor" });
+  assert.deepEqual(creatorPreviewBack("pkg-2", "rejected"), { href: "/packages/editor/pkg-2", label: "Back to editor" });
+  // An approved package is previewed from its dashboard row.
+  assert.deepEqual(creatorPreviewBack("pkg-3", "approved"), { href: "/dashboard", label: "Back to dashboard" });
+  for (const status of ["pending_review", "live", "", null, undefined]) {
+    assert.equal(creatorPreviewBack("pkg-4", status).href, "/dashboard", String(status));
+  }
 });
