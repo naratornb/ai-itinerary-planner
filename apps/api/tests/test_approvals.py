@@ -177,12 +177,23 @@ def test_delete_reviewed_ok(fake):
     row["package_flights"] = [{"flight_id": "flight-1"}]
     row["package_hotels"] = []
     row["package_activities"] = []
+    row["package_media"] = [
+        {"url": f"https://example.supabase.co/storage/v1/object/public/package-media/{PKG}/a.png"},
+    ]
     fake.route("GET", "travel_packages", FakeResp([row]))
     fake.route("DELETE", "travel_packages", FakeResp([row]))
     fake.route("DELETE", "flights", FakeResp([]))
+    fake.route("DELETE", "/storage/v1/object/package-media", FakeResp({}))
 
     resp = client.delete(f"/approvals/{PKG}")
     assert resp.status_code == 204
+
+    # The cascade drops package_media rows but not the files, which stay public.
+    storage = fake.find("DELETE", "/storage/v1/object/package-media")
+    assert len(storage) == 1
+    assert storage[0]["json"] == {"prefixes": [f"{PKG}/a.png"]}
+    assert storage[0]["headers"]["apikey"] == "service-key"
+    assert "package_media(url)" in fake.find("GET", "travel_packages")[0]["params"]["select"]
 
     package_delete = fake.find("DELETE", "travel_packages")[0]
     # Decided packages belong to creators, and RLS has no admin delete policy —

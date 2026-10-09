@@ -472,7 +472,7 @@ def update_package(package_id, headers, uid, payload):
 def delete_package(package_id, user_headers):
     select = (
         "status,package_flights(flight_id),package_hotels(hotel_id),"
-        "package_activities(activity_id)"
+        "package_activities(activity_id),package_media(url)"
     )
 
     def _resolve():
@@ -503,7 +503,30 @@ def delete_package(package_id, user_headers):
         return "not_deletable", row.get("status")
 
     _cleanup_orphaned_catalog_rows(row)
+    _delete_media_objects(row)
     return "ok", None
+
+
+def _delete_media_objects(row):
+    """The cascade removes package_media rows, not their storage objects, which
+    would stay publicly readable. Best-effort, after the rows are gone: a
+    leftover object is tolerated, a row pointing at a missing file is not.
+    The bucket name is spelled out because media.service imports this module."""
+    paths = [
+        m["url"].split("/package-media/", 1)[1]
+        for m in row.get("package_media") or []
+        if "/package-media/" in (m.get("url") or "")
+    ]
+    if paths:
+        try:
+            requests.delete(
+                f"{core.SUPABASE_URL}/storage/v1/object/package-media",
+                json={"prefixes": paths},
+                headers=_admin_headers(),
+                timeout=15,
+            )
+        except RequestException:
+            pass
 
 
 def _cleanup_orphaned_catalog_rows(row):

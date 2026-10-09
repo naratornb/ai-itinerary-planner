@@ -7,6 +7,7 @@ from requests import RequestException
 from app import core
 from app.packages.service import (
     _cleanup_orphaned_catalog_rows,
+    _delete_media_objects,
     _LIST_SELECT,
     UpstreamError,
     _cover_url,
@@ -101,7 +102,7 @@ def delete_reviewed(package_id):
     headers = core._admin_headers()
     select = (
         "status,package_flights(flight_id),package_hotels(hotel_id),"
-        "package_activities(activity_id)"
+        "package_activities(activity_id),package_media(url)"
     )
     rows = _call(
         "get",
@@ -137,6 +138,7 @@ def delete_reviewed(package_id):
         return "not_deletable", rows[0].get("status")
 
     _cleanup_orphaned_catalog_rows(row)
+    _delete_media_objects(row)
     return "ok", None
 
 
