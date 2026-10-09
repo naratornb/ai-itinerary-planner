@@ -260,6 +260,7 @@ test("slang costs more writing marks than a typo, and a trip name the activities
   assert.equal(r23?.rule_name, "Trip Name Match");
   assert.match(r23!.rule_description, /SOFT WARNING/);
   assert.match(r23!.rule_description, /Never flag a general name or a broad theme/, "\"Cultural Exploration\" was wrongly flagged");
+  assert.match(r23!.rule_description, /Never compare the number of days in the name/, "a \"5 Day\" trip was flagged for its day count");
 });
 
 test("buildSystemPrompt renders the supplied rule list", () => {

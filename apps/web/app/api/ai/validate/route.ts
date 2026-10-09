@@ -485,6 +485,17 @@ export function verifyOpeningHours(issues: any[], days: any[]): { blocks: any[];
  * the coordinate-based travel-time check's job — so an R10 issue that doesn't
  * mention a day trip, an excursion, leaving the city or another city is dropped.
  */
+/**
+ * R23 (Trip Name Match) is about a promised place or kind of activity. The AI also
+ * used it to count days ("5 Day Cultural Trip" on a 5-day trip got "only 3 full days
+ * (Day 1, Day 2, Day 3, Day 4, Day 5)"), which trip length and the empty-day check
+ * already cover, so an R23 issue about a day count is dropped.
+ */
+export function dropDayCountTripNameIssues(issues: any[]): any[] {
+  const dayCount = /\b\d+[- ]days?\b|\bfull days?\b/i;
+  return issues.filter((issue) => !String(issue?.rule ?? "").startsWith("R23") || !dayCount.test(String(issue.message ?? "")));
+}
+
 export function keepOutOfCityDailyRange(issues: any[]): any[] {
   const outOfCity = /day[- ]trip|excursion|outside (?:the |of )?(?:the )?city|out[- ]of[- ]city|another city|different cities|other city|countryside|hours? (?:away|from the city)/i;
   return issues.filter((issue) =>
@@ -911,10 +922,10 @@ export async function POST(req: NextRequest) {
       ...wordingWarnings,
       ...(aiProfanityIssue && !aiProfanityError ? [aiProfanityIssue] : []),
       ...dedupeSimilarPairs(
-        keepOutOfCityDailyRange(dropSingleActivityDailyRange(
+        dropDayCountTripNameIssues(keepOutOfCityDailyRange(dropSingleActivityDailyRange(
           dropRepeatedDuplicates(dropIllegalActDuplicates(aiWarnings, illegalActError), codeResults.soft, days),
           days,
-        )),
+        ))),
         days,
       ),
       ...(aiAvailable ? [] : [AI_UNAVAILABLE_WARNING]),
