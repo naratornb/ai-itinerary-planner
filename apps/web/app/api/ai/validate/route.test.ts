@@ -34,6 +34,7 @@ import {
   qualityScore,
   buildAiProfanityIssue,
   withFallbackRules,
+  dropDayCountTripNameIssues,
   POST,
 } from "./route";
 
@@ -725,4 +726,17 @@ test("validate rejects malformed and oversized bodies for signed-in callers", as
   assert.equal((await POST(validateRequest("{oops", auth))).status, 400);
   const huge = JSON.stringify({ notes: "x".repeat(1024 * 1024 + 10) });
   assert.equal((await POST(validateRequest(huge, auth))).status, 413);
+});
+
+test("a Trip Name Match issue about day counts is dropped; one about a promised place or activity is kept", () => {
+  // Regression: "5 Day Cultural Trip to Singapore" on a 5-day trip got "promises a 5-day trip,
+  // but the itinerary only includes activities for 3 full days (Day 1, ..., Day 5)".
+  const dayCount = [
+    "The trip name \"5 Day Cultural Trip to Singapore\" promises a 5-day trip, but the itinerary only includes activities for 3 full days (Day 1, Day 2, Day 3, Day 4, Day 5).",
+    "The trip name \"4 Day Cultural Trip to Bangkok\" promises a 4-day trip, but the itinerary spans 6 days.",
+    "The trip name \"Tokyo in a Week\" promises 7 days of activities, but only 4 days have activities.",
+  ].map((message) => ({ rule: "R23 – Trip Name Match", error_code: "TRIP_NAME_MISMATCH", message }));
+  const beach = { rule: "R23 – Trip Name Match", error_code: "TRIP_NAME_MISMATCH", message: "The trip name \"Bangkok Beach & Relaxation Tour\" promises beach activities, but no scheduled activity offers it." };
+  const other = { rule: "R14 – Similar Duplicate Activity", message: "Similar to the activity on Day 2." };
+  assert.deepEqual(dropDayCountTripNameIssues([...dayCount, beach, other]), [beach, other]);
 });

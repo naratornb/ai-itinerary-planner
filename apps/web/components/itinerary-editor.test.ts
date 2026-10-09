@@ -562,3 +562,33 @@ test("the day's main photo has a remove button wired to removeDayPhoto (DEV-163)
 
   assert.match(dayPhoto, /remove-photo-btn[\s\S]*?removeDayPhoto/);
 });
+
+test("an overnight arrival flight's card says it departs the day before", () => {
+  const source = readFileSync(new URL("./itinerary-editor.tsx", import.meta.url), "utf8");
+  assert.match(source, /landing\?\.overnight && landing\.flight\.id === item\.id \? `Departs \$\{item\.time\} the day before` : `from \$\{item\.time\}`/);
+});
+
+test("an overnight arrival flight ends at landing on its own day, so a stop after landing isn't a conflict", () => {
+  // Regression: SYD 22:00 -> BKK 07:31 on Day 1 read as occupying Day 1 until 22:00, so
+  // an 08:30 breakfast got "Must start at or after SYD to BKK ends, at 22:00".
+  const items = [
+    item({ id: 1, time: "22:00", departureTime: "22:00", arrivalTime: "07:31", duration: "571", type: "FLIGHT", title: "SYD to BKK" }),
+    item({ id: 2, time: "08:30", duration: "60", title: "Breakfast Near the Hotel" }),
+  ];
+  assert.equal(findTimeConflict(items, 2, "08:30", "60", 1), null, "stop after the overnight arrival");
+  assert.equal(findTimeConflict(items, 1, "22:00", "571", 1), null, "the flight itself");
+  assert.match(findTimeConflict(items, 2, "07:00", "60", 1) ?? "", /Must start at or after SYD to BKK ends, at 07:31/);
+  // Any other overnight flight (a return leg) still runs until its departure that day.
+  assert.match(findTimeConflict(items, 2, "08:30", "60") ?? "", /ends, at 22:00/);
+});
+
+test("on the landing day of an overnight arrival, the first stop gets the airport buffer, not a scheduling conflict", () => {
+  const items = [
+    item({ id: 1, time: "22:00", departureTime: "22:00", arrivalTime: "07:31", duration: "571", type: "FLIGHT", title: "SYD to BKK" }),
+    item({ id: 2, time: "08:30", duration: "60", title: "Breakfast Near the Hotel" }),
+  ];
+  const landing = { time: "07:31", departureTime: "22:00", bufferMin: 90, international: true, overnightFlightId: 1 };
+  const [flight, breakfast] = annotateItems(items, landing);
+  assert.notEqual(flight.problem, "Overlaps next item", "the flight landed at 07:31, it doesn't run past 08:30");
+  assert.equal(breakfast.problem, "Too soon after landing");
+});
