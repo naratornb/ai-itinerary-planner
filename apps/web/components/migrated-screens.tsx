@@ -160,7 +160,7 @@ function BtnSecondary({
 }
 
 // Brand wordmark: Travel Marketplace® and tagline
-function MarketplaceBrandLogo() {
+export function MarketplaceBrandLogo() {
   return (
     <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", gap: 2 }}>
       <div style={{
@@ -489,11 +489,12 @@ export function LoginScreen({ onNav }: { onNav: (s: Screen) => void }) {
         {/* Email field — floating label style */}
         <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <div style={{ position: "relative" }}>
-            <label style={{
+            <label htmlFor="login-email" style={{
               position: "absolute", top: -9, left: 12, background: C.white,
               padding: "0 4px", fontSize: 12, color: C.secondary, lineHeight: 1,
             }}>Email address *</label>
             <input
+              id="login-email"
               type="email" value={email}
               onChange={(e) => setEmail(e.target.value)}
               autoComplete="email"

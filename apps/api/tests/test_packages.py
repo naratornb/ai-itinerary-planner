@@ -828,8 +828,13 @@ def test_delete(fake):
         "package_flights": [{"flight_id": "f1"}, {"flight_id": "f2"}],
         "package_hotels": [{"hotel_id": "h1"}, {"hotel_id": "h2"}],
         "package_activities": [{"activity_id": "a1"}, {"activity_id": "a2"}],
+        "package_media": [
+            {"url": f"https://sb/storage/v1/object/public/package-media/{PKG}/x.jpg"},
+            {"url": None},
+        ],
     }
     fake.route("GET", "travel_packages", FakeResp([linked]))
+    fake.route("DELETE", "/storage/v1/object/package-media", FakeResp({}))
     fake.route("DELETE", "/rest/v1/travel_packages", FakeResp([{"package_id": PKG}]))
     fake.route("DELETE", "/rest/v1/flights", FakeResp([]))
     fake.route("DELETE", "/rest/v1/hotels", FakeResp([]))
@@ -838,6 +843,8 @@ def test_delete(fake):
     resp = client.delete(f"/packages/{PKG}")
     assert resp.status_code == 204
     assert resp.content == b""
+    storage = fake.find("DELETE", "/storage/v1/object/package-media")
+    assert [c["json"] for c in storage] == [{"prefixes": [f"{PKG}/x.jpg"]}]
     assert (
         fake.find("DELETE", "/rest/v1/flights")[0]["params"]["flight_id"]
         == "in.(f1,f2)"

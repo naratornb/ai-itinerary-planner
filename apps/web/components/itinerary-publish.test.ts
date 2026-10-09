@@ -10,6 +10,7 @@ const buttons: ts.JsxOpeningElement[] = [];
 let submitHandler = "";
 let submissionButtonLabel = "";
 let displayScoreExpr = "";
+let scoreWithheldExpr = "";
 function visit(node: ts.Node) {
   if (ts.isVariableDeclaration(node) && node.name.getText(file) === "handleSubmit") {
     submitHandler = `const handleSubmit = ${node.initializer!.getText(file)};`;
@@ -19,6 +20,9 @@ function visit(node: ts.Node) {
   }
   if (ts.isVariableDeclaration(node) && node.name.getText(file) === "displayScore") {
     displayScoreExpr = node.initializer!.getText(file);
+  }
+  if (ts.isVariableDeclaration(node) && node.name.getText(file) === "scoreWithheld") {
+    scoreWithheldExpr = node.initializer!.getText(file);
   }
   // submissionButtonLabel is the shared label expression only the two real
   // "continue to review" buttons render — other buttons sharing the same
@@ -143,6 +147,21 @@ test("an empty first or last day does not zero the trip score", () => {
   };
   runInNewContext(`__score = (${displayScoreExpr});`, context);
   assert.equal(context.__score, 80);
+});
+
+test("the score stays withheld while a critical issue is open and after it is fixed live, until a re-check", () => {
+  // The server leaves the score out because of critical issues. Once the live
+  // rules clear them there is no score yet, and `null` must never be shown as one.
+  assert.notEqual(scoreWithheldExpr, "", "scoreWithheld must remain a named expression");
+  const withheld = (criticalOpen: boolean, criticalFixedLive: boolean, feasResult: object | null) => {
+    const context = { criticalOpen, criticalFixedLive, feasResult, __withheld: undefined as boolean | undefined };
+    runInNewContext(`__withheld = (${scoreWithheldExpr});`, context);
+    return context.__withheld;
+  };
+  assert.equal(withheld(true, false, {}), true, "critical issue open");
+  assert.equal(withheld(false, true, {}), true, "critical issue fixed live, no score until re-check");
+  assert.equal(withheld(false, false, {}), false, "a clean result shows its score");
+  assert.equal(withheld(false, true, null), false, "no result at all is not a withheld score");
 });
 
 test("submission explains unchecked content and critical issues; only eligible trips proceed", async () => {

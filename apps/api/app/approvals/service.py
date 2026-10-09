@@ -5,7 +5,14 @@ import requests
 from requests import RequestException
 
 from app import core
-from app.packages.service import _LIST_SELECT, UpstreamError, _cover_url, _now
+from app.packages.service import (
+    _cleanup_orphaned_catalog_rows,
+    _delete_media_objects,
+    _LIST_SELECT,
+    UpstreamError,
+    _cover_url,
+    _now,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -35,18 +42,17 @@ def _call(method: str, table: str, **kwargs):
     return response
 
 
-def list_pending(headers, page, per_page, sort):
+# Statuses an admin may delete: decisions already taken (approved/rejected) or
+# shipped (live). pending_review stays in the queue and drafts stay with the
+# creator — deleting either would silently discard someone's active work.
+_DECIDED_STATUSES = ("approved", "rejected", "live")
+
+
+def _list_page(headers, page, per_page, params):
     response = _call(
         "get",
         "travel_packages",
-        params={
-            "status": "eq.pending_review",
-            "select": _LIST_SELECT,
-            "package_media.order": _MEDIA_ORDER,
-            "order": _SORT_MAP[sort],
-            "limit": per_page,
-            "offset": (page - 1) * per_page,
-        },
+        params=params,
         headers={**headers, "Prefer": "count=exact"},
     )
     content_range = response.headers.get("Content-Range", "") if response.headers else ""
@@ -63,6 +69,77 @@ def list_pending(headers, page, per_page, sort):
         "total_pages": ceil(total / per_page) if total else 0,
     }
     return rows, meta
+
+
+def list_pending(headers, page, per_page, sort):
+    return _list_page(headers, page, per_page, {
+        "status": "eq.pending_review",
+        "select": _LIST_SELECT,
+        "package_media.order": _MEDIA_ORDER,
+        "order": _SORT_MAP[sort],
+        "limit": per_page,
+        "offset": (page - 1) * per_page,
+    })
+
+
+def list_decided(headers, page, per_page):
+    """Packages already through review — newest decision first (updated_at is
+    the decision/publish write)."""
+    return _list_page(headers, page, per_page, {
+        "status": f"in.({','.join(_DECIDED_STATUSES)})",
+        "select": _LIST_SELECT,
+        "package_media.order": _MEDIA_ORDER,
+        "order": "updated_at.desc",
+        "limit": per_page,
+        "offset": (page - 1) * per_page,
+    })
+
+
+def delete_reviewed(package_id):
+    """Admin delete of a decided package. Service role: the package belongs to
+    a creator, and RLS has no admin delete policy — the route's
+    require_admin_ctx is the guard."""
+    headers = core._admin_headers()
+    select = (
+        "status,package_flights(flight_id),package_hotels(hotel_id),"
+        "package_activities(activity_id),package_media(url)"
+    )
+    rows = _call(
+        "get",
+        "travel_packages",
+        params={"package_id": f"eq.{package_id}", "select": select},
+        headers=headers,
+    ).json()
+    if not rows:
+        return "not_found", None
+    row = rows[0]
+    if row.get("status") not in _DECIDED_STATUSES:
+        return "not_deletable", row.get("status")
+
+    deleted = _call(
+        "delete",
+        "travel_packages",
+        params={
+            "package_id": f"eq.{package_id}",
+            "status": f"in.({','.join(_DECIDED_STATUSES)})",
+        },
+        headers={**headers, "Prefer": "return=representation"},
+    ).json()
+    if not deleted:
+        # Lost a race — re-check; the row either vanished or moved status.
+        rows = _call(
+            "get",
+            "travel_packages",
+            params={"package_id": f"eq.{package_id}", "select": "status"},
+            headers=headers,
+        ).json()
+        if not rows:
+            return "not_found", None
+        return "not_deletable", rows[0].get("status")
+
+    _cleanup_orphaned_catalog_rows(row)
+    _delete_media_objects(row)
+    return "ok", None
 
 
 def _summary(row):

@@ -332,7 +332,10 @@ const COPILOT_TYPE_ICON: Record<string, IconName> = {
  * lets a stop be scheduled inside the flight. Dated legs already carry the
  * arrival clock in `time` (with an identical `arrivalTime`).
  */
-export function flightEndClock(item: TimelineItem): string {
+export function flightEndClock(item: TimelineItem, overnightArrival = false): string {
+  // An overnight arrival flight left the evening before (Day 0), so on its day it
+  // ends at landing; any other overnight flight runs until its departure that day.
+  if (overnightArrival && item.arrivalTime) return item.arrivalTime;
   return item.arrivalTime && item.arrivalTime > item.time ? item.arrivalTime : item.time;
 }
 
@@ -343,14 +346,17 @@ export function flightEndClock(item: TimelineItem): string {
  * sequence_order only breaking ties between untimed rows. A raw string sort
  * on `time` used to push "Check-out"/"Check-in" labels below every clock time.
  */
-export function compareDayItems(a: TimelineItem, b: TimelineItem): number {
+export function compareDayItems(a: TimelineItem, b: TimelineItem, overnightArrivalId?: number): number {
   const band = (item: TimelineItem) =>
     item.type === "HOTEL" ? (item.stayMarker === "check-out" ? 0 : 3) : 1;
   const bandDiff = band(a) - band(b);
   if (bandDiff !== 0) return bandDiff;
   const aReal = REAL_TIME_PATTERN.test(a.time);
   const bReal = REAL_TIME_PATTERN.test(b.time);
-  if (aReal && bReal) return a.time.localeCompare(b.time);
+  // An overnight arrival flight left the evening before (Day 0): on its day it sits
+  // at its landing, not its departure (see arrivalLanding).
+  const clock = (item: TimelineItem) => (item.id === overnightArrivalId && item.arrivalTime) || item.time;
+  if (aReal && bReal) return clock(a).localeCompare(clock(b));
   if (a.sequenceOrder !== undefined || b.sequenceOrder !== undefined) {
     return (a.sequenceOrder ?? Number.MAX_SAFE_INTEGER) - (b.sequenceOrder ?? Number.MAX_SAFE_INTEGER);
   }
@@ -537,11 +543,12 @@ export function findDuplicateFlight(items: TimelineItem[], flight: CreatorFlight
 
 /**
  * Where and when the traveller lands on the trip's arrival flight: the first flight,
- * unless it's a lone flight on the last day (that's the trip home). An overnight
- * flight lands on the following day. Null when there's no arrival flight or no
- * landing time to go on.
+ * unless it's a lone flight on the last day (that's the trip home). It lands on the
+ * day it sits on: an overnight flight (20:55–08:40) left the evening before ("Day 0"),
+ * so the day starts at landing rather than every activity on it reading "before your
+ * flight lands". Null when there's no arrival flight or no landing time to go on.
  */
-export function arrivalLanding(days: BuilderDay[]): { dayIndex: number; time: string; flight: TimelineItem } | null {
+export function arrivalLanding(days: BuilderDay[]): { dayIndex: number; time: string; flight: TimelineItem; overnight: boolean } | null {
   const flights = days.flatMap((day, dayIndex) =>
     day.items.filter((item) => item.type === "FLIGHT").map((item) => ({ item, dayIndex })));
   if (flights.length === 0) return null;
@@ -553,8 +560,7 @@ export function arrivalLanding(days: BuilderDay[]): { dayIndex: number; time: st
     item.arrivalDatetime, timezoneForIata(item.destinationIata),
   );
   const offset = datedOffset ?? (item.departureTime && item.arrivalTime < item.departureTime ? 1 : 0);
-  const landingDay = dayIndex + offset;
-  return landingDay < days.length ? { dayIndex: landingDay, time: item.arrivalTime, flight: item } : null;
+  return { dayIndex, time: item.arrivalTime, flight: item, overnight: offset > 0 };
 }
 
 /** Builds the editor from relative package days, with dated rows as a legacy fallback. */
@@ -765,8 +771,10 @@ export function buildDaysFromPackage(pkg: CreatorPackageDetail): BuilderDay[] {
   // activity times then chain off the previous activity's end rather than all
   // collapsing onto "09:00". The comparator itself is shared with the editor's
   // post-edit re-sort — see compareDayItems.
+  const arrival = arrivalLanding(days);
+  const overnightArrivalId = arrival?.overnight ? arrival.flight.id : undefined;
   for (const day of days) {
-    day.items.sort(compareDayItems);
+    day.items.sort((a, b) => compareDayItems(a, b, overnightArrivalId));
     let cursor = "09:00";
     for (const item of day.items) {
       if (item.type !== "ACTIVITY") continue;

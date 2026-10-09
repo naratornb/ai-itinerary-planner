@@ -1060,14 +1060,22 @@ test("arrivalLanding finds when and on which day the arrival flight lands", () =
   assert.deepEqual({ dayIndex, time }, { dayIndex: 0, time: "16:45" });
 });
 
-test("an overnight arrival flight lands on the next day", () => {
+test("an overnight arrival flight lands on the day it sits on — it left the evening before (Day 0)", () => {
+  // Regression: a 20:55–08:40 flight on Day 1 "landed on Day 2", so every Day 1
+  // activity read "Starts before your flight lands".
   const days = [
-    flightDay(1, [{ type: "FLIGHT", time: "22:00", departureTime: "22:00", arrivalTime: "06:30" }]),
+    flightDay(1, [{ type: "FLIGHT", time: "20:55", departureTime: "20:55", arrivalTime: "08:40" }]),
     flightDay(2, []),
     flightDay(3, [{ type: "FLIGHT", time: "18:00", departureTime: "18:00", arrivalTime: "23:30" }]),
   ];
-  const { dayIndex, time } = arrivalLanding(days)!;
-  assert.deepEqual({ dayIndex, time }, { dayIndex: 1, time: "06:30" });
+  const { dayIndex, time, overnight } = arrivalLanding(days)!;
+  assert.deepEqual({ dayIndex, time, overnight }, { dayIndex: 0, time: "08:40", overnight: true });
+});
+
+test("a same-day arrival flight is unchanged: it lands on its own day, not overnight", () => {
+  const days = [flightDay(1, [{ type: "FLIGHT", time: "08:00", departureTime: "08:00", arrivalTime: "10:00" }]), flightDay(2, [])];
+  const { dayIndex, time, overnight } = arrivalLanding(days)!;
+  assert.deepEqual({ dayIndex, time, overnight }, { dayIndex: 0, time: "10:00", overnight: false });
 });
 
 test("a lone flight on the last day is the trip home, not an arrival", () => {
@@ -1077,4 +1085,12 @@ test("a lone flight on the last day is the trip home, not an arrival", () => {
 
 test("no flights means no arrival landing", () => {
   assert.equal(arrivalLanding([flightDay(1, [])]), null);
+});
+
+test("an overnight arrival flight sorts by its landing, ahead of the day's stops; other flights by departure", () => {
+  // Regression: SYD 22:00 -> BKK 07:31 on Day 1 sorted below a 09:15 breakfast.
+  const flight = { id: 1, type: "FLIGHT", time: "22:00", departureTime: "22:00", arrivalTime: "07:31", title: "SYD to BKK", price: "", icon: "plane", status: "pass" } as any;
+  const breakfast = { id: 2, type: "ACTIVITY", time: "09:15", title: "Breakfast", price: "", icon: "star", status: "pass" } as any;
+  assert.deepEqual([breakfast, flight].sort((a, b) => compareDayItems(a, b, 1)).map((i) => i.id), [1, 2]);
+  assert.deepEqual([flight, breakfast].sort((a, b) => compareDayItems(a, b)).map((i) => i.id), [2, 1], "a return flight still sorts by departure");
 });

@@ -243,7 +243,9 @@ export function runCodeChecks(days: any[], arrival?: ArrivalLanding | null): { h
       }
     }
 
-    // ── R1 – Travel Time (approximate): total hours > 10 leaves no travel buffer
+    // ── R1 – Travel Time (approximate): total hours > 10 leaves little travel buffer.
+    //     A suggestion, not a block: a long day can be intentional, and transfer gaps
+    //     and travel time between stops are checked on their own (R22, R12).
     const totalHours = acts.reduce(
       (sum: number, a: any) => sum + (Number(a.duration_hours) || 1),
       0
@@ -251,15 +253,15 @@ export function runCodeChecks(days: any[], arrival?: ArrivalLanding | null): { h
     // A day that is one single full-day tour (Mt Fuji, safari, reef trip) is allowed
     // past 10 hours — the limit is about cramming several things in.
     if (totalHours > 10 && acts.length > 1) {
-      hard.push({
+      soft.push({
         error_code: "SCHEDULE_TOO_PACKED",
         rule: "R1 – Travel Time",
-        severity: "error",
+        severity: "warning",
         field: dayLabel,
         field_value: `${totalHours.toFixed(1)} hrs`,
         affected_item: dayLabel,
-        message: `${dayLabel} has ${totalHours.toFixed(1)} hours of activities with no time left for travel between stops.`,
-        action: "Remove or shorten activities so the day totals ≤ 10 hours of scheduled time.",
+        message: `${dayLabel} has ${totalHours.toFixed(1)} hours of activities, which leaves little time for travel between stops.`,
+        action: "Consider removing or shortening an activity so the day totals 10 hours or less.",
       });
     } else if (totalHours > TRAVEL_DAY_MAX_HOURS && (day.day_number === 1 || day.day_number === days.length)) {
       // ── R20 – Travel Day Load: replaces an AI rule that capped first/last days at
@@ -446,7 +448,7 @@ export const FALLBACK_RULES: FeasibilityRule[] = [
     rule_code: "R23",
     rule_name: "Trip Name Match",
     rule_description:
-      "Compare the trip name with the activities actually scheduled. Flag a SOFT WARNING only when the name promises a specific place, landscape or kind of activity that no scheduled activity provides (e.g. \"Beach & Relaxation Tour\" with no beach, \"Island Hopping\" with no island trip, \"Tokyo & Kyoto\" with nothing in Kyoto, \"Ski Week\" with no skiing). Never flag a general name or a broad theme that city activities can fit, such as culture, cultural exploration, discovery, adventure, highlights or getaway (\"4-Day Cultural Exploration of Bangkok\", \"4 Days in Bangkok\"). Use error_code \"TRIP_NAME_MISMATCH\", rule \"R23 – Trip Name Match\", and word it as: message \"The trip name \\\"<trip name>\\\" promises <what it promises>, but no scheduled activity offers it.\", action \"Rename the trip to match its activities, or add <what it promises>.\"",
+      "Compare the trip name with the activities actually scheduled. Flag a SOFT WARNING only when the name promises a specific place, landscape or kind of activity that no scheduled activity provides (e.g. \"Beach & Relaxation Tour\" with no beach, \"Island Hopping\" with no island trip, \"Tokyo & Kyoto\" with nothing in Kyoto, \"Ski Week\" with no skiing). Never flag a general name or a broad theme that city activities can fit, such as culture, cultural exploration, discovery, adventure, highlights or getaway (\"4-Day Cultural Exploration of Bangkok\", \"4 Days in Bangkok\"). Never compare the number of days in the name with the itinerary, or count how many days have activities: trip length and empty days are checked separately. Use error_code \"TRIP_NAME_MISMATCH\", rule \"R23 – Trip Name Match\", and word it as: message \"The trip name \\\"<trip name>\\\" promises <what it promises>, but no scheduled activity offers it.\", action \"Rename the trip to match its activities, or add <what it promises>.\"",
   },
 ];
 

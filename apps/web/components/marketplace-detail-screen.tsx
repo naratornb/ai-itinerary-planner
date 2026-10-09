@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 
 import { fetchMarketplacePackage, type MarketplacePackageDetail, type MarketplaceReview } from "../lib/marketplace-api";
 import { supabase } from "../lib/supabase/client";
-import { assignDayImages, buildStopImages, formatTripLength, initials } from "../lib/marketplace-detail";
+import { formatTripLength, initials, planItineraryPhotos } from "../lib/marketplace-detail";
 import { buildDaysFromPackage, type TimelineItem } from "../lib/itinerary-builder";
 import { dateAfter, pickFlightLegs } from "../lib/booking-options";
 import { vibeLabelsFromTags } from "../lib/vibes";
@@ -602,7 +602,6 @@ export function PackageDetailView({
   const destination = [pkg.destination_city, pkg.destination_country].filter(Boolean).join(", ");
   const tripLength = formatTripLength(pkg.duration_days);
   const days = pkg.days ?? [];
-  const dayImages = assignDayImages(days.length, media);
   const tags = pkg.tags ?? [];
 
   const timelineInput: CreatorPackageDetail = {
@@ -614,9 +613,36 @@ export function PackageDetailView({
     flights: pkg.flights ?? [],
     hotels: pkg.hotels ?? [],
     activities: pkg.activities ?? [],
-    days: days.map((d) => ({ id: d.id ?? null, day_number: d.day_number ?? null, title: d.title ?? null, summary: d.summary ?? null })),
+    days: days.map((d) => ({
+      id: d.id ?? null,
+      day_number: d.day_number ?? null,
+      title: d.title ?? null,
+      summary: d.summary ?? null,
+      media_ids: (d as { media_ids?: string[] }).media_ids,
+    })),
+    // Lets the builder resolve each day's and stop's media_ids to real photos.
+    media: media.flatMap((item) => {
+      const url = "media_url" in item ? item.media_url || item.url : item.url;
+      return item.media_id && url ? [{ media_id: item.media_id, url, caption: null }] : [];
+    }),
   };
   const builderDays = buildDaysFromPackage(timelineInput);
+
+  // A card for every day of the trip, not only the days that have a saved row —
+  // a package saved with fewer rows than days would otherwise end mid-trip.
+  const dayCount = Math.max(days.length, pkg.duration_days ?? 0);
+  const dayCards = Array.from({ length: dayCount }, (_, index) => {
+    const number = index + 1;
+    const row = days.find((d) => d.day_number === number) ?? (days[index]?.day_number == null ? days[index] : undefined);
+    return {
+      day: { id: row?.id ?? `day-${number}`, day_number: number, title: row?.title ?? null, summary: row?.summary ?? null },
+      items: builderDays[index]?.items ?? [],
+      builder: builderDays[index],
+    };
+  });
+  const photoPlan = planItineraryPhotos(dayCards.map((card) => card.builder ?? { items: [] }), media.map((item) => ({
+    url: item.url, media_url: "media_url" in item ? item.media_url : undefined, sort_order: "sort_order" in item ? item.sort_order : undefined,
+  })), cover);
 
   const { outbound: outboundFlight, returnLeg: returnFlight } = pickFlightLegs(pkg.flights);
   const primaryHotel = pkg.hotels?.[0] ?? null;
@@ -704,26 +730,39 @@ export function PackageDetailView({
   return (
     <main style={{ background: color.surface, minHeight: "100vh", color: color.textPrimary }}>
       <div style={{ width: "min(calc(100% - 48px), 1280px)", margin: "0 auto", padding: "0 0 96px" }}>
-        {previewLabel && <div className="creator-preview-notice" role="status" style={{ margin: "24px 0" }}><strong>{previewLabel}</strong><span>Only you can view this package until it is published.</span></div>}
-
-        <HeroOverlay image={cover} alt={pkg.title} height={560} fullBleed overlayTop={
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <button
-              type="button"
-              onClick={onBack}
-              style={{
-                display: "inline-flex", alignItems: "center", gap: 8,
-                border: "none", borderRadius: radius.pill, padding: "10px 16px",
-                background: "rgba(255,255,255,0.94)", color: color.textPrimary,
-                fontSize: 14, fontWeight: 600, cursor: "pointer",
-                boxShadow: "0 2px 8px rgba(0,0,0,0.2)", backdropFilter: "blur(6px)",
-              }}
-            >
+        {previewLabel && (
+          // Sticky so there is always a way out: the in-hero button below scrolls away with the photo.
+          <div className="creator-preview-bar">
+            <button type="button" className="creator-preview-bar__back" onClick={onBack}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M19 12H5M12 19l-7-7 7-7"/>
+                <path d="M19 12H5M12 19l-7-7 7-7" />
               </svg>
               {backLabel}
             </button>
+            <div className="creator-preview-notice" role="status"><strong>{previewLabel}</strong><span>Only you can view this package until it is published.</span></div>
+          </div>
+        )}
+
+        <HeroOverlay image={cover} alt={pkg.title} height={560} fullBleed overlayTop={
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            {!previewLabel ? (
+              <button
+                type="button"
+                onClick={onBack}
+                style={{
+                  display: "inline-flex", alignItems: "center", gap: 8,
+                  border: "none", borderRadius: radius.pill, padding: "10px 16px",
+                  background: "rgba(255,255,255,0.94)", color: color.textPrimary,
+                  fontSize: 14, fontWeight: 600, cursor: "pointer",
+                  boxShadow: "0 2px 8px rgba(0,0,0,0.2)", backdropFilter: "blur(6px)",
+                }}
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M19 12H5M12 19l-7-7 7-7"/>
+                </svg>
+                {backLabel}
+              </button>
+            ) : <span />}
             {!previewLabel && (
               <button
                 type="button"
@@ -861,17 +900,16 @@ export function PackageDetailView({
 
             <section style={{ paddingTop: 48, display: "flex", flexDirection: "column", gap: 24 }}>
               <SectionTitle>Day by day</SectionTitle>
-              {days.length > 0 ? days.map((day, index) => {
+              {dayCards.length > 0 ? dayCards.map(({ day, items: dayItems }, index) => {
                 const key = day.id || String(day.day_number ?? index);
-                const dayItems = builderDays[index]?.items ?? [];
                 return (
                   <DayCard
                     key={key}
                     day={day}
                     index={index}
-                    image={dayImages[index]}
+                    image={photoPlan.dayImages[index]}
                     items={dayItems}
-                    stopImages={buildStopImages(dayItems.length, media)}
+                    stopImages={photoPlan.stopImages[index] ?? []}
                     expanded={expandedDays.has(key)}
                     onToggle={() => toggleDay(key)}
                     onOpenPhoto={(images, photoIndex) => setLightbox({ images, index: photoIndex })}
