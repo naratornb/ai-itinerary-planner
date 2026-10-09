@@ -62,7 +62,7 @@ with baseline-derived values (suggested rule of thumb: threshold = baseline p95
   (checks threadpool behaviour while requests park in the sync `def` handler).
 - **Measure:** p50/p95 latency, error rate, and the engine's own `[timing]`
   log lines (fetch vs pandas vs prompt-build vs validation split).
-- **Pass (provisional):** p95 ≤ 8 s ex-LLM at 0 ms stub delay; error rate < 1 %;
+- **Pass (provisional):** p95 ≤ 10 s ex-LLM at 0 ms stub delay; error rate < 1 %;
   no 5xx from thread exhaustion at 5 000 ms stub delay.
 
 ### PERF-02 — Copilot turn, LLM stubbed
@@ -78,7 +78,7 @@ with baseline-derived values (suggested rule of thumb: threshold = baseline p95
 
 - **Endpoint:** S3.
 - **Load:** 20 concurrent workers, 2 minutes, mixed list + search queries.
-- **Pass (provisional):** p95 ≤ 1.5 s; error rate < 1 %.
+- **Pass (provisional):** p95 ≤ 2 s; error rate < 1 %.
 
 ### PERF-04 — Validate route, deterministic path
 

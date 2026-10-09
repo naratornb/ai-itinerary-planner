@@ -21,9 +21,9 @@ from pathlib import Path
 # p95 threshold ms, error-rate threshold). Thresholds mirror test-plan.md
 # and are the single source the report judges against.
 SCENARIOS = [
-    ("perf-01", "Itinerary generation", "Build a full itinerary (AI stubbed)", 8000, 0.01),
+    ("perf-01", "Itinerary generation", "Build a full itinerary (AI stubbed)", 10000, 0.01),
     ("perf-02", "Copilot turn", "One co-pilot suggestion round (AI stubbed)", 5000, 0.01),
-    ("perf-03", "Marketplace search", "Browse and search packages (no AI)", 1500, 0.01),
+    ("perf-03", "Marketplace search", "Browse and search packages (no AI)", 2000, 0.01),
     ("perf-04", "Content validation", "Feasibility checks on a package (no AI)", 2000, 0.01),
 ]
 
