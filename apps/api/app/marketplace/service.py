@@ -36,14 +36,14 @@ def _anon_headers():
     }
 
 
-def _call(method: str, path: str, **kwargs):
+def _call(method: str, path: str, ok_statuses=(), **kwargs):
     try:
         response = getattr(requests, method)(
             f"{core.SUPABASE_URL}/rest/v1/{path}", timeout=15, **kwargs
         )
     except RequestException:
         raise UpstreamError(503, "Database unreachable.")
-    if not response.ok:
+    if not response.ok and response.status_code not in ok_statuses:
         logger.error(
             "PostgREST %s %s failed (%s): %s",
             method, path, response.status_code, response.text,
@@ -128,14 +128,18 @@ def list_marketplace(
     if tag_list:
         params["tags"] = "ov.{" + ",".join(tag_list) + "}"
 
+    # A page past the end is a 416 from PostgREST; Content-Range still carries
+    # the total ("*/6"), so it becomes an empty page rather than an error.
     response = _call(
         "get", "travel_packages", params=params,
         headers={**_anon_headers(), "Prefer": "count=exact"},
+        ok_statuses=(416,),
     )
     content_range = response.headers.get("Content-Range", "") if response.headers else ""
     tail = content_range.rsplit("/", 1)[-1]
     total = int(tail) if tail.isdigit() else 0
-    return [_to_summary(r) for r in response.json()], _meta(total, page, per_page)
+    rows = [] if response.status_code == 416 else response.json()
+    return [_to_summary(r) for r in rows], _meta(total, page, per_page)
 
 
 def search(q, page, per_page, destination_country, min_price_aud, max_price_aud, tags):

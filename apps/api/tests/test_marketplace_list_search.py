@@ -185,6 +185,30 @@ def test_list_filters_and_sort(fake, sort, order):
     assert order in s
 
 
+def test_list_page_past_the_end_is_empty_not_502(fake):
+    # PostgREST answers an offset beyond the row count with 416 PGRST103.
+    fake.route(
+        "GET",
+        "travel_packages",
+        FakeResp(
+            {"code": "PGRST103", "message": "Requested range not satisfiable"},
+            status_code=416,
+            headers={"Content-Range": "*/6"},
+        ),
+    )
+    resp = client.get("/marketplace/packages?page=2&per_page=20")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["data"] == []
+    assert body["meta"] == {"total": 6, "page": 2, "per_page": 20, "total_pages": 1}
+
+
+def test_list_other_upstream_errors_still_502(fake):
+    fake.route("GET", "travel_packages", FakeResp({"code": "XX000"}, status_code=500))
+    resp = client.get("/marketplace/packages")
+    assert resp.status_code == 502
+
+
 def test_search_ranked_results(fake):
     row2 = dict(LIST_ROW, package_id=PKG2, title="Bali Reset")
     rpc2 = dict(RPC_ROW, package_id=PKG2, relevance_score=0.2, total_count=2)
