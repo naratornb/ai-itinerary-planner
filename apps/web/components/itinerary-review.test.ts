@@ -5,6 +5,7 @@ import { runInNewContext } from "node:vm";
 import ts from "typescript";
 
 import { buildReviewDayUpdates } from "./itinerary-review";
+import { parseStashedFeasibility } from "../lib/feasibility-result";
 import type { BuilderDay } from "../lib/itinerary-builder";
 
 function day(overrides: Partial<BuilderDay> = {}): BuilderDay {
@@ -56,9 +57,10 @@ function visitSubmit(node: ts.Node) {
 }
 visitSubmit(reviewFile);
 
-async function runSubmit(updateFails = false) {
+async function runSubmit(updateFails = false, stashed: string | null = null) {
   const calls: string[] = [];
   const payloads: unknown[][] = [];
+  const submitArgs: unknown[][] = [];
   const context = {
     fetch,
     API_URL: "http://api.test",
@@ -78,14 +80,17 @@ async function runSubmit(updateFails = false) {
       payloads.push(args);
       if (updateFails) throw new Error("Save failed");
     },
-    submitPackage: async () => { calls.push("submit"); return { status: "in_review" }; },
+    window: { sessionStorage: { getItem: (key: string) => (key === "package-feasibility:pkg-1" ? stashed : null) } },
+    feasibilityStorageKey: (id: string) => `package-feasibility:${id}`,
+    parseStashedFeasibility,
+    submitPackage: async (...args: unknown[]) => { calls.push("submit"); submitArgs.push(args); return { status: "in_review" }; },
     SubmitPackageError: class SubmitPackageError extends Error {},
     __result: undefined as Promise<void> | undefined,
   };
   assert.notEqual(persistHandler, "", "Submit must share a persistReview helper with Save Draft");
   runInNewContext(ts.transpile(`${persistHandler}\n${submitHandler}\n__result = handleSubmit();`), context);
   await context.__result;
-  return { calls, payloads };
+  return { calls, payloads, submitArgs };
 }
 
 test("Submit for Review persists the review-page draft before submitting", async () => {
@@ -128,4 +133,18 @@ test("removing a pending cover upload stops it landing on the package", () => {
   const removePhoto = source.match(/const removePhoto = async \(photo[^)]*\) => \{[\s\S]*?\n  \};/);
   assert.ok(removePhoto, "removePhoto must exist");
   assert.match(removePhoto[0], /pending-/, "removePhoto must short-circuit pending uploads client-side");
+});
+
+test("Submit sends the feasibility result the editor stashed, and none when there isn't one", async () => {
+  const stored = { quality_score: 84, is_feasible: true, hard_errors: [], soft_warnings: [], checked_at: "2026-10-08T04:22:00.000Z" };
+
+  const withResult = await runSubmit(false, JSON.stringify(stored));
+  assert.deepEqual(withResult.submitArgs[0][5], stored);
+
+  // A direct visit, another tab, or a corrupted stash submits normally, just without a result.
+  for (const stash of [null, "{not json", JSON.stringify({ hard_errors: "x" })]) {
+    const without = await runSubmit(false, stash);
+    assert.deepEqual(without.calls, ["update", "submit"]);
+    assert.equal(without.submitArgs[0][5], null);
+  }
 });

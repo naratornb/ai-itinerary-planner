@@ -32,6 +32,7 @@ import {
   wizardVibesStorageKey,
   type ReviewDraft,
 } from "../lib/review-draft";
+import { feasibilityStorageKey, parseStashedFeasibility } from "../lib/feasibility-result";
 import { vibeLabelsFromTags } from "../lib/vibes";
 import { supabase } from "../lib/supabase/client";
 
@@ -290,7 +291,12 @@ export default function ItineraryReview({
       // The description lives in page state — submitting without persisting it
       // shipped the stale server copy and stranded this page's edits.
       await persistReview(token);
-      await submitPackage(fetch, API_URL, token, pkg.package_id);
+      // The editor stashes the check that cleared this submission; a direct visit
+      // or another tab has none, and the package is then submitted without one.
+      const feasibility = parseStashedFeasibility(
+        typeof window === "undefined" ? null : window.sessionStorage.getItem(feasibilityStorageKey(pkg.package_id)),
+      );
+      await submitPackage(fetch, API_URL, token, pkg.package_id, undefined, feasibility);
       setSubmitResult({ kind: "success", message: "Your package is now under review. You can track its status on your dashboard." });
     } catch (error) {
       if (error instanceof SubmitPackageError) {

@@ -201,6 +201,24 @@ test("fetchAdminPackage loads the existing package detail endpoint", async () =>
   );
 });
 
+test("fetchAdminPackage normalises the creator's recorded feasibility result", async () => {
+  const stored = {
+    quality_score: 84,
+    is_feasible: true,
+    hard_errors: [],
+    soft_warnings: [{ error_code: "EMPTY_DAY", rule: "R9", severity: "warning", affected_item: "Day 5", message: "No activities.", action: "Add one." }],
+    checked_at: "2026-10-08T04:22:00.000Z",
+  };
+  const load = (latest_feasibility: unknown) =>
+    fetchAdminPackage(async () => Response.json({ ...packageDetail, latest_feasibility }), "http://localhost:8000", "t", "p");
+
+  assert.deepEqual((await load(stored)).latest_feasibility, stored);
+  // Client-supplied, so garbage reads as "nothing recorded" rather than breaking the page.
+  assert.equal((await load("nonsense")).latest_feasibility, null);
+  assert.equal((await load({ hard_errors: "x" })).latest_feasibility, null);
+  assert.equal((await load(null)).latest_feasibility, null);
+});
+
 test("approveAdminPackage posts optional internal notes to the existing approval endpoint", async () => {
   const fetcher: typeof fetch = async (input, init) => {
     assert.equal(String(input), "http://localhost:8000/approvals/package%2F1/approve");

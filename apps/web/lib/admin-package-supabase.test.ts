@@ -232,3 +232,19 @@ test("the RLS fallback attaches the previous decision so admins can see it", asy
 
   assert.equal(detail.latest_approval?.rejection_reason, "Needs work, please revise.");
 });
+
+test("the admin RLS fallback maps the stored feasibility result and tolerates its absence", async () => {
+  const base = {
+    package_id: "package-1", title: "Stored result", duration_days: 1, base_price_aud: 100, status: "pending_review",
+    creator_id: "creator-1", created_at: "2026-10-01T00:00:00Z",
+    package_media: [], package_days: [], package_flights: [], package_hotels: [], package_activities: [],
+  };
+  const clientFor = (row: Record<string, unknown>) => ({
+    from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: row, error: null }) }) }) }),
+  }) as unknown as SupabaseClient;
+  const stored = { quality_score: 77, is_feasible: true, hard_errors: [], soft_warnings: [], checked_at: "2026-10-08T04:22:00.000Z" };
+
+  assert.deepEqual((await fetchAdminPackageFromSupabase(clientFor({ ...base, latest_feasibility: stored }), "package-1"))?.latest_feasibility, stored);
+  assert.equal((await fetchAdminPackageFromSupabase(clientFor(base), "package-1"))?.latest_feasibility, null);
+  assert.equal((await fetchAdminPackageFromSupabase(clientFor({ ...base, latest_feasibility: { hard_errors: 3 } }), "package-1"))?.latest_feasibility, null);
+});

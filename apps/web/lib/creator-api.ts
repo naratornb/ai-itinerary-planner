@@ -1,3 +1,4 @@
+import type { SubmittedFeasibility } from "./feasibility-result";
 type AuthClient = {
   signInWithPassword(credentials: {
     email: string;
@@ -513,6 +514,7 @@ export async function submitPackage(
   accessToken: string,
   packageId: string,
   submissionNote?: string,
+  feasibilityResult?: SubmittedFeasibility | null,
 ) {
   const response = await fetcher(
     `${apiUrl.replace(/\/$/, "")}/packages/${encodeURIComponent(packageId)}/submit`,
@@ -522,7 +524,11 @@ export async function submitPackage(
         "Content-Type": "application/json",
         Authorization: `Bearer ${accessToken}`,
       },
-      body: JSON.stringify(submissionNote ? { submission_note: submissionNote } : {}),
+      body: JSON.stringify({
+        ...(submissionNote ? { submission_note: submissionNote } : {}),
+        // The result the editor produced at submission, for the backend to store for admin review.
+        ...(feasibilityResult ? { feasibility_result: feasibilityResult } : {}),
+      }),
     },
   );
   if (response.status === 401) throw new SubmitPackageError("Your session expired. Please sign in again.", 401);

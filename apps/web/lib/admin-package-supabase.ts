@@ -7,6 +7,7 @@ import type {
   CreatorMediaDetail,
   CreatorPackageDay,
 } from "./creator-api";
+import { parseSubmittedFeasibility } from "./feasibility-result";
 import {
   AdminApiError,
   fetchAdminPackage,
@@ -228,6 +229,7 @@ export function mapAdminPackageRow(value: unknown): AdminPackageDetail {
     media,
     creator: mapCreator(row.creator),
     latest_approval: null,
+    latest_feasibility: parseSubmittedFeasibility(row.latest_feasibility),
     pricing: {
       flights_total: flightsTotal,
       hotels_total: hotelsTotal,
